@@ -1,0 +1,36 @@
+{
+  "name": "outbound-console",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "node --use-system-ca --max-http-header-size=65536 node_modules/next/dist/bin/next dev --webpack -H 127.0.0.1 -p 3480",
+    "build": "next build --webpack",
+    "start": "node --use-system-ca --max-http-header-size=65536 node_modules/next/dist/bin/next start -H 127.0.0.1 -p 3480",
+    "typecheck": "next typegen && tsc --noEmit",
+    "lint": "eslint",
+    "mock:instantly": "node scripts/mock-instantly.mjs",
+    "app:install": "powershell -ExecutionPolicy Bypass -File launcher/install-shortcuts.ps1",
+    "app:start": "powershell -ExecutionPolicy Bypass -File launcher/start.ps1",
+    "app:stop": "powershell -ExecutionPolicy Bypass -File launcher/stop.ps1"
+  },
+  "dependencies": {
+    "next": "16.3.7",
+    "openai": "^7.23.0",
+    "papaparse": "^5.7.0",
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
+    "server-only": "^0.0.1",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4",
+    "@types/node": "^24.19.0",
+    "@types/papaparse": "^5.5.2",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "eslint": "^9",
+    "eslint-config-next": "16.3.7",
+    "tailwindcss": "^4",
+    "typescript": "^5"
+  }
+}
