@@ -96,7 +96,7 @@ const routes = [
     const replies = emails.filter((e) => e.campaign_id === id && e.ue_type === 2).length;
     return sent ? [{ date: now().slice(0, 10), sent, unique_opened: Math.round(sent * 0.5), unique_replies: replies, unique_clicks: 0, unique_opportunities: 0 }] : [];
   }],
-  ["GET", /^\/campaigns\/([\w-]+)\/sending-status$/, (m) => ({ summary: { status: "healthy", status_message: "Sending" }, diagnostics: null })],
+  ["GET", /^\/campaigns\/([\w-]+)\/sending-status$/, () => ({ summary: { status: "healthy", status_message: "Sending" }, diagnostics: null })],
   ["GET", /^\/campaigns\/([\w-]+)$/, (m) => campaigns.get(m[1])],
   ["PATCH", /^\/campaigns\/([\w-]+)$/, (m, q, body) => Object.assign(campaigns.get(m[1]), body)],
   ["POST", /^\/campaigns\/([\w-]+)\/activate$/, (m) => Object.assign(campaigns.get(m[1]), { status: 1 })],
