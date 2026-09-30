@@ -17,7 +17,7 @@ export default async function ClientLayout({ children, params }: LayoutProps<"/c
 
   return (
     <div className="flex flex-col gap-5">
-      <header className="flex items-start justify-between gap-4">
+      <header className="flex items-start justify-between gap-4 print:hidden">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">{client.name}</h1>
           <p className="text-sm text-muted">
@@ -26,16 +26,19 @@ export default async function ClientLayout({ children, params }: LayoutProps<"/c
         </div>
         <ConnectionBadge client={client} />
       </header>
-      <Tabs
-        base={base}
-        tabs={[
-          { href: "", label: "Overview" },
-          { href: "/leads", label: "Leads" },
-          { href: "/approvals", label: "Approvals", count: pending },
-          { href: "/campaigns", label: "Campaigns" },
-          { href: "/settings", label: "Settings" },
-        ]}
-      />
+      <div className="print:hidden">
+        <Tabs
+          base={base}
+          tabs={[
+            { href: "", label: "Overview" },
+            { href: "/stats", label: "Stats" },
+            { href: "/leads", label: "Leads" },
+            { href: "/approvals", label: "Approvals", count: pending },
+            { href: "/campaigns", label: "Campaigns" },
+            { href: "/settings", label: "Settings" },
+          ]}
+        />
+      </div>
       <div>{children}</div>
     </div>
   );

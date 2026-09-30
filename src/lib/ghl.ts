@@ -10,12 +10,12 @@ export class GhlError extends Error {
   }
 }
 
-async function ghl<T>(creds: GhlCreds, path: string, init: RequestInit = {}, attempt = 1): Promise<T> {
+async function ghl<T>(creds: GhlCreds, path: string, init: RequestInit & { version?: string } = {}, attempt = 1): Promise<T> {
   const res = await fetch(`${BASE}${path}`, {
     ...init,
     headers: {
       Authorization: `Bearer ${creds.token}`,
-      Version: "2021-07-28",
+      Version: init.version ?? "2021-07-28", // calendars use 2021-04-15
       Accept: "application/json",
       "Content-Type": "application/json",
       "User-Agent": "OutboundConsole/1.0",
@@ -128,4 +128,65 @@ export async function createOpportunity(
 
 export async function addNote(creds: GhlCreds, contactId: string, body: string) {
   await ghl(creds, `/contacts/${contactId}/notes`, { method: "POST", body: JSON.stringify({ body }) });
+}
+
+// ---------- Meetings (for the stats dashboard) ----------
+
+export type GhlCalendar = { id: string; name: string };
+
+export async function listCalendars(creds: GhlCreds): Promise<GhlCalendar[]> {
+  const r = await ghl<{ calendars: GhlCalendar[] }>(creds, `/calendars/?locationId=${creds.locationId}`, { version: "2021-04-15" });
+  return (r.calendars ?? []).map((c) => ({ id: c.id, name: c.name }));
+}
+
+export type GhlEvent = {
+  id: string;
+  calendarId: string;
+  contactId?: string;
+  title?: string;
+  startTime: string;
+  dateAdded?: string;
+  appointmentStatus?: string;
+  deleted?: boolean;
+};
+
+/** Bookings on one calendar between two times (ms since epoch). */
+export async function calendarEvents(creds: GhlCreds, calendarId: string, from: number, to: number): Promise<GhlEvent[]> {
+  const r = await ghl<{ events: GhlEvent[] }>(
+    creds,
+    `/calendars/events?locationId=${creds.locationId}&calendarId=${calendarId}&startTime=${from}&endTime=${to}`,
+    { version: "2021-04-15" },
+  );
+  return r.events ?? [];
+}
+
+export async function contactEmail(creds: GhlCreds, contactId: string): Promise<string | null> {
+  const r = await ghl<{ contact: { email?: string } }>(creds, `/contacts/${contactId}`);
+  return r.contact?.email?.toLowerCase() ?? null;
+}
+
+export type GhlOpportunity = {
+  id: string;
+  name: string;
+  status: string;
+  contactId: string;
+  contact?: { email?: string };
+  lastStageChangeAt?: string;
+  createdAt: string;
+};
+
+/** Every opportunity currently in one pipeline stage. */
+export async function opportunitiesInStage(creds: GhlCreds, pipelineId: string, stageId: string): Promise<GhlOpportunity[]> {
+  const out: GhlOpportunity[] = [];
+  let after = "";
+  for (let page = 0; page < 50; page++) {
+    const r = await ghl<{ opportunities: GhlOpportunity[]; meta?: { startAfter?: number; startAfterId?: string; nextPage?: number | null } }>(
+      creds,
+      `/opportunities/search?location_id=${creds.locationId}&pipeline_id=${pipelineId}&pipeline_stage_id=${stageId}&limit=100${after}`,
+    );
+    out.push(...(r.opportunities ?? []));
+    if (!r.meta?.nextPage || !r.meta.startAfterId) break;
+    after = `&startAfter=${r.meta.startAfter}&startAfterId=${r.meta.startAfterId}`;
+  }
+  return out;
 }

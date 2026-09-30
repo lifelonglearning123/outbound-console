@@ -219,13 +219,30 @@ export type Email = {
 export type CampaignDaily = {
   date: string;
   sent: number;
+  new_leads_contacted: number;
   unique_opened: number;
   unique_replies: number;
   unique_clicks: number;
   unique_opportunities: number;
 };
 
-export type AccountDaily = { date: string; email_account: string; sent: number; bounced: number };
+export type AccountDaily = {
+  date: string;
+  email_account: string;
+  sent: number;
+  bounced: number;
+  unique_opened: number;
+  unique_replies: number;
+};
+
+export type StepAnalytics = {
+  step: string | null;      // 0-based step index as a string
+  variant: string | null;
+  sent: number;
+  unique_opened: number;
+  unique_replies: number;
+  unique_opportunities?: number;
+};
 
 export type LeadInput = {
   email: string;
@@ -274,6 +291,12 @@ export function instantly(key: string) {
     campaignDaily: (campaignId: string, start: string, end: string) =>
       call<CampaignDaily[]>(key, "GET", "/campaigns/analytics/daily", {
         query: { campaign_id: campaignId, start_date: start, end_date: end },
+      }),
+
+    /** Per-step totals since launch (one row per step and A/B variant). */
+    campaignSteps: (campaignId: string) =>
+      call<StepAnalytics[]>(key, "GET", "/campaigns/analytics/steps", {
+        query: { campaign_id: campaignId, include_opportunities_count: true },
       }),
 
     addLeads: (campaignId: string, leads: LeadInput[]) =>

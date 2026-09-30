@@ -1,6 +1,6 @@
 import { saveClient } from "@/app/clients/actions";
 import { mask, type Client } from "@/lib/clients";
-import { listPipelines, type GhlPipeline } from "@/lib/ghl";
+import { listCalendars, listPipelines, type GhlCalendar, type GhlPipeline } from "@/lib/ghl";
 import { instantly } from "@/lib/instantly";
 import { all } from "@/lib/db";
 
@@ -38,6 +38,16 @@ export async function ClientForm({ client }: { client?: Client }) {
         client.instantly_workspace_id, client.id,
       )
     : [];
+  let calendars: GhlCalendar[] = [];
+  if (client?.ghl_location_id && client.ghl_token) {
+    try {
+      calendars = await listCalendars({ locationId: client.ghl_location_id, token: client.ghl_token });
+    } catch {}
+  }
+  let meetingCalendars: string[] = [];
+  try {
+    meetingCalendars = JSON.parse(client?.ghl_meeting_calendars || "[]");
+  } catch {}
   const currentStage = client?.ghl_pipeline_id ? `${client.ghl_pipeline_id}:${client.ghl_stage_id ?? ""}` : "";
 
   return (
@@ -131,11 +141,49 @@ export async function ClientForm({ client }: { client?: Client }) {
               <p className="text-sm text-muted">
                 {pipelineError
                   ? `Couldn't load pipelines: ${pipelineError}`
-                  : "Save the location ID and token first, then pick the pipeline stage here."}
+                  : client?.ghl_location_id && client.ghl_token
+                    ? "This GHL sub-account has no pipelines yet. Interested replies become a contact with a note; create a pipeline in GHL to get opportunities too."
+                    : "Save the location ID and token first, then pick the pipeline stage here."}
               </p>
             </>
           )}
         </div>
+        {client?.ghl_location_id && client.ghl_token && (
+          <div className="flex flex-col gap-3 rounded-md border border-line p-3">
+            <div>
+              <div className="text-sm font-medium">Counting meetings booked</div>
+              <p className="text-xs text-muted">
+                A lead counts as a booked meeting when they book on one of these calendars after being emailed, or reach the stage below.
+              </p>
+            </div>
+            {calendars.length > 0 ? (
+              <div className="flex flex-col gap-1">
+                <span className="label">Calendars</span>
+                {calendars.map((c) => (
+                  <label key={c.id} className="flex items-center gap-2 text-sm">
+                    <input type="checkbox" name="meeting_calendars" value={c.id} defaultChecked={meetingCalendars.length === 0 || meetingCalendars.includes(c.id)} />
+                    {c.name}
+                  </label>
+                ))}
+              </div>
+            ) : (
+              <p className="text-xs text-muted">No calendars found in this sub-account.</p>
+            )}
+            <div>
+              <label className="label" htmlFor="meeting_stage">Also count opportunities in this stage</label>
+              <select id="meeting_stage" name="meeting_stage" defaultValue={client.ghl_meeting_stage ?? ""} className="field">
+                <option value="">None</option>
+                {pipelines.map((p) => (
+                  <optgroup key={p.id} label={p.name}>
+                    {p.stages.map((s) => (
+                      <option key={s.id} value={`${p.id}:${s.id}`}>{p.name} → {s.name}</option>
+                    ))}
+                  </optgroup>
+                ))}
+              </select>
+            </div>
+          </div>
+        )}
       </section>
 
       <section className="card flex flex-col gap-4 p-5">

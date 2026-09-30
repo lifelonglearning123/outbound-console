@@ -23,7 +23,7 @@ export function Nav({ clients }: { clients: NavClient[] }) {
     }`;
 
   return (
-    <aside className="sticky top-0 flex h-screen w-56 shrink-0 flex-col gap-6 border-r border-line bg-card px-3 py-5">
+    <aside className="sticky top-0 flex h-screen w-56 print:hidden shrink-0 flex-col gap-6 border-r border-line bg-card px-3 py-5">
       <Link href="/" className="px-2.5">
         <div className="text-[15px] font-semibold tracking-tight">Outbound Console</div>
         <div className="text-xs text-muted">Instantly control room</div>

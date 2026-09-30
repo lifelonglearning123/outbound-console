@@ -176,6 +176,38 @@ CREATE TABLE IF NOT EXISTS activity (
   at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+-- Instantly's per-step totals for a campaign since launch (summed over A/B variants).
+CREATE TABLE IF NOT EXISTS step_stats (
+  campaign_id INTEGER NOT NULL REFERENCES campaigns(id),
+  step INTEGER NOT NULL,                -- 1-based
+  sent INTEGER NOT NULL DEFAULT 0,
+  opened INTEGER NOT NULL DEFAULT 0,
+  replied INTEGER NOT NULL DEFAULT 0,
+  opportunities INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (campaign_id, step)
+);
+
+-- Meetings booked by leads, found in the client's GHL (calendar bookings or a pipeline stage).
+CREATE TABLE IF NOT EXISTS meetings (
+  id TEXT PRIMARY KEY,                  -- "cal:<eventId>" or "opp:<opportunityId>"
+  client_id INTEGER NOT NULL REFERENCES clients(id),
+  lead_id INTEGER NOT NULL REFERENCES leads(id),
+  source TEXT NOT NULL,                 -- calendar | pipeline
+  booked_at TEXT NOT NULL,              -- when it was booked / reached the stage
+  starts_at TEXT,                       -- calendar bookings only
+  title TEXT,
+  status TEXT
+);
+CREATE INDEX IF NOT EXISTS meetings_client ON meetings(client_id, booked_at);
+
+-- GHL contact id -> email, so bookings can be matched to leads without refetching contacts.
+CREATE TABLE IF NOT EXISTS ghl_contacts (
+  client_id INTEGER NOT NULL,
+  contact_id TEXT NOT NULL,
+  email TEXT,
+  PRIMARY KEY (client_id, contact_id)
+);
+
 CREATE TABLE IF NOT EXISTS settings (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL
@@ -190,6 +222,11 @@ const ADDED_COLUMNS: [table: string, column: string, type: string][] = [
   ["campaigns", "hold_after", "INTEGER"],
   ["campaigns", "release_to", "INTEGER"],
   ["campaigns", "release_resume", "INTEGER"],
+  ["daily_stats", "contacted", "INTEGER NOT NULL DEFAULT 0"],
+  ["mailbox_daily", "replied", "INTEGER NOT NULL DEFAULT 0"],
+  ["mailbox_daily", "opened", "INTEGER NOT NULL DEFAULT 0"],
+  ["clients", "ghl_meeting_calendars", "TEXT"], // JSON array of calendar ids; null/[] = every calendar
+  ["clients", "ghl_meeting_stage", "TEXT"], // "pipelineId:stageId" that counts as a booked meeting
 ];
 
 function migrate(db: DatabaseSync) {

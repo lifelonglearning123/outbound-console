@@ -6,6 +6,7 @@ import { pruneForeignEmails, upsertCampaigns, upsertMailboxes } from "./connecti
 import { ensureTag, scopedMailboxes, sharingProblem } from "./scope";
 import { triageNewReplies } from "./triage";
 import { runWriter } from "./writer";
+import { syncMeetings } from "./meetings";
 
 const day = (offset = 0) => new Date(Date.now() - offset * 86400_000).toISOString().slice(0, 10);
 
@@ -38,9 +39,26 @@ export function healthRules(): HealthRules {
   };
 }
 
+/** Instantly labels steps "0_0_0" (sequence_step_variant, zero-based); older payloads use a plain number. */
+export function parseStep(step: string | null | undefined): number | null {
+  if (!step) return null;
+  const parts = String(step).split("_");
+  if (parts.length >= 2) {
+    const n = Number(parts[1]);
+    return Number.isFinite(n) ? n + 1 : null;
+  }
+  const n = Number(step);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
 async function syncEmails(client: Client, api: InstantlyClient) {
   const clientId = client.id;
   const cursorKey = `emails_cursor_${clientId}`;
+  // One-off: re-read history once so emails stored before step parsing was fixed get their step number.
+  if (getSetting(`step_backfill_${clientId}`, "") !== "1") {
+    setSetting(cursorKey, "");
+    setSetting(`step_backfill_${clientId}`, "1");
+  }
   const since = getSetting(cursorKey, "") || null;
   // Shared workspace: Instantly can't filter emails by tag, so filter by the client's own mailboxes.
   const own = scopedMailboxes(client);
@@ -66,20 +84,23 @@ async function syncEmails(client: Client, api: InstantlyClient) {
       const direction = e.ue_type === 2 ? "in" : "out";
       const text = e.body?.text || (e.body?.html ? stripHtml(e.body.html) : e.content_preview ?? "");
       const lead = e.lead?.toLowerCase() ?? null;
-      const r = run(
-        // A mailbox that moved to this client from another one sharing the workspace brings its emails with it.
+      const known = get<{ client_id: number }>("SELECT client_id FROM emails WHERE id = ?", e.id);
+      run(
+        // Re-reads fill in details stored before (step), and a mailbox that moved to this client from another
+        // one sharing the workspace brings its emails with it.
         `INSERT INTO emails (id, client_id, campaign_id, lead_id, lead_email, direction, step, account_email, subject,
            body_text, thread_id, sent_at, is_unread, interest)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-         ON CONFLICT(id) DO UPDATE SET client_id = excluded.client_id, campaign_id = excluded.campaign_id,
-           lead_id = excluded.lead_id WHERE emails.client_id != excluded.client_id`,
+         ON CONFLICT(id) DO UPDATE SET client_id = excluded.client_id,
+           campaign_id = COALESCE(excluded.campaign_id, emails.campaign_id), lead_id = COALESCE(excluded.lead_id, emails.lead_id),
+           step = COALESCE(emails.step, excluded.step)`,
         e.id, clientId, e.campaign_id ? campaigns.get(e.campaign_id) ?? null : null, leadId(lead), lead, direction,
-        e.step ? Number(e.step) || null : null, e.eaccount, e.subject,
+        parseStep(e.step), e.eaccount, e.subject,
         direction === "in" ? newestPart(text) : text,
         e.thread_id, e.timestamp_email, e.is_unread ? 1 : 0,
         direction === "in" && e.is_auto_reply ? "ooo" : null,
       );
-      if (!r.changes) continue;
+      if (known && known.client_id === clientId) continue; // not new to this client
       const lid = leadId(lead);
       if (lid && direction === "out") run("UPDATE leads SET last_sent_at = MAX(COALESCE(last_sent_at, ''), ?) WHERE id = ?", e.timestamp_email, lid);
       if (lid && direction === "in") run("UPDATE leads SET last_reply_at = MAX(COALESCE(last_reply_at, ''), ?) WHERE id = ?", e.timestamp_email, lid);
@@ -108,7 +129,7 @@ async function syncScheduled(client: Client, api: InstantlyClient) {
       run(
         "INSERT OR REPLACE INTO scheduled (id, client_id, campaign_id, lead_email, account_email, step, subject, due_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
         e.id, clientId, e.campaign_id ? campaigns.get(e.campaign_id) ?? null : null, e.lead, e.eaccount,
-        e.step ? Number(e.step) || null : null, e.subject, e.timestamp_email,
+        parseStep(e.step), e.subject, e.timestamp_email,
       );
     }
   });
@@ -119,17 +140,41 @@ async function syncStats(clientId: number, api: InstantlyClient) {
     "SELECT id, instantly_campaign_id, status FROM campaigns WHERE client_id = ? AND instantly_campaign_id IS NOT NULL",
     clientId,
   );
+  // The first stats sync reaches back 120 days so the dashboard's longer ranges have data; later ones refresh 30.
+  const backfilled = getSetting(`stats_backfill_${clientId}`, "") === "1";
+  const history = backfilled ? 30 : 120;
   for (const c of campaigns) {
-    const daily = await api.campaignDaily(c.instantly_campaign_id, day(30), day(0));
+    const daily = await api.campaignDaily(c.instantly_campaign_id, day(history), day(0));
     for (const d of daily) {
       run(
-        `INSERT INTO daily_stats (client_id, campaign_id, date, sent, opened, replied, clicked, opportunities)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-         ON CONFLICT(campaign_id, date) DO UPDATE SET sent = excluded.sent, opened = excluded.opened, replied = excluded.replied,
-           clicked = excluded.clicked, opportunities = excluded.opportunities`,
-        clientId, c.id, d.date, d.sent ?? 0, d.unique_opened ?? 0, d.unique_replies ?? 0, d.unique_clicks ?? 0, d.unique_opportunities ?? 0,
+        `INSERT INTO daily_stats (client_id, campaign_id, date, sent, contacted, opened, replied, clicked, opportunities)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(campaign_id, date) DO UPDATE SET sent = excluded.sent, contacted = excluded.contacted, opened = excluded.opened,
+           replied = excluded.replied, clicked = excluded.clicked, opportunities = excluded.opportunities`,
+        clientId, c.id, d.date, d.sent ?? 0, d.new_leads_contacted ?? 0, d.unique_opened ?? 0, d.unique_replies ?? 0,
+        d.unique_clicks ?? 0, d.unique_opportunities ?? 0,
       );
     }
+    // Per-step totals since launch (A/B variants summed).
+    const steps = await api.campaignSteps(c.instantly_campaign_id);
+    const byStep = new Map<number, { sent: number; opened: number; replied: number; opps: number }>();
+    for (const r of steps) {
+      // Steps arrive as "0", "1"… (zero-based); skip rows without a usable step.
+      const n = parseStep(r.step !== null && r.step !== undefined && !String(r.step).includes("_") ? `0_${r.step}` : r.step);
+      if (!n) continue;
+      const t = byStep.get(n) ?? { sent: 0, opened: 0, replied: 0, opps: 0 };
+      t.sent += r.sent ?? 0;
+      t.opened += r.unique_opened ?? 0;
+      t.replied += r.unique_replies ?? 0;
+      t.opps += r.unique_opportunities ?? 0;
+      byStep.set(n, t);
+    }
+    tx(() => {
+      run("DELETE FROM step_stats WHERE campaign_id = ?", c.id);
+      for (const [n, t] of byStep) {
+        run("INSERT INTO step_stats (campaign_id, step, sent, opened, replied, opportunities) VALUES (?, ?, ?, ?, ?, ?)", c.id, n, t.sent, t.opened, t.replied, t.opps);
+      }
+    });
     if (c.status === "active") {
       try {
         const s = await api.sendingStatus(c.instantly_campaign_id);
@@ -142,16 +187,22 @@ async function syncStats(clientId: number, api: InstantlyClient) {
   }
 
   const mailboxes = all<{ email: string }>("SELECT email FROM mailboxes WHERE client_id = ?", clientId).map((m) => m.email);
+  // Instantly allows at most 31 days per mailbox-analytics call, so history is fetched in 30-day windows.
+  const windows = backfilled ? [[14, 0]] : [[120, 91], [90, 61], [60, 31], [30, 0]];
   for (let i = 0; i < mailboxes.length; i += 100) {
-    const daily = await api.accountDaily(mailboxes.slice(i, i + 100), day(14), day(0));
-    for (const d of daily) {
-      run(
-        `INSERT INTO mailbox_daily (client_id, email, date, sent, bounced) VALUES (?, ?, ?, ?, ?)
-         ON CONFLICT(client_id, email, date) DO UPDATE SET sent = excluded.sent, bounced = excluded.bounced`,
-        clientId, d.email_account, d.date, d.sent ?? 0, d.bounced ?? 0,
-      );
+    for (const [start, end] of windows) {
+      const daily = await api.accountDaily(mailboxes.slice(i, i + 100), day(start), day(end));
+      for (const d of daily) {
+        run(
+          `INSERT INTO mailbox_daily (client_id, email, date, sent, bounced, opened, replied) VALUES (?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT(client_id, email, date) DO UPDATE SET sent = excluded.sent, bounced = excluded.bounced,
+             opened = excluded.opened, replied = excluded.replied`,
+          clientId, d.email_account, d.date, d.sent ?? 0, d.bounced ?? 0, d.unique_opened ?? 0, d.unique_replies ?? 0,
+        );
+      }
     }
   }
+  setSetting(`stats_backfill_${clientId}`, "1");
   run(
     `UPDATE mailboxes SET
        sent_today = (SELECT COALESCE(SUM(sent),0) FROM mailbox_daily d WHERE d.client_id = mailboxes.client_id AND d.email = mailboxes.email AND d.date = ?),
@@ -175,7 +226,8 @@ async function syncLeads(clientId: number, api: InstantlyClient) {
         run(
           `UPDATE leads SET instantly_status = ?, interest_status = COALESCE(?, interest_status), last_open_at = COALESCE(?, last_open_at)
            WHERE client_id = ? AND email = ?`,
-          l.status, l.lt_interest_status ?? null, l.timestamp_last_open, clientId, l.email.toLowerCase(),
+          // Instantly omits fields that were never set (e.g. no opens yet); undefined can't be bound.
+          l.status ?? null, l.lt_interest_status ?? null, l.timestamp_last_open ?? null, clientId, l.email.toLowerCase(),
         );
       }
     });
@@ -249,6 +301,7 @@ export async function syncClient(clientId: number): Promise<{ ok: boolean; messa
     ["leads", () => syncLeads(clientId, api)],
     ["health", () => enforceHealth(clientId, api)],
     ["replies", () => triageNewReplies(clientId)],
+    ["meetings", () => syncMeetings(client)],
   ];
   const errors: string[] = [];
   for (const [name, fn] of steps) {

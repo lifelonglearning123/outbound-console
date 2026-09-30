@@ -35,6 +35,10 @@ export async function saveClient(form: FormData) {
     ghl_location_id: text(form, "ghl_location_id"),
     ghl_pipeline_id: pipelineId || null,
     ghl_stage_id: stageId || null,
+    // Only sent when GHL is connected; otherwise keep what's stored.
+    meetingsSent: form.has("meeting_stage") ? 1 : 0,
+    ghl_meeting_calendars: JSON.stringify(form.getAll("meeting_calendars").map(String)),
+    ghl_meeting_stage: text(form, "meeting_stage"),
     brief: JSON.stringify(brief),
   };
 
@@ -44,6 +48,8 @@ export async function saveClient(form: FormData) {
     run(
       `UPDATE clients SET name = @name, ghl_location_id = @ghl_location_id, ghl_pipeline_id = @ghl_pipeline_id,
          ghl_stage_id = @ghl_stage_id, brief = @brief, instantly_api_key = @key, ghl_token = @token,
+         ghl_meeting_calendars = CASE WHEN @meetingsSent = 1 THEN @ghl_meeting_calendars ELSE ghl_meeting_calendars END,
+         ghl_meeting_stage = CASE WHEN @meetingsSent = 1 THEN @ghl_meeting_stage ELSE ghl_meeting_stage END,
          key_status = CASE WHEN @keyChanged = 1 THEN NULL ELSE key_status END,
          instantly_tag_id = CASE WHEN @tagChanged = 1 OR @keyChanged = 1 THEN NULL ELSE instantly_tag_id END,
          instantly_tag_label = @tagLabel
