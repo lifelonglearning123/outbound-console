@@ -169,7 +169,7 @@ export function CampaignForm(p: Props) {
           <div>
             <h2 className="font-semibold">Contacts from GHL</h2>
             <p className="text-sm text-muted">
-              Link this campaign to a GHL tag. Every few minutes, contacts who have the tag (and aren&apos;t on Do-Not-Disturb) join the
+              Link this campaign to a GHL tag. Every 30 minutes (or when you click Sync now), contacts who have the tag (and aren&apos;t on Do-Not-Disturb) join the
               campaign, their emails are written, and they wait in Approvals.
             </p>
           </div>

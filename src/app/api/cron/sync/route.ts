@@ -1,6 +1,6 @@
 import { syncAll } from "@/lib/sync";
 
-// Vercel Cron calls this every 3 minutes (vercel.json). It syncs every client with Instantly and GHL,
+// Vercel Cron calls this every 30 minutes (vercel.json), which keeps Neon on its free plan. It syncs every client with Instantly and GHL,
 // then writes any queued emails. Protected by CRON_SECRET, which Vercel sends as a bearer token.
 export const maxDuration = 800;
 

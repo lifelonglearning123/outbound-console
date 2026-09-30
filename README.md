@@ -18,7 +18,7 @@ Client logins are added on **Users** with a first password, which they can chang
 1. Create a Neon project and put its **pooled** connection string in `.env.local` as `DATABASE_URL`.
    `.env.local` also needs the values listed in `.env.example`.
 2. Copy the data from the old local app (once): stop the local app, then `npm run db:migrate`.
-3. `vercel link` in this folder (Pro plan: the sync runs every 3 minutes via `vercel.json`).
+3. `vercel link` in this folder (the sync runs every 30 minutes via `vercel.json`; **Sync now** on the Overview runs it straight away).
 4. `npm run vercel:env` copies the settings from `.env.local` into the Vercel project.
 5. `vercel --prod`, then open `/setup` on the new URL to set the admin password.
 
@@ -57,7 +57,7 @@ Still shared across the workspace: the blocklist (an unsubscribe applies to ever
    custom variables above.
 4. **Launch.** Use the button on the campaign page. After that, pause and resume, daily caps, sending
    windows and mailboxes can all be changed from the campaign page.
-5. **Sync.** Every few minutes the app pulls sent emails, replies, queued sends, stats and mailbox health.
+5. **Sync.** Every 30 minutes (or on **Sync now**) the app pulls sent emails, replies, queued sends, stats and mailbox health.
    It tags replies with AI, sends interested ones to GHL, blocklists unsubscribe requests, and pauses
    mailboxes that break the health rules set on the Mailboxes page.
 
