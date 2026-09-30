@@ -21,6 +21,21 @@ The Instantly API notes are in `docs/instantly-api.md`.
 Day to day, use the Desktop shortcut. The first start builds the app, which takes about a minute.
 It runs on http://127.0.0.1:3480. Stop it with Start Menu → Outbound Console → Stop.
 
+## Several clients in one Instantly workspace
+
+A client can have its own workspace, which is simplest: one key per client and no tag.
+Or several clients can share one workspace, with one Instantly tag per client:
+
+1. In Instantly, create a tag per client, e.g. "Signal" and "Fruitful", or let the app create them.
+   Put each client's mailboxes under that client's tag. Also tag any campaigns the client already has.
+2. In the console, give each client the same API key and its own tag (Settings → Instantly tag).
+
+Each client then sees and controls only the mailboxes and campaigns carrying its tag. Its inbox and
+timeline only show emails from its own mailboxes, and campaigns created here are tagged automatically.
+If two clients share a workspace and either has no tag, both stop syncing until they're tagged,
+so one client never sees another's data.
+Still shared across the workspace: the blocklist (an unsubscribe applies to every client) and Instantly's lead database.
+
 ## The flow
 
 1. **Campaign.** Describe what each step should do. The app creates the campaign in Instantly as a draft,

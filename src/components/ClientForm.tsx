@@ -1,6 +1,8 @@
 import { saveClient } from "@/app/clients/actions";
 import { mask, type Client } from "@/lib/clients";
 import { listPipelines, type GhlPipeline } from "@/lib/ghl";
+import { instantly } from "@/lib/instantly";
+import { all } from "@/lib/db";
 
 const BRIEF_FIELDS = [
   { key: "offer", label: "Offer", hint: "What the client sells and the one outcome it delivers.", rows: 3 },
@@ -23,6 +25,19 @@ export async function ClientForm({ client }: { client?: Client }) {
       pipelineError = (e as Error).message;
     }
   }
+  // Tags that already exist in the workspace, offered as suggestions.
+  let tags: string[] = [];
+  if (client?.instantly_api_key && client.instantly_workspace_id) {
+    try {
+      tags = (await instantly(client.instantly_api_key).tags()).map((t) => t.label);
+    } catch {}
+  }
+  const sharedWith = client?.instantly_workspace_id
+    ? all<{ name: string; instantly_tag_label: string | null }>(
+        "SELECT name, instantly_tag_label FROM clients WHERE instantly_workspace_id = ? AND id != ? AND archived = 0",
+        client.instantly_workspace_id, client.id,
+      )
+    : [];
   const currentStage = client?.ghl_pipeline_id ? `${client.ghl_pipeline_id}:${client.ghl_stage_id ?? ""}` : "";
 
   return (
@@ -46,8 +61,30 @@ export async function ClientForm({ client }: { client?: Client }) {
             placeholder={client?.instantly_api_key ? `${mask(client.instantly_api_key)} — leave blank to keep` : "Paste the key from Instantly → Settings → Integrations → API"}
           />
           <p className="mt-1 text-xs text-muted">
-            Create it in the client&apos;s own workspace with the <span className="font-mono">all:all</span> scope. Saving checks it straight away.
+            Create it with the <span className="font-mono">all:all</span> scope. Saving checks it straight away.
           </p>
+        </div>
+        <div>
+          <label className="label" htmlFor="instantly_tag_label">Instantly tag (shared workspace)</label>
+          <input
+            id="instantly_tag_label"
+            name="instantly_tag_label"
+            list="instantly-tags"
+            defaultValue={client?.instantly_tag_label ?? ""}
+            className="field"
+            placeholder="Leave blank if this client has its own workspace"
+          />
+          <datalist id="instantly-tags">{tags.map((t) => <option key={t} value={t} />)}</datalist>
+          <p className="mt-1 text-xs text-muted">
+            When several clients share one Instantly workspace, each gets a tag. This client then only sees mailboxes and campaigns
+            carrying that tag, and campaigns created here get it automatically. In Instantly, tag this client&apos;s mailboxes (and any
+            existing campaigns) with the same tag. The tag is created in Instantly if it doesn&apos;t exist. The blocklist is still shared.
+          </p>
+          {sharedWith.length > 0 && (
+            <p className="mt-1 text-xs text-wait">
+              This workspace is shared with {sharedWith.map((s) => `${s.name} (${s.instantly_tag_label ? `tag "${s.instantly_tag_label}"` : "no tag yet"})`).join(", ")}.
+            </p>
+          )}
         </div>
       </section>
 

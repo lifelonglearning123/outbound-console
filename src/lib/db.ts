@@ -18,6 +18,8 @@ CREATE TABLE IF NOT EXISTS clients (
   instantly_api_key TEXT,
   instantly_workspace_id TEXT,
   instantly_workspace_name TEXT,
+  instantly_tag_id TEXT,           -- shared-workspace mode: only resources with this Instantly tag belong to the client
+  instantly_tag_label TEXT,
   key_status TEXT,                 -- ok | error | null (unchecked)
   key_message TEXT,
   key_checked_at TEXT,
@@ -179,11 +181,25 @@ CREATE TABLE IF NOT EXISTS settings (
 );
 `;
 
+// Columns added after the first release; CREATE TABLE IF NOT EXISTS won't add them to an existing file.
+const ADDED_COLUMNS: [table: string, column: string, type: string][] = [
+  ["clients", "instantly_tag_id", "TEXT"],
+  ["clients", "instantly_tag_label", "TEXT"],
+];
+
+function migrate(db: DatabaseSync) {
+  for (const [table, column, type] of ADDED_COLUMNS) {
+    const cols = db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[];
+    if (!cols.some((c) => c.name === column)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
+  }
+}
+
 function open(): DatabaseSync {
   fs.mkdirSync(DATA_DIR, { recursive: true });
   const db = new DatabaseSync(path.join(DATA_DIR, "outbound.db"));
   db.exec("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;");
   db.exec(SCHEMA);
+  migrate(db);
   return db;
 }
 

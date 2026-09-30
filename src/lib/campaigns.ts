@@ -113,6 +113,12 @@ export async function syncCampaignToInstantly(id: number) {
   const remote = c.instantly_campaign_id
     ? await api.patchCampaign(c.instantly_campaign_id, body)
     : await api.createCampaign(body);
+  // Remember the id straight away so a later failure can't lead to a duplicate campaign on retry.
+  if (!c.instantly_campaign_id) run("UPDATE campaigns SET instantly_campaign_id = ? WHERE id = ?", remote.id, id);
+
+  // Shared workspace: tag the campaign so it belongs to this client. Re-applied on every save, so a failed
+  // attempt is repaired by saving again.
+  if (client.instantly_tag_id) await api.tagResources(client.instantly_tag_id, 2, [remote.id]);
 
   const vars = c.steps.flatMap((_, i) => (i === 0 ? [subjectVar(1), bodyVar(1)] : [bodyVar(i + 1)]));
   await api.addVariables(remote.id, vars);

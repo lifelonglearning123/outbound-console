@@ -1,8 +1,9 @@
 import "server-only";
 import { all, get, run, tx, logActivity, getSetting, setSetting } from "./db";
-import { listClients, requireClient } from "./clients";
+import { listClients, requireClient, type Client } from "./clients";
 import { instantly, type Email, type InstantlyClient } from "./instantly";
-import { upsertCampaigns, upsertMailboxes } from "./connection";
+import { pruneForeignEmails, upsertCampaigns, upsertMailboxes } from "./connection";
+import { ensureTag, scopedMailboxes, sharingProblem } from "./scope";
 import { triageNewReplies } from "./triage";
 import { runWriter } from "./writer";
 
@@ -37,10 +38,14 @@ export function healthRules(): HealthRules {
   };
 }
 
-async function syncEmails(clientId: number, api: InstantlyClient) {
+async function syncEmails(client: Client, api: InstantlyClient) {
+  const clientId = client.id;
   const cursorKey = `emails_cursor_${clientId}`;
   const since = getSetting(cursorKey, "") || null;
-  const emails = await api.emailsSince(since);
+  // Shared workspace: Instantly can't filter emails by tag, so filter by the client's own mailboxes.
+  const own = scopedMailboxes(client);
+  if (own && own.length === 0) return 0;
+  const emails = await api.emailsSince(since, 5, own);
   if (emails.length === 0) return 0;
 
   const campaigns = new Map(
@@ -62,9 +67,12 @@ async function syncEmails(clientId: number, api: InstantlyClient) {
       const text = e.body?.text || (e.body?.html ? stripHtml(e.body.html) : e.content_preview ?? "");
       const lead = e.lead?.toLowerCase() ?? null;
       const r = run(
-        `INSERT OR IGNORE INTO emails (id, client_id, campaign_id, lead_id, lead_email, direction, step, account_email, subject,
+        // A mailbox that moved to this client from another one sharing the workspace brings its emails with it.
+        `INSERT INTO emails (id, client_id, campaign_id, lead_id, lead_email, direction, step, account_email, subject,
            body_text, thread_id, sent_at, is_unread, interest)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(id) DO UPDATE SET client_id = excluded.client_id, campaign_id = excluded.campaign_id,
+           lead_id = excluded.lead_id WHERE emails.client_id != excluded.client_id`,
         e.id, clientId, e.campaign_id ? campaigns.get(e.campaign_id) ?? null : null, leadId(lead), lead, direction,
         e.step ? Number(e.step) || null : null, e.eaccount, e.subject,
         direction === "in" ? newestPart(text) : text,
@@ -83,9 +91,11 @@ async function syncEmails(clientId: number, api: InstantlyClient) {
   return emails.length;
 }
 
-async function syncScheduled(clientId: number, api: InstantlyClient) {
+async function syncScheduled(client: Client, api: InstantlyClient) {
+  const clientId = client.id;
+  const own = scopedMailboxes(client);
   // One page is plenty at this scale; it's a preview of what goes out next.
-  const res = await api.scheduledEmails();
+  const res = own && own.length === 0 ? [] : await api.scheduledEmails(own);
   const campaigns = new Map(
     all<{ id: number; instantly_campaign_id: string }>("SELECT id, instantly_campaign_id FROM campaigns WHERE client_id = ?", clientId).map((c) => [
       c.instantly_campaign_id,
@@ -204,17 +214,37 @@ async function enforceHealth(clientId: number, api: InstantlyClient) {
 export async function syncClient(clientId: number): Promise<{ ok: boolean; message: string }> {
   const client = requireClient(clientId);
   if (!client.instantly_api_key || client.key_status === "error") return { ok: false, message: "Instantly not connected" };
+  // Never sync a shared workspace unless every client in it is tagged, or one client would see another's data.
+  const problem = sharingProblem(client);
+  if (problem) {
+    run("UPDATE clients SET key_status = 'error', key_message = ? WHERE id = ?", problem, clientId);
+    logActivity(clientId, "error", problem);
+    return { ok: false, message: problem };
+  }
   const api = instantly(client.instantly_api_key);
+  // Resolve the tag first; if that fails, stop rather than fall back to the whole workspace.
+  let tagId: string | null;
+  try {
+    tagId = await ensureTag(api, client);
+  } catch (e) {
+    const message = `Couldn't look up tag "${client.instantly_tag_label}": ${(e as Error).message}`;
+    logActivity(clientId, "error", message);
+    return { ok: false, message };
+  }
   const steps: [string, () => Promise<unknown>][] = [
-    ["mailboxes", async () => upsertMailboxes(clientId, await api.accounts())],
+    ["mailboxes", async () => {
+      upsertMailboxes(clientId, await api.accounts(tagId));
+      if (tagId) pruneForeignEmails(clientId);
+    }],
     ["campaigns", async () => {
-      const campaigns = await api.campaigns();
+      const campaigns = await api.campaigns(tagId);
       upsertCampaigns(clientId, campaigns);
       const boxes = get<{ n: number }>("SELECT COUNT(*) n FROM mailboxes WHERE client_id = ?", clientId)?.n ?? 0;
-      run("UPDATE clients SET key_message = ?, key_checked_at = ? WHERE id = ?", `${boxes} mailboxes, ${campaigns.length} campaigns`, new Date().toISOString(), clientId);
+      const scope = tagId ? ` tagged "${client.instantly_tag_label}"` : "";
+      run("UPDATE clients SET key_message = ?, key_checked_at = ? WHERE id = ?", `${boxes} mailboxes, ${campaigns.length} campaigns${scope}`, new Date().toISOString(), clientId);
     }],
-    ["emails", () => syncEmails(clientId, api)],
-    ["scheduled", () => syncScheduled(clientId, api)],
+    ["emails", () => syncEmails(client, api)],
+    ["scheduled", () => syncScheduled(client, api)],
     ["stats", () => syncStats(clientId, api)],
     ["leads", () => syncLeads(clientId, api)],
     ["health", () => enforceHealth(clientId, api)],

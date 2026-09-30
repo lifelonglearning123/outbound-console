@@ -18,6 +18,8 @@ export type Client = {
   instantly_api_key: string | null;
   instantly_workspace_id: string | null;
   instantly_workspace_name: string | null;
+  instantly_tag_id: string | null;
+  instantly_tag_label: string | null;
   key_status: "ok" | "error" | null;
   key_message: string | null;
   key_checked_at: string | null;

@@ -12,6 +12,10 @@ const accounts = ["sam@fruitful-mail.co", "sam@fruitfulhq.co", "hello@getfruitfu
   email, status: 1, warmup_status: 1, stat_warmup_score: [98, 91, 64][i], daily_limit: 30,
 }));
 const campaigns = new Map();
+// Custom tags: two clients share this workspace. Mailboxes 1-2 are "Signal", mailbox 3 is "Fruitful".
+const tags = [{ id: "tag-signal", label: "Signal" }, { id: "tag-fruitful", label: "Fruitful" }];
+const tagged = new Map([["tag-signal", new Set([accounts[0].email, accounts[1].email])], ["tag-fruitful", new Set([accounts[2].email])]]);
+const hasTag = (q, id) => { const t = q.get("tag_ids"); return !t || t.split(",").some((x) => tagged.get(x)?.has(id)); };
 const leads = new Map(); // id -> lead
 const emails = [];
 const sentCount = new Map();
@@ -74,7 +78,13 @@ function page(items, q) {
 
 const routes = [
   ["GET", /^\/workspaces\/current$/, () => ({ id: "ws_mock", name: "Fruitful (mock)", plan_id: "hypergrowth" })],
-  ["GET", /^\/accounts$/, (m, q) => page(accounts, q)],
+  ["GET", /^\/accounts$/, (m, q) => page(accounts.filter((a) => hasTag(q, a.email)), q)],
+  ["GET", /^\/custom-tags$/, (m, q) => page(tags, q)],
+  ["POST", /^\/custom-tags$/, (m, q, body) => { const t = { id: randomUUID(), label: body.label }; tags.push(t); tagged.set(t.id, new Set()); return t; }],
+  ["POST", /^\/custom-tags\/toggle-resource$/, (m, q, body) => {
+    for (const id of body.tag_ids) for (const r of body.resource_ids) body.assign ? tagged.get(id)?.add(r) : tagged.get(id)?.delete(r);
+    return { success: true };
+  }],
   ["POST", /^\/accounts\/(.+)\/(pause|resume)$/, (m) => {
     const a = accounts.find((x) => x.email === decodeURIComponent(m[1]));
     if (!a) throw Object.assign(new Error("not found"), { code: 404 });
@@ -84,7 +94,7 @@ const routes = [
   ["GET", /^\/accounts\/analytics\/daily$/, (m, q) => q.getAll("emails").map((e, i) => ({
     date: now().slice(0, 10), email_account: e, sent: 40, bounced: i === 1 ? 3 : 0,
   }))],
-  ["GET", /^\/campaigns$/, (m, q) => page([...campaigns.values()], q)],
+  ["GET", /^\/campaigns$/, (m, q) => page([...campaigns.values()].filter((c) => hasTag(q, c.id)), q)],
   ["POST", /^\/campaigns$/, (m, q, body) => {
     const c = { id: randomUUID(), status: 0, not_sending_status: null, timestamp_created: now(), email_list: [], ...body };
     campaigns.set(c.id, c);
@@ -135,7 +145,8 @@ const routes = [
     }
     sendOne();
     const min = q.get("min_timestamp_created");
-    return page(emails.filter((e) => !min || e.timestamp_created > min), q);
+    const own = q.get("eaccount")?.split(",");
+    return page(emails.filter((e) => (!min || e.timestamp_created > min) && (!own || own.includes(e.eaccount))), q);
   }],
   ["POST", /^\/emails\/reply$/, (m, q, body) => {
     const orig = emails.find((e) => e.id === body.reply_to_uuid);

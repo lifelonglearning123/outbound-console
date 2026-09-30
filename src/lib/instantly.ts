@@ -136,6 +136,8 @@ export const WARMUP_STATUS: Record<number, string> = {
 
 // ---------- Types ----------
 
+export type Tag = { id: string; label: string };
+
 export type Workspace = { id: string; name: string; plan_id: string | null };
 
 export type CampaignSchedule = {
@@ -252,8 +254,9 @@ export function instantly(key: string) {
   return {
     workspace: () => call<Workspace>(key, "GET", "/workspaces/current"),
 
-    campaigns: () =>
-      paginate<Campaign>((c) => call(key, "GET", "/campaigns", { query: { limit: 100, starting_after: c } })),
+    /** All campaigns, or only those carrying `tagId` (shared-workspace mode). */
+    campaigns: (tagId?: string | null) =>
+      paginate<Campaign>((c) => call(key, "GET", "/campaigns", { query: { limit: 100, starting_after: c, tag_ids: tagId ?? undefined } })),
     campaign: (id: string) => call<Campaign>(key, "GET", `/campaigns/${id}`),
     createCampaign: (body: Record<string, unknown>) => call<Campaign>(key, "POST", "/campaigns", { body }),
     patchCampaign: (id: string, body: Record<string, unknown>) =>
@@ -284,8 +287,17 @@ export function instantly(key: string) {
         body: { lead_email: leadEmail, campaign_id: campaignId, interest_value: value },
       }),
 
-    accounts: () =>
-      paginate<Account>((c) => call(key, "GET", "/accounts", { query: { limit: 100, starting_after: c } })),
+    /** All mailboxes, or only those carrying `tagId` (shared-workspace mode). */
+    accounts: (tagId?: string | null) =>
+      paginate<Account>((c) => call(key, "GET", "/accounts", { query: { limit: 100, starting_after: c, tag_ids: tagId ?? undefined } })),
+
+    tags: () => paginate<Tag>((c) => call(key, "GET", "/custom-tags", { query: { limit: 100, starting_after: c } })),
+    createTag: (label: string) => call<Tag>(key, "POST", "/custom-tags", { body: { label } }),
+    /** resourceType: 1 = mailbox (id is its email), 2 = campaign. */
+    tagResources: (tagId: string, resourceType: 1 | 2, resourceIds: string[], assign = true) =>
+      call(key, "POST", "/custom-tags/toggle-resource", {
+        body: { tag_ids: [tagId], resource_type: resourceType, resource_ids: resourceIds, assign },
+      }),
     pauseAccount: (email: string) => call<Account>(key, "POST", `/accounts/${encodeURIComponent(email)}/pause`),
     resumeAccount: (email: string) => call<Account>(key, "POST", `/accounts/${encodeURIComponent(email)}/resume`),
     accountDaily: (emails: string[], start: string, end: string) =>
@@ -294,18 +306,20 @@ export function instantly(key: string) {
       }),
 
     /** Emails created after `since` (ISO), oldest first, capped by `maxPages` to respect the 20/min limit. */
-    emailsSince: async (since: string | null, maxPages = 5) => {
+    emailsSince: async (since: string | null, maxPages = 5, eaccounts?: string[]) => {
       let pages = 0;
       return paginate<Email>((c) => {
         pages += 1;
         if (pages > maxPages) return Promise.resolve({ items: [] });
         return call(key, "GET", "/emails", {
-          query: { limit: 100, starting_after: c, min_timestamp_created: since ?? undefined, sort_order: "asc" },
+          query: { limit: 100, starting_after: c, min_timestamp_created: since ?? undefined, sort_order: "asc", eaccount: eaccounts?.join(",") },
         });
       });
     },
-    scheduledEmails: async () =>
-      (await call<Page<Email>>(key, "GET", "/emails", { query: { limit: 100, scheduled_only: true, sort_order: "asc" } })).items ?? [],
+    scheduledEmails: async (eaccounts?: string[]) =>
+      (await call<Page<Email>>(key, "GET", "/emails", {
+        query: { limit: 100, scheduled_only: true, sort_order: "asc", eaccount: eaccounts?.join(",") },
+      })).items ?? [],
     blockEmail: (email: string) => call(key, "POST", "/block-lists-entries", { body: { bl_value: email } }),
     reply: (body: { eaccount: string; reply_to_uuid: string; subject: string; body: { html?: string; text?: string } }) =>
       call<Email>(key, "POST", "/emails/reply", { body }),

@@ -1,6 +1,7 @@
 import "server-only";
-import { run, get, logActivity, tx } from "./db";
+import { all, run, get, logActivity, tx } from "./db";
 import { requireClient } from "./clients";
+import { ensureTag, sharingProblem } from "./scope";
 import { instantly, type Account, type Campaign } from "./instantly";
 
 export function campaignState(status: number): string {
@@ -11,8 +12,14 @@ export function campaignState(status: number): string {
   return "error";
 }
 
+const placeholders = (n: number) => Array.from({ length: n }, () => "?").join(",") || "NULL";
+
+/** Store the client's mailboxes and drop any it no longer owns (e.g. untagged in shared-workspace mode). */
 export function upsertMailboxes(clientId: number, accounts: Account[]) {
   const now = new Date().toISOString();
+  const emails = accounts.map((a) => a.email);
+  run(`DELETE FROM mailboxes WHERE client_id = ? AND email NOT IN (${placeholders(emails.length)})`, clientId, ...emails);
+  run(`DELETE FROM mailbox_daily WHERE client_id = ? AND email NOT IN (${placeholders(emails.length)})`, clientId, ...emails);
   for (const a of accounts) {
     run(
       `INSERT INTO mailboxes (client_id, email, status, warmup_status, warmup_score, daily_limit, last_synced_at)
@@ -24,9 +31,23 @@ export function upsertMailboxes(clientId: number, accounts: Account[]) {
   }
 }
 
-/** Insert campaigns we don't know yet (created directly in Instantly) and refresh status on all of them. */
+/**
+ * Insert campaigns we don't know yet (created directly in Instantly), refresh status on all of them,
+ * and forget external campaigns the client no longer owns. Campaigns built here are never dropped.
+ */
 export function upsertCampaigns(clientId: number, campaigns: Campaign[]) {
   const now = new Date().toISOString();
+  const ids = campaigns.map((c) => c.id);
+  const gone = all<{ id: number }>(
+    `SELECT id FROM campaigns WHERE client_id = ? AND managed = 0 AND instantly_campaign_id NOT IN (${placeholders(ids.length)})`,
+    clientId, ...ids,
+  );
+  for (const g of gone) {
+    run("DELETE FROM daily_stats WHERE campaign_id = ?", g.id);
+    run("DELETE FROM scheduled WHERE campaign_id = ?", g.id);
+    run("UPDATE emails SET campaign_id = NULL WHERE campaign_id = ?", g.id);
+    run("DELETE FROM campaigns WHERE id = ?", g.id);
+  }
   for (const c of campaigns) {
     const existing = get<{ id: number }>(
       "SELECT id FROM campaigns WHERE client_id = ? AND instantly_campaign_id = ?",
@@ -56,6 +77,14 @@ export function upsertCampaigns(clientId: number, campaigns: Campaign[]) {
   }
 }
 
+/** Shared mode: drop emails sent or received by mailboxes this client doesn't own. */
+export function pruneForeignEmails(clientId: number) {
+  run(
+    "DELETE FROM emails WHERE client_id = ? AND account_email NOT IN (SELECT email FROM mailboxes WHERE client_id = ?)",
+    clientId, clientId,
+  );
+}
+
 /** Validate a client's Instantly key and pull its workspace, mailboxes and campaigns. */
 export async function checkConnection(clientId: number): Promise<{ ok: boolean; message: string }> {
   const client = requireClient(clientId);
@@ -67,17 +96,27 @@ export async function checkConnection(clientId: number): Promise<{ ok: boolean; 
   const api = instantly(client.instantly_api_key);
   try {
     const ws = await api.workspace();
-    const [accounts, campaigns] = await Promise.all([api.accounts(), api.campaigns()]);
+    run("UPDATE clients SET instantly_workspace_id = ?, instantly_workspace_name = ? WHERE id = ?", ws.id, ws.name, clientId);
+    client.instantly_workspace_id = ws.id;
+    const problem = sharingProblem(client);
+    if (problem) {
+      run("UPDATE clients SET key_status = 'error', key_message = ?, key_checked_at = ? WHERE id = ?", problem, now, clientId);
+      logActivity(clientId, "error", problem);
+      return { ok: false, message: problem };
+    }
+    const tagId = await ensureTag(api, client);
+    const [accounts, campaigns] = await Promise.all([api.accounts(tagId), api.campaigns(tagId)]);
+    const scope = tagId ? ` tagged "${client.instantly_tag_label}"` : "";
     tx(() => {
       run(
-        `UPDATE clients SET instantly_workspace_id = ?, instantly_workspace_name = ?, key_status = 'ok', key_message = ?,
-           key_checked_at = ? WHERE id = ?`,
-        ws.id, ws.name, `${accounts.length} mailboxes, ${campaigns.length} campaigns`, now, clientId,
+        "UPDATE clients SET key_status = 'ok', key_message = ?, key_checked_at = ? WHERE id = ?",
+        `${accounts.length} mailboxes, ${campaigns.length} campaigns${scope}`, now, clientId,
       );
       upsertMailboxes(clientId, accounts);
       upsertCampaigns(clientId, campaigns);
+      if (tagId) pruneForeignEmails(clientId);
     });
-    const message = `Connected to "${ws.name}": ${accounts.length} mailboxes, ${campaigns.length} campaigns`;
+    const message = `Connected to "${ws.name}": ${accounts.length} mailboxes, ${campaigns.length} campaigns${scope}`;
     logActivity(clientId, "connect", message);
     return { ok: true, message };
   } catch (e) {
