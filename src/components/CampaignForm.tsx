@@ -3,6 +3,7 @@
 import { useState } from "react";
 import type { Schedule, Step } from "@/lib/campaigns";
 import { INSTANTLY_TIMEZONES } from "@/lib/timezones";
+import { EmailEditor } from "./EmailEditor";
 
 const DAYS = [
   { v: 1, l: "Mon" }, { v: 2, l: "Tue" }, { v: 3, l: "Wed" }, { v: 4, l: "Thu" },
@@ -23,7 +24,8 @@ type Props = {
 };
 
 export function CampaignForm(p: Props) {
-  const [steps, setSteps] = useState<Step[]>(p.steps);
+  // uid keeps each step's editor attached to the right step when steps are removed.
+  const [steps, setSteps] = useState<(Step & { uid: number })[]>(() => p.steps.map((s, i) => ({ ...s, uid: i })));
   const update = (i: number, patch: Partial<Step>) => setSteps(steps.map((s, j) => (j === i ? { ...s, ...patch } : s)));
 
   return (
@@ -40,26 +42,62 @@ export function CampaignForm(p: Props) {
           <div>
             <h2 className="font-semibold">Sequence</h2>
             <p className="text-sm text-muted">
-              Tell the AI what each email should do. Follow-ups are sent as replies in the same thread. Every email is written per lead and waits for your approval.
+              Each step is either your own email, sent exactly as designed, or written by the AI for each lead. Follow-ups are sent as replies in the same
+              thread. Every email waits for your approval.
             </p>
           </div>
           {steps.map((s, i) => (
-            <div key={i} className="flex flex-col gap-2 rounded-md border border-line p-3">
-              <div className="flex items-center justify-between">
+            <div key={s.uid} className="flex flex-col gap-2 rounded-md border border-line p-3">
+              <div className="flex items-center justify-between gap-3">
                 <span className="text-sm font-medium">Step {i + 1}{i === 0 ? " — opener" : " — follow-up"}</span>
-                {steps.length > 1 && (
-                  <button type="button" className="text-xs text-muted hover:text-bad" onClick={() => setSteps(steps.filter((_, j) => j !== i))}>
-                    Remove
-                  </button>
-                )}
+                <div className="flex items-center gap-3">
+                  <div className="flex rounded-md border border-line p-0.5 text-xs">
+                    {(["fixed", "ai"] as const).map((m) => (
+                      <button
+                        key={m}
+                        type="button"
+                        onClick={() => update(i, { mode: m })}
+                        className={`rounded px-2.5 py-1 ${(s.mode ?? "ai") === m ? "bg-ink text-paper" : "text-muted hover:text-ink"}`}
+                      >
+                        {m === "fixed" ? "My email" : "AI writes"}
+                      </button>
+                    ))}
+                  </div>
+                  {steps.length > 1 && (
+                    <button type="button" className="text-xs text-muted hover:text-bad" onClick={() => setSteps(steps.filter((_, j) => j !== i))}>
+                      Remove
+                    </button>
+                  )}
+                </div>
               </div>
-              <textarea
-                name={`step_${i + 1}_instructions`}
-                rows={2}
-                className="field"
-                value={s.instructions}
-                onChange={(e) => update(i, { instructions: e.target.value })}
-              />
+              <input type="hidden" name={`step_${i + 1}_mode`} value={s.mode ?? "ai"} />
+              {s.mode === "fixed" ? (
+                <>
+                  {i === 0 ? (
+                    <input
+                      name={`step_${i + 1}_subject`}
+                      className="field font-medium"
+                      placeholder="Subject line (merge fields work here too)"
+                      required
+                      value={s.subject ?? ""}
+                      onChange={(e) => update(i, { subject: e.target.value })}
+                    />
+                  ) : (
+                    <p className="text-xs text-muted">No subject: this follow-up is sent as a reply in the same thread.</p>
+                  )}
+                  <EmailEditor name={`step_${i + 1}_body`} initial={s.body ?? ""} />
+                  <input type="hidden" name={`step_${i + 1}_instructions`} value={s.instructions || "Client's own email"} />
+                </>
+              ) : (
+                <textarea
+                  name={`step_${i + 1}_instructions`}
+                  rows={2}
+                  className="field"
+                  placeholder="What should this email do?"
+                  value={s.instructions}
+                  onChange={(e) => update(i, { instructions: e.target.value })}
+                />
+              )}
               {i < steps.length - 1 ? (
                 <label className="flex items-center gap-2 text-sm text-muted">
                   Wait
@@ -79,7 +117,7 @@ export function CampaignForm(p: Props) {
             </div>
           ))}
           {steps.length < 6 && (
-            <button type="button" className="btn self-start" onClick={() => setSteps([...steps, { delay_days: 3, instructions: "" }])}>
+            <button type="button" className="btn self-start" onClick={() => setSteps([...steps, { delay_days: 3, instructions: "", mode: "ai", uid: Math.max(0, ...steps.map((x) => x.uid)) + 1 }])}>
               + Add follow-up
             </button>
           )}

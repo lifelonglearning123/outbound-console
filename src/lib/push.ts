@@ -22,8 +22,8 @@ export async function pushApproved(campaignId: number): Promise<{ pushed: number
   const leads = all<LeadRow>("SELECT * FROM leads WHERE campaign_id = ? AND stage = 'approved' ORDER BY id LIMIT 1000", campaignId);
   if (leads.length === 0) return { pushed: 0, skipped: 0 };
 
-  const drafts = all<{ lead_id: number; step: number; subject: string; body: string; status: string }>(
-    `SELECT lead_id, step, subject, body, status FROM drafts WHERE lead_id IN (${leads.map(() => "?").join(",")}) ORDER BY step`,
+  const drafts = all<{ lead_id: number; step: number; subject: string; body: string; status: string; format: string }>(
+    `SELECT lead_id, step, subject, body, status, format FROM drafts WHERE lead_id IN (${leads.map(() => "?").join(",")}) ORDER BY step`,
     ...leads.map((l) => l.id),
   );
 
@@ -38,7 +38,8 @@ export async function pushApproved(campaignId: number): Promise<{ pushed: number
     const vars: Record<string, string> = {};
     for (const d of mine) {
       if (d.step === 1) vars[subjectVar(1)] = d.subject;
-      vars[bodyVar(d.step)] = toHtml(d.body);
+      // Designed emails (html) go out exactly as approved; AI plain text keeps its line breaks.
+      vars[bodyVar(d.step)] = d.format === "html" ? d.body : toHtml(d.body);
     }
     ready.push({
       lead,

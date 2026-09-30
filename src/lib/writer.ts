@@ -4,6 +4,7 @@ import { all, get, run, tx, logActivity } from "./db";
 import { requireClient, type Brief } from "./clients";
 import { requireCampaign, type Step } from "./campaigns";
 import type { LeadRow } from "./leads";
+import { htmlToText, renderMerge } from "./merge";
 
 const MODEL = process.env.OPENAI_MODEL || "gpt-5.5";
 const CONCURRENCY = 4;
@@ -85,10 +86,38 @@ function leadRecord(l: LeadRow): string {
   return JSON.stringify(rec, null, 2);
 }
 
-function stepsPrompt(steps: Step[]): string {
+type Rendered = { subject: string; body: string };
+
+function stepsPrompt(steps: Step[], fixed: (Rendered | null)[]): string {
   return steps
-    .map((s, i) => `Step ${i + 1}${i === 0 ? " (opener)" : ` (follow-up, sent ${steps[i - 1].delay_days} days after step ${i})`}: ${s.instructions}`)
+    .map((s, i) => {
+      const head = `Step ${i + 1}${i === 0 ? " (opener)" : ` (follow-up, sent ${steps[i - 1].delay_days} days after step ${i})`}`;
+      const f = fixed[i];
+      if (f) {
+        return `${head}: ALREADY WRITTEN by the client and sent exactly as below. Do not return it; make your emails fit after it without repeating it.\n---\n${f.subject ? `Subject: ${f.subject}\n` : ""}${htmlToText(f.body)}\n---`;
+      }
+      return `${head}: ${s.instructions}`;
+    })
     .join("\n");
+}
+
+/** Fill a "My text" step for one lead. */
+function renderFixed(step: Step, lead: LeadRow): Rendered & { notes: string[] } {
+  let fields: Record<string, string> = {};
+  try {
+    fields = JSON.parse(lead.fields || "{}");
+  } catch {}
+  const mergeLead = { ...lead, fields };
+  const s = renderMerge(step.subject ?? "", mergeLead);
+  // The client's email is HTML, sent exactly as designed; only the merge fields change.
+  const b = renderMerge(step.body ?? "", mergeLead, true);
+  const missing = [...new Set([...s.missing, ...b.missing])];
+  const fallback = [...new Set([...s.usedFallback, ...b.usedFallback])];
+  const notes = [
+    ...(missing.length ? [`Missing ${missing.join(", ")}: left blank in your text, check the wording`] : []),
+    ...(fallback.length ? [`No ${fallback.join(", ")}: used your fallback`] : []),
+  ];
+  return { subject: s.text.trim(), body: b.text.trim(), notes };
 }
 
 function signOff(brief: Brief): string {
@@ -103,26 +132,40 @@ async function writeForLead(leadId: number) {
   const client = requireClient(lead.client_id);
   const campaign = requireCampaign(lead.campaign_id);
 
-  const res = await ai().responses.create({
-    model: MODEL,
-    reasoning: { effort: "low" },
-    instructions: systemPrompt(client.brief),
-    input: `Sequence to write (${campaign.steps.length} emails):\n${stepsPrompt(campaign.steps)}\n\nLead record:\n${leadRecord(lead)}`,
-    text: { format: { type: "json_schema", name: "cold_sequence", schema: SCHEMA, strict: true } },
-  });
-  const out = JSON.parse(res.output_text) as { emails: { step: number; subject: string; body: string }[]; flags: string[] };
+  // "My text" steps are filled in with merge fields, no AI. The AI only writes the other steps.
+  const fixed = campaign.steps.map((s) => (s.mode === "fixed" ? renderFixed(s, lead) : null));
+  const aiSteps = campaign.steps.map((_, i) => i + 1).filter((n) => !fixed[n - 1]);
+
+  let out: { emails: { step: number; subject: string; body: string }[]; flags: string[] } = { emails: [], flags: [] };
+  if (aiSteps.length) {
+    const res = await ai().responses.create({
+      model: MODEL,
+      reasoning: { effort: "low" },
+      instructions: systemPrompt(client.brief),
+      input:
+        `Sequence (${campaign.steps.length} emails). Write ONLY step(s) ${aiSteps.join(", ")}.\n${stepsPrompt(campaign.steps, fixed)}` +
+        `\n\nLead record:\n${leadRecord(lead)}`,
+      text: { format: { type: "json_schema", name: "cold_sequence", schema: SCHEMA, strict: true } },
+    });
+    out = JSON.parse(res.output_text);
+  }
 
   const sig = signOff(client.brief);
   const byStep = new Map(out.emails.map((e) => [e.step, e]));
+  const flags = [...fixed.flatMap((f) => f?.notes ?? []), ...out.flags];
   tx(() => {
     run("DELETE FROM drafts WHERE lead_id = ?", leadId);
     campaign.steps.forEach((_, i) => {
-      const e = byStep.get(i + 1);
+      const f = fixed[i];
+      const e = f ?? byStep.get(i + 1);
       if (!e) throw new Error(`Writer skipped step ${i + 1}`);
+      // The client's own text already has its sign-off; AI-written steps get the brief's.
+      const body = f ? f.body : sig ? `${e.body.trim()}\n\n${sig}` : e.body.trim();
       run(
-        "INSERT INTO drafts (lead_id, step, subject, body, flags) VALUES (?, ?, ?, ?, ?)",
-        leadId, i + 1, i === 0 ? e.subject.trim() : "", sig ? `${e.body.trim()}\n\n${sig}` : e.body.trim(),
-        i === 0 && out.flags.length ? out.flags.join(" · ") : null,
+        "INSERT INTO drafts (lead_id, step, subject, body, flags, format) VALUES (?, ?, ?, ?, ?, ?)",
+        leadId, i + 1, i === 0 ? e.subject.trim() : "", body,
+        i === 0 && flags.length ? [...new Set(flags)].join(" · ") : null,
+        f ? "html" : "text",
       );
     });
     run("UPDATE leads SET stage = 'review', stage_message = NULL WHERE id = ?", leadId);

@@ -2,7 +2,8 @@
 
 import { Fragment, useCallback, useEffect, useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { approveLead, rejectLead, rewriteDraft, redraftLead, pushAllApproved } from "@/app/leads/actions";
+import { approveLead, approveAllUnflagged, rejectLead, rewriteDraft, redraftLead, pushAllApproved } from "@/app/leads/actions";
+import { htmlToText } from "@/lib/merge";
 import type { QueueDraft, QueueLead } from "@/lib/approvals";
 
 type Edits = Record<number, { subject: string; body: string; baseSubject: string; baseBody: string }>;
@@ -30,6 +31,7 @@ export function ApprovalQueue({
   const [busy, setBusy] = useState<string>("");
   const [message, setMessage] = useState("");
   const [, start] = useTransition();
+  const unflagged = queue.filter((l) => !l.drafts.some((d) => d.flags)).length;
 
   // A local edit only counts while the server text it was based on is unchanged; an AI rewrite replaces it.
   const current = useCallback(
@@ -143,9 +145,33 @@ export function ApprovalQueue({
             Keys: <kbd>j</kbd>/<kbd>k</kbd> move · <kbd>a</kbd> approve · <kbd>r</kbd> reject · <kbd>Ctrl+Enter</kbd> approve while editing
           </span>
         </div>
+        <div className="flex gap-2">
+        {unflagged > 0 && (
+          <button
+            className="btn"
+            disabled={busy === "bulk"}
+            title="Approves every lead in the list that has no ⚑ flag. Flagged leads stay for you to check."
+            onClick={() => {
+              setBusy("bulk");
+              // Take them off the list now, so the keyboard can't land on an already-approved lead.
+              const bulkIds = queue.filter((l) => !l.drafts.some((d) => d.flags)).map((l) => l.id);
+              setDone((prev) => new Set([...prev, ...bulkIds]));
+              setSelectedId(queue.find((l) => !bulkIds.includes(l.id))?.id ?? null);
+              start(async () => {
+                const n = await approveAllUnflagged(clientId);
+                setMessage(`Approved ${n} leads. Flagged leads are still here for you to check.`);
+                setBusy("");
+                router.refresh();
+              });
+            }}
+          >
+            {busy === "bulk" ? "Approving…" : `Approve all ${unflagged} without flags`}
+          </button>
+        )}
         <button className="btn-go" disabled={approvedCount === 0 || busy === "push"} onClick={push}>
           {busy === "push" ? "Sending…" : `Send ${approvedCount} approved to Instantly`}
         </button>
+        </div>
       </div>
       {message && <div className="rounded-md border border-line bg-card px-3 py-2 text-sm">{message}</div>}
 
@@ -203,12 +229,13 @@ export function ApprovalQueue({
 
             {selected.drafts.map((d) => {
               const e = current(d);
-              const words = e.body.trim().split(/\s+/).length;
+              const isHtml = d.format === "html";
+              const words = (isHtml ? htmlToText(e.body) : e.body).trim().split(/\s+/).length;
               return (
                 <div key={d.id} className="card flex flex-col gap-2 p-4">
                   <div className="flex items-center justify-between text-xs text-muted">
                     <span className="font-medium uppercase tracking-wide">
-                      Step {d.step}{d.step > 1 ? " · reply in same thread" : ""}{d.edited ? " · edited" : ""}
+                      Step {d.step}{d.step > 1 ? " · reply in same thread" : ""}{isHtml ? " · your email" : " · AI"}{d.edited ? " · edited" : ""}
                     </span>
                     <span className="num">{words} words</span>
                   </div>
@@ -219,12 +246,34 @@ export function ApprovalQueue({
                       onChange={(ev) => setEdit(d, { subject: ev.target.value })}
                     />
                   )}
+                  {isHtml ? (
+                    <>
+                      {/* Exactly what the lead will see; sandboxed so the email's own HTML can't touch the app. */}
+                      <iframe
+                        title={`Step ${d.step} preview`}
+                        sandbox=""
+                        srcDoc={`<!doctype html><html><head><meta charset="utf-8"><style>body{font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.5;margin:14px;color:#222}</style></head><body>${e.body}</body></html>`}
+                        className="h-96 w-full rounded-md border border-line bg-white"
+                      />
+                      <details className="text-xs">
+                        <summary className="cursor-pointer text-muted">Edit this lead&apos;s HTML</summary>
+                        <textarea
+                          className="field mt-2 h-60 font-mono text-xs"
+                          value={e.body}
+                          spellCheck={false}
+                          onChange={(ev) => setEdit(d, { body: ev.target.value })}
+                        />
+                      </details>
+                    </>
+                  ) : (
                   <textarea
                     className="field min-h-40 leading-relaxed"
                     rows={Math.min(16, e.body.split("\n").length + 2)}
                     value={e.body}
                     onChange={(ev) => setEdit(d, { body: ev.target.value })}
                   />
+                  )}
+                  {!isHtml && (
                   <div className="flex gap-2">
                     <input
                       className="field flex-1 text-xs"
@@ -237,6 +286,7 @@ export function ApprovalQueue({
                       {busy === `rewrite-${d.id}` ? "Rewriting…" : "Rewrite"}
                     </button>
                   </div>
+                  )}
                 </div>
               );
             })}

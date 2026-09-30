@@ -1,7 +1,7 @@
 import "server-only";
 import { all, get } from "./db";
 
-export type QueueDraft = { id: number; step: number; subject: string; body: string; edited: number; flags: string | null };
+export type QueueDraft = { id: number; step: number; subject: string; body: string; edited: number; flags: string | null; format: string };
 export type QueueLead = {
   id: number;
   client_id: number;
@@ -29,7 +29,7 @@ export function reviewQueue(clientId: number | null, limit = 200): QueueLead[] {
   );
   if (leads.length === 0) return [];
   const drafts = all<QueueDraft & { lead_id: number }>(
-    `SELECT id, lead_id, step, subject, body, edited, flags FROM drafts WHERE lead_id IN (${leads.map(() => "?").join(",")}) ORDER BY step`,
+    `SELECT id, lead_id, step, subject, body, edited, flags, format FROM drafts WHERE lead_id IN (${leads.map(() => "?").join(",")}) ORDER BY step`,
     ...leads.map((l) => l.id),
   );
   return leads.map((l) => {

@@ -7,6 +7,7 @@ import { requireCampaign, setCampaignRunning, syncCampaignToInstantly, toInstant
 import { INSTANTLY_TIMEZONES } from "@/lib/timezones";
 import { requireClient } from "@/lib/clients";
 import { instantly } from "@/lib/instantly";
+import { htmlToText, sanitizeEmailHtml } from "@/lib/merge";
 
 export async function pauseCampaign(id: number) {
   await setCampaignRunning(id, false);
@@ -24,9 +25,19 @@ function readForm(form: FormData) {
 
   const steps: Step[] = [];
   for (let i = 1; form.has(`step_${i}_instructions`); i++) {
+    const delay_days = Math.max(0, Number(form.get(`step_${i}_delay`) ?? 0));
+    if (form.get(`step_${i}_mode`) === "fixed") {
+      // The client's own designed email: kept exactly, only cleaned of scripts.
+      const body = sanitizeEmailHtml(String(form.get(`step_${i}_body`) ?? ""));
+      const subject = String(form.get(`step_${i}_subject`) ?? "").trim();
+      if (!htmlToText(body)) throw new Error(`Step ${i}: paste your email first`);
+      if (steps.length === 0 && !subject) throw new Error("Step 1 needs a subject line");
+      steps.push({ delay_days, instructions: "Client's own email", mode: "fixed", subject, body });
+      continue;
+    }
     const instructions = String(form.get(`step_${i}_instructions`) ?? "").trim();
     if (!instructions) continue;
-    steps.push({ delay_days: Math.max(0, Number(form.get(`step_${i}_delay`) ?? 0)), instructions });
+    steps.push({ delay_days, instructions, mode: "ai" });
   }
   if (steps.length === 0) throw new Error("Add at least one step");
 

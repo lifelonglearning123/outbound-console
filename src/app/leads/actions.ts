@@ -153,3 +153,24 @@ export async function pushAllApproved(clientId: number | null) {
   revalidatePath("/", "layout");
   return { pushed, skipped, errors };
 }
+
+/**
+ * Approve every lead waiting for review that has no reviewer flags (e.g. no missing merge fields).
+ * Meant for campaigns sending your own email, where every lead gets the same text.
+ */
+export async function approveAllUnflagged(clientId: number | null): Promise<number> {
+  const ids = all<{ id: number }>(
+    `SELECT l.id FROM leads l WHERE l.stage = 'review' ${clientId ? "AND l.client_id = ?" : ""}
+       AND NOT EXISTS (SELECT 1 FROM drafts d WHERE d.lead_id = l.id AND d.flags IS NOT NULL)`,
+    ...(clientId ? [clientId] : []),
+  ).map((r) => r.id);
+  tx(() => {
+    for (const id of ids) {
+      run("UPDATE drafts SET status = 'approved', reviewed_at = datetime('now') WHERE lead_id = ?", id);
+      refreshLeadStage(id);
+    }
+  });
+  if (ids.length) logActivity(clientId, "approve", `Approved ${ids.length} leads in one go (none had flags)`);
+  revalidatePath("/", "layout");
+  return ids.length;
+}

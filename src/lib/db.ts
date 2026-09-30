@@ -88,6 +88,7 @@ CREATE TABLE IF NOT EXISTS drafts (
   status TEXT NOT NULL DEFAULT 'pending', -- pending | approved | rejected
   edited INTEGER NOT NULL DEFAULT 0,
   flags TEXT,                           -- writer's notes for the reviewer, e.g. "no first name"
+  format TEXT NOT NULL DEFAULT 'text',  -- text (AI-written, plain) | html (client's own designed email, sent as-is)
   reviewed_at TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   UNIQUE (lead_id, step)
@@ -185,6 +186,7 @@ CREATE TABLE IF NOT EXISTS settings (
 const ADDED_COLUMNS: [table: string, column: string, type: string][] = [
   ["clients", "instantly_tag_id", "TEXT"],
   ["clients", "instantly_tag_label", "TEXT"],
+  ["drafts", "format", "TEXT NOT NULL DEFAULT 'text'"],
 ];
 
 function migrate(db: DatabaseSync) {

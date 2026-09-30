@@ -5,7 +5,8 @@ import { instantly, type CampaignSchedule } from "./instantly";
 import { campaignState } from "./connection";
 import { DEFAULT_TIMEZONE } from "./timezones";
 
-export type Step = { delay_days: number; instructions: string };
+// mode "fixed" = the client wrote this email (subject/body with merge fields); otherwise the AI writes it from `instructions`.
+export type Step = { delay_days: number; instructions: string; mode?: "ai" | "fixed"; subject?: string; body?: string };
 export type Schedule = { days: number[]; from: string; to: string; timezone: string };
 
 export type Campaign = {
