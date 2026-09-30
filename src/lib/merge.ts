@@ -117,7 +117,10 @@ export function htmlWarnings(html: string): string[] {
   const placeholder = html.match(/\[[^\]<]*(required|placeholder|insert|tbc|todo|xxx)[^\]<]*\]/i);
   if (placeholder) w.push(`Unfinished placeholder in the email: "${placeholder[0]}". Replace it before sending.`);
   if (/\{\{\s*unsubscribe/i.test(html)) {
-    w.push("{{unsubscribe…}} is passed to Instantly unchanged. Check in your test email that it became a working link; Instantly also adds its own unsubscribe header.");
+    // Seen on a live send (2026-09-30): Instantly replaces {{unsubscribe_link}} in the body with nothing.
+    w.push(
+      "Instantly sends {{unsubscribe…}} links in the body out empty. Use a line like \"Reply 'no thanks' and we won't email again\" instead; Instantly adds its own one-click unsubscribe header anyway.",
+    );
   }
   return w;
 }
