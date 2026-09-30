@@ -113,7 +113,9 @@ function renderFixed(step: Step, lead: LeadRow): Rendered & { notes: string[] } 
   const b = renderMerge(step.body ?? "", mergeLead, true);
   const missing = [...new Set([...s.missing, ...b.missing])];
   const fallback = [...new Set([...s.usedFallback, ...b.usedFallback])];
+  const placeholder = b.text.match(/\[[^\]<]*(required|placeholder|insert|tbc|todo|xxx)[^\]<]*\]/i);
   const notes = [
+    ...(placeholder ? [`Unfinished placeholder in your email: ${placeholder[0]}`] : []),
     ...(missing.length ? [`Missing ${missing.join(", ")}: left blank in your text, check the wording`] : []),
     ...(fallback.length ? [`No ${fallback.join(", ")}: used your fallback`] : []),
   ];

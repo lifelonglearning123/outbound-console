@@ -42,6 +42,7 @@ function values(lead: MergeLead): Record<string, string> {
 }
 
 const FIELD_RE = /\{\{\s*([^}|]+?)\s*(?:\|([^}]*))?\}\}/g;
+const PLATFORM_TOKENS = /^unsubscribe/;
 
 const escapeHtml = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 
@@ -53,8 +54,11 @@ export function renderMerge(text: string, lead: MergeLead, html = false): { text
   const v = values(lead);
   const missing: string[] = [];
   const usedFallback: string[] = [];
-  const out = text.replace(FIELD_RE, (_, rawKey: string, fallback: string | undefined) => {
-    const key = normKey(rawKey);
+  const out = text.replace(FIELD_RE, (token: string, rawKey: string, fallback: string | undefined) => {
+    // GHL-style {{contact.first_name}} means the same as {{first_name}}.
+    const key = normKey(rawKey).replace(/^contact_/, "");
+    // Sending-platform placeholders (unsubscribe links) aren't lead data; leave them exactly as written.
+    if (PLATFORM_TOKENS.test(key)) return token;
     const value = v[key] ?? v[ALIASES[key] ?? ""];
     if (value) return html ? escapeHtml(value) : value;
     if (fallback !== undefined) {
@@ -110,5 +114,10 @@ export function htmlWarnings(html: string): string[] {
   if (/<img[^>]+src\s*=\s*["']data:/i.test(html)) w.push("An image is pasted in as data; most inboxes block these. Host the image and link it by URL.");
   if (/<img[^>]+src\s*=\s*["']blob:/i.test(html)) w.push("An image points to a temporary browser link and won't show in the inbox.");
   if (/<img/i.test(html)) w.push("Images in cold emails can hurt deliverability; keep them few and small.");
+  const placeholder = html.match(/\[[^\]<]*(required|placeholder|insert|tbc|todo|xxx)[^\]<]*\]/i);
+  if (placeholder) w.push(`Unfinished placeholder in the email: "${placeholder[0]}". Replace it before sending.`);
+  if (/\{\{\s*unsubscribe/i.test(html)) {
+    w.push("{{unsubscribe…}} is passed to Instantly unchanged. Check in your test email that it became a working link; Instantly also adds its own unsubscribe header.");
+  }
   return w;
 }
