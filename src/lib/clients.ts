@@ -29,6 +29,7 @@ export type Client = {
   ghl_stage_id: string | null;
   ghl_meeting_calendars: string | null; // JSON array of calendar ids; empty = every calendar
   ghl_meeting_stage: string | null;     // "pipelineId:stageId" that counts as a booked meeting
+  ghl_log_since: string | null;         // emails from this time on are copied into GHL conversations
   brief: Brief;
   archived: number;
   created_at: string;

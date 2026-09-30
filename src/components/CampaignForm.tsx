@@ -24,6 +24,8 @@ type Props = {
   holdAfter: number | null;
   /** Steps already live in Instantly with leads in them; the hold can then only move via "Release hold". */
   lockedLive: number;
+  ghlTag: string | null;
+  ghlTags: string[] | null; // null = client has no GHL connection
 };
 
 export function CampaignForm(p: Props) {
@@ -159,6 +161,27 @@ export function CampaignForm(p: Props) {
             </p>
           </div>
           <p className="text-xs text-muted">Changing the steps later only affects emails written after the change.</p>
+        </section>
+      )}
+
+      {p.managed && (
+        <section className="card flex flex-col gap-3 p-5">
+          <div>
+            <h2 className="font-semibold">Contacts from GHL</h2>
+            <p className="text-sm text-muted">
+              Link this campaign to a GHL tag. Every few minutes, contacts who have the tag (and aren&apos;t on Do-Not-Disturb) join the
+              campaign, their emails are written, and they wait in Approvals.
+            </p>
+          </div>
+          {p.ghlTags === null ? (
+            <p className="text-sm text-muted">Connect this client&apos;s GHL in Settings first.</p>
+          ) : (
+            <div>
+              <label className="label" htmlFor="ghl_tag">GHL tag</label>
+              <input id="ghl_tag" name="ghl_tag" list="ghl-tags" defaultValue={p.ghlTag ?? ""} className="field" placeholder="e.g. cold-email-q4 (leave blank to add leads by hand)" />
+              <datalist id="ghl-tags">{p.ghlTags.map((t) => <option key={t} value={t} />)}</datalist>
+            </div>
+          )}
         </section>
       )}
 

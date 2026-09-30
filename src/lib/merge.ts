@@ -44,6 +44,10 @@ function values(lead: MergeLead): Record<string, string> {
 const FIELD_RE = /\{\{\s*([^}|]+?)\s*(?:\|([^}]*))?\}\}/g;
 const PLATFORM_TOKENS = /^unsubscribe/;
 
+/** Plain text as email HTML, keeping its line breaks. */
+export const toHtml = (text: string) =>
+  text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\r?\n/g, "<br/>");
+
 const escapeHtml = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 
 /**

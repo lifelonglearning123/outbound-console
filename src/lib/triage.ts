@@ -3,7 +3,7 @@ import OpenAI from "openai";
 import { all, get, run, logActivity } from "./db";
 import { requireClient } from "./clients";
 import { instantly } from "./instantly";
-import { addNote, createOpportunity, upsertContact } from "./ghl";
+import { addNote, createOpportunity, setEmailDnd, upsertContact } from "./ghl";
 import { toDate } from "./format";
 
 export const INTEREST_LABELS: Record<string, string> = {
@@ -130,6 +130,18 @@ export async function applyInterest(emailId: string, interest: string, reason: s
       logActivity(e.client_id, "unsubscribe", `${e.lead_email} asked to be removed; added to the Instantly blocklist`);
     } catch (err) {
       logActivity(e.client_id, "error", `Couldn't blocklist ${e.lead_email}: ${(err as Error).message}`);
+    }
+  }
+  // GHL is the source of truth: honour the removal there too, so no GHL automation emails them either.
+  if (interest === "unsubscribe" && client.ghl_location_id && client.ghl_token) {
+    const creds = { locationId: client.ghl_location_id, token: client.ghl_token };
+    try {
+      const lead = e.lead_id ? get<{ ghl_contact_id: string | null }>("SELECT ghl_contact_id FROM leads WHERE id = ?", e.lead_id) : undefined;
+      const contactId = lead?.ghl_contact_id ?? (await upsertContact(creds, { email: e.lead_email }));
+      await setEmailDnd(creds, contactId, "Asked to be removed (reply to a cold email)");
+      logActivity(e.client_id, "unsubscribe", `${e.lead_email}: email Do-Not-Disturb set in GHL`);
+    } catch (err) {
+      logActivity(e.client_id, "error", `Couldn't set Do-Not-Disturb in GHL for ${e.lead_email}: ${(err as Error).message}`);
     }
   }
   // The first sync imports the workspace's whole history; only replies that arrive after the client

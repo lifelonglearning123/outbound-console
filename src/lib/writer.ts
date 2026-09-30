@@ -5,6 +5,7 @@ import { requireClient, type Brief } from "./clients";
 import { requireCampaign, writeTarget, type Step } from "./campaigns";
 import type { LeadRow } from "./leads";
 import { htmlToText, renderMerge } from "./merge";
+import { refreshFromGhl } from "./ghlsync";
 
 const MODEL = process.env.OPENAI_MODEL || "gpt-5.5";
 const CONCURRENCY = 4;
@@ -135,6 +136,10 @@ async function writeForLead(leadId: number) {
   const extending = lead.stage === "extending";
   const client = requireClient(lead.client_id);
   const campaign = requireCampaign(lead.campaign_id);
+
+  // GHL is the source of truth: take the contact's current details (and respect its Do-Not-Disturb).
+  if (!(await refreshFromGhl(client, lead))) return;
+  Object.assign(lead, get<LeadRow>("SELECT * FROM leads WHERE id = ?", leadId));
 
   // Only steps up to the hold (or the hold being released) are written; later steps wait.
   const steps = campaign.steps.slice(0, writeTarget(campaign));

@@ -9,6 +9,7 @@ import { importLeads, type LeadFields, type ImportResult } from "@/lib/leads";
 import { contactsWithTag, listTags } from "@/lib/ghl";
 import { runWriter, rewriteStep } from "@/lib/writer";
 import { pushApproved } from "@/lib/push";
+import { linkPendingLeads } from "@/lib/ghlsync";
 
 /** Add one lead typed in by hand, optionally sending it straight to the AI writer. */
 export async function addManualLead(
@@ -19,6 +20,7 @@ export async function addManualLead(
 ): Promise<ImportResult & { error?: string }> {
   const c = requireCampaign(campaignId);
   const r = importLeads(clientId, campaignId, "manual", "typed in", [lead]);
+  after(() => linkPendingLeads(requireClient(clientId))); // GHL is the source of truth: add the contact there
   if (writeNow && (r.added || r.updated)) {
     run("UPDATE leads SET stage = 'drafting' WHERE client_id = ? AND email = ? AND stage = 'new'", clientId, lead.email.trim().toLowerCase());
     logActivity(clientId, "write", `Writing emails for ${lead.email} in "${c.name}"`);
@@ -31,6 +33,7 @@ export async function addManualLead(
 export async function importCsvLeads(clientId: number, campaignId: number, fileName: string, leads: LeadFields[]): Promise<ImportResult> {
   requireCampaign(campaignId);
   const r = importLeads(clientId, campaignId, "csv", fileName, leads);
+  after(() => linkPendingLeads(requireClient(clientId))); // GHL is the source of truth: add the contacts there
   revalidatePath("/", "layout");
   return r;
 }

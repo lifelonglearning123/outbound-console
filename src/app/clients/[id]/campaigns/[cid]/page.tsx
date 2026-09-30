@@ -6,6 +6,8 @@ import { holdStatus } from "@/lib/hold";
 import { HoldPanel } from "@/components/HoldPanel";
 import { saveCampaign, pauseCampaign, resumeCampaign } from "@/app/campaigns/actions";
 import { CampaignForm } from "@/components/CampaignForm";
+import { requireClient } from "@/lib/clients";
+import { listTags } from "@/lib/ghl";
 import { LeadJourney } from "@/components/LeadJourney";
 import { StatusPill } from "@/components/CampaignTable";
 import { ago, pct } from "@/lib/format";
@@ -17,6 +19,12 @@ export default async function CampaignPage({ params }: PageProps<"/clients/[id]/
   if (!c || c.client_id !== clientId) notFound();
 
   const mailboxes = all<{ email: string; status: number }>("SELECT email, status FROM mailboxes WHERE client_id = ? ORDER BY email", clientId);
+  // Tags from the client's GHL for the campaign's "GHL tag" suggestions (null = GHL not connected).
+  const ghlClient = requireClient(clientId);
+  let ghlTags: string[] | null = null;
+  if (ghlClient.ghl_location_id && ghlClient.ghl_token) {
+    ghlTags = await listTags({ locationId: ghlClient.ghl_location_id, token: ghlClient.ghl_token }).catch(() => []);
+  }
   const t = get<{ sent: number; opened: number; replied: number; opportunities: number }>(
     `SELECT COALESCE(SUM(sent),0) sent, COALESCE(SUM(opened),0) opened, COALESCE(SUM(replied),0) replied, COALESCE(SUM(opportunities),0) opportunities
      FROM daily_stats WHERE campaign_id = ?`,
@@ -99,6 +107,8 @@ export default async function CampaignPage({ params }: PageProps<"/clients/[id]/
             submitLabel="Save and update Instantly"
             holdAfter={c.hold_after}
             lockedLive={pushedLeadCount(c.id) ? liveSteps(c) : 0}
+            ghlTag={c.ghl_tag}
+            ghlTags={ghlTags}
           />
         </div>
       </details>

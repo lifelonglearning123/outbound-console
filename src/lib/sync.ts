@@ -7,6 +7,7 @@ import { ensureTag, scopedMailboxes, sharingProblem } from "./scope";
 import { triageNewReplies } from "./triage";
 import { runWriter } from "./writer";
 import { syncMeetings } from "./meetings";
+import { linkPendingLeads, logEmailsToGhl, pullTaggedContacts } from "./ghlsync";
 
 const day = (offset = 0) => new Date(Date.now() - offset * 86400_000).toISOString().slice(0, 10);
 
@@ -302,6 +303,12 @@ export async function syncClient(clientId: number): Promise<{ ok: boolean; messa
     ["health", () => enforceHealth(clientId, api)],
     ["replies", () => triageNewReplies(clientId)],
     ["meetings", () => syncMeetings(client)],
+    // GHL is the source of truth for contacts: link new leads, pull newly tagged contacts, log emails.
+    ["ghl contacts", () => linkPendingLeads(client)],
+    ["ghl tags", async () => {
+      if (await pullTaggedContacts(client)) void runWriter();
+    }],
+    ["ghl conversations", () => logEmailsToGhl(client)],
   ];
   const errors: string[] = [];
   for (const [name, fn] of steps) {

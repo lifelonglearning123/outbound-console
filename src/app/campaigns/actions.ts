@@ -67,6 +67,7 @@ function readForm(form: FormData) {
     stop_on_reply: form.get("stop_on_reply") ? 1 : 0,
     hold_after: holdAfter,
     step_count: steps.length,
+    ghl_tag: String(form.get("ghl_tag") ?? "").trim() || null,
   };
 }
 
@@ -89,14 +90,14 @@ export async function saveCampaign(clientId: number, campaignId: number | null, 
     } else {
       run(
         `UPDATE campaigns SET name = @name, steps = @steps, schedule = @schedule, daily_limit = @daily_limit,
-           accounts = @accounts, stop_on_reply = @stop_on_reply, hold_after = @hold_after WHERE id = @id`,
+           accounts = @accounts, stop_on_reply = @stop_on_reply, hold_after = @hold_after, ghl_tag = @ghl_tag WHERE id = @id`,
         { ...fields, id },
       );
     }
   } else {
     id = run(
-      `INSERT INTO campaigns (client_id, name, steps, schedule, daily_limit, accounts, stop_on_reply, hold_after)
-       VALUES (@clientId, @name, @steps, @schedule, @daily_limit, @accounts, @stop_on_reply, @hold_after)`,
+      `INSERT INTO campaigns (client_id, name, steps, schedule, daily_limit, accounts, stop_on_reply, hold_after, ghl_tag)
+       VALUES (@clientId, @name, @steps, @schedule, @daily_limit, @accounts, @stop_on_reply, @hold_after, @ghl_tag)`,
       { ...fields, clientId },
     ).id;
     logActivity(clientId, "campaign", `Created campaign "${fields.name}"`);

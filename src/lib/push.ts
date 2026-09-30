@@ -5,9 +5,10 @@ import { requireCampaign, subjectVar, bodyVar, liveSteps } from "./campaigns";
 import { instantly, type LeadInput } from "./instantly";
 import type { LeadRow } from "./leads";
 
-const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-/** Instantly bodies are HTML; keep the plain-text look with <br/> line breaks. */
-export const toHtml = (text: string) => esc(text).replace(/\r?\n/g, "<br/>");
+import { toHtml } from "./merge";
+import { ghlCreds, linkLead } from "./ghlsync";
+
+export { toHtml };
 
 /**
  * Upload every approved lead of a campaign to Instantly, with its approved copy in custom variables.
@@ -28,7 +29,17 @@ export async function pushApproved(campaignId: number): Promise<{ pushed: number
   );
 
   const ready: { lead: LeadRow; input: LeadInput }[] = [];
+  const hasGhl = !!ghlCreds(client);
   for (const lead of leads) {
+    // GHL is the source of truth: a lead must exist as a GHL contact before anything is sent to it.
+    if (hasGhl && !lead.ghl_contact_id) {
+      try {
+        lead.ghl_contact_id = await linkLead(client, lead);
+      } catch (e) {
+        run("UPDATE leads SET stage_message = ? WHERE id = ?", `Not sent: couldn't add to GHL (${(e as Error).message})`, lead.id);
+        continue;
+      }
+    }
     const live = liveSteps(campaign);
     const mine = drafts.filter((d) => d.lead_id === lead.id && d.step <= live);
     // A hold was released while this lead waited: write the steps it's missing, then it comes back for review.

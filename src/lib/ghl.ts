@@ -93,13 +93,22 @@ export async function contactsWithTag(creds: GhlCreds, tag: string, max = 5000):
 
 export async function upsertContact(
   creds: GhlCreds,
-  c: { email: string; firstName?: string | null; lastName?: string | null; companyName?: string | null; phone?: string | null; tags?: string[] },
+  c: {
+    email: string;
+    firstName?: string | null;
+    lastName?: string | null;
+    companyName?: string | null;
+    phone?: string | null;
+    website?: string | null;
+    tags?: string[];
+  },
 ): Promise<string> {
   const body: Record<string, unknown> = { locationId: creds.locationId, email: c.email };
   if (c.firstName) body.firstName = c.firstName;
   if (c.lastName) body.lastName = c.lastName;
   if (c.companyName) body.companyName = c.companyName;
   if (c.phone) body.phone = c.phone;
+  if (c.website) body.website = c.website;
   if (c.tags?.length) body.tags = c.tags;
   const r = await ghl<{ contact: { id: string } }>(creds, "/contacts/upsert", {
     method: "POST",
@@ -189,4 +198,58 @@ export async function opportunitiesInStage(creds: GhlCreds, pipelineId: string, 
     after = `&startAfter=${r.meta.startAfter}&startAfterId=${r.meta.startAfterId}`;
   }
   return out;
+}
+
+// ---------- GHL as the source of truth for contacts ----------
+
+export type GhlContactFull = GhlContact & {
+  dnd?: boolean;
+  dndSettings?: { Email?: { status?: string } };
+};
+
+export async function getContact(creds: GhlCreds, contactId: string): Promise<GhlContactFull | null> {
+  try {
+    const r = await ghl<{ contact: GhlContactFull }>(creds, `/contacts/${contactId}`);
+    return r.contact ?? null;
+  } catch (e) {
+    if (e instanceof GhlError && (e.status === 404 || e.status === 400)) return null;
+    throw e;
+  }
+}
+
+/** True when the contact has asked not to be emailed (GHL's global or email DND). */
+export const emailDnd = (c: GhlContactFull) => c.dnd === true || c.dndSettings?.Email?.status === "active" || c.dndSettings?.Email?.status === "permanent";
+
+/**
+ * Record an email in the contact's GHL conversation without sending anything. Works with a private
+ * integration token (no conversation provider needed), for both directions.
+ */
+export async function logEmail(
+  creds: GhlCreds,
+  m: { contactId: string; direction: "inbound" | "outbound"; subject: string; html: string; text: string; from: string; to: string; date: string },
+): Promise<string> {
+  const r = await ghl<{ messageId: string }>(creds, "/conversations/messages/inbound", {
+    method: "POST",
+    version: "2021-04-15",
+    body: JSON.stringify({
+      type: "Email",
+      contactId: m.contactId,
+      direction: m.direction,
+      subject: m.subject,
+      html: m.html,
+      message: m.text,
+      emailFrom: m.from,
+      emailTo: m.to,
+      date: m.date,
+    }),
+  });
+  return r.messageId;
+}
+
+/** Turn on email Do-Not-Disturb, so no GHL automation emails this contact either. */
+export async function setEmailDnd(creds: GhlCreds, contactId: string, reason: string) {
+  await ghl(creds, `/contacts/${contactId}`, {
+    method: "PUT",
+    body: JSON.stringify({ dndSettings: { Email: { status: "active", message: reason, code: "" } } }),
+  });
 }

@@ -227,6 +227,11 @@ const ADDED_COLUMNS: [table: string, column: string, type: string][] = [
   ["mailbox_daily", "opened", "INTEGER NOT NULL DEFAULT 0"],
   ["clients", "ghl_meeting_calendars", "TEXT"], // JSON array of calendar ids; null/[] = every calendar
   ["clients", "ghl_meeting_stage", "TEXT"], // "pipelineId:stageId" that counts as a booked meeting
+  ["clients", "ghl_log_since", "TEXT"], // emails from this time on are copied into GHL conversations
+  ["campaigns", "ghl_tag", "TEXT"], // contacts with this GHL tag join the campaign automatically
+  ["emails", "ghl_logged_at", "TEXT"],
+  ["emails", "ghl_log_error", "TEXT"],
+  ["leads", "ghl_synced_at", "TEXT"], // last time the lead's details were refreshed from GHL
 ];
 
 function migrate(db: DatabaseSync) {
