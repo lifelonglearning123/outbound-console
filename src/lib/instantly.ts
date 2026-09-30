@@ -282,6 +282,10 @@ export function instantly(key: string) {
       }),
     leadsInCampaign: (campaignId: string) =>
       paginate<Lead>((c) => call(key, "POST", "/leads/list", { body: { campaign: campaignId, limit: 100, starting_after: c } })),
+    /** Replace a lead's custom variables (we always send the full set, so merge vs replace doesn't matter). */
+    patchLeadVars: (leadId: string, vars: Record<string, string>) =>
+      call<Lead>(key, "PATCH", `/leads/${leadId}`, { body: { custom_variables: vars } }),
+    deleteLead: (leadId: string) => call(key, "DELETE", `/leads/${leadId}`),
     setInterest: (leadEmail: string, campaignId: string, value: number | null) =>
       call(key, "POST", "/leads/update-interest-status", {
         body: { lead_email: leadEmail, campaign_id: campaignId, interest_value: value },

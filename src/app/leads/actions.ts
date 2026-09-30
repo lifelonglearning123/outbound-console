@@ -75,13 +75,28 @@ export async function removeLeads(ids: number[]) {
 
 // ---------- Approval ----------
 
-function refreshLeadStage(leadId: number) {
-  const s = get<{ total: number; approved: number; rejected: number }>(
-    "SELECT COUNT(*) total, SUM(status = 'approved') approved, SUM(status = 'rejected') rejected FROM drafts WHERE lead_id = ?",
+/** Steps a lead's current decision covers: all of them, or only the post-hold ones for a lead already in Instantly. */
+function decisionScope(leadId: number): { extending: boolean; fromStep: number } {
+  const l = get<{ stage: string; hold_after: number | null }>(
+    "SELECT l.stage, c.hold_after FROM leads l JOIN campaigns c ON c.id = l.campaign_id WHERE l.id = ?",
     leadId,
+  );
+  const extending = !!l?.stage.startsWith("extend_");
+  return { extending, fromStep: extending ? (l?.hold_after ?? 0) + 1 : 1 };
+}
+
+function refreshLeadStage(leadId: number) {
+  const { extending, fromStep } = decisionScope(leadId);
+  const s = get<{ total: number; approved: number; rejected: number }>(
+    "SELECT COUNT(*) total, SUM(status = 'approved') approved, SUM(status = 'rejected') rejected FROM drafts WHERE lead_id = ? AND step >= ?",
+    leadId, fromStep,
   )!;
-  const stage = s.rejected > 0 ? "rejected" : s.total > 0 && s.approved === s.total ? "approved" : "review";
-  run("UPDATE leads SET stage = ? WHERE id = ? AND stage IN ('review','approved','rejected')", stage, leadId);
+  const decided = s.rejected > 0 ? "rejected" : s.total > 0 && s.approved === s.total ? "approved" : "review";
+  if (extending) {
+    run("UPDATE leads SET stage = ? WHERE id = ? AND stage LIKE 'extend_%'", `extend_${decided}`, leadId);
+  } else {
+    run("UPDATE leads SET stage = ? WHERE id = ? AND stage IN ('review','approved','rejected')", decided, leadId);
+  }
 }
 
 export async function saveDraft(draftId: number, subject: string, body: string) {
@@ -101,14 +116,15 @@ export async function approveLead(leadId: number, edits: { id: number; subject: 
         run("UPDATE drafts SET subject = ?, body = ?, edited = 1 WHERE id = ?", e.subject, e.body, e.id);
       }
     }
-    run("UPDATE drafts SET status = 'approved', reviewed_at = datetime('now') WHERE lead_id = ?", leadId);
+    run("UPDATE drafts SET status = 'approved', reviewed_at = datetime('now') WHERE lead_id = ? AND step >= ?", leadId, decisionScope(leadId).fromStep);
     refreshLeadStage(leadId);
   });
   revalidatePath("/", "layout");
 }
 
 export async function rejectLead(leadId: number) {
-  run("UPDATE drafts SET status = 'rejected', reviewed_at = datetime('now') WHERE lead_id = ?", leadId);
+  // For a lead already in Instantly this only rejects its new emails; it's removed from the campaign on release.
+  run("UPDATE drafts SET status = 'rejected', reviewed_at = datetime('now') WHERE lead_id = ? AND step >= ?", leadId, decisionScope(leadId).fromStep);
   refreshLeadStage(leadId);
   revalidatePath("/", "layout");
 }
@@ -119,14 +135,16 @@ export async function rewriteDraft(draftId: number, guidance: string) {
 }
 
 export async function redraftLead(leadId: number) {
-  run("DELETE FROM drafts WHERE lead_id = ?", leadId);
-  run("UPDATE leads SET stage = 'drafting' WHERE id = ?", leadId);
+  const { extending, fromStep } = decisionScope(leadId);
+  run("DELETE FROM drafts WHERE lead_id = ? AND step >= ?", leadId, fromStep);
+  run("UPDATE leads SET stage = ? WHERE id = ?", extending ? "extending" : "drafting", leadId);
   after(runWriter);
   revalidatePath("/", "layout");
 }
 
 export async function pushCampaign(campaignId: number) {
   const r = await pushApproved(campaignId);
+  after(runWriter); // leads missing newly released steps were sent back to the writer
   revalidatePath("/", "layout");
   return r;
 }
@@ -150,6 +168,7 @@ export async function pushAllApproved(clientId: number | null) {
       errors.push((e as Error).message);
     }
   }
+  after(runWriter); // leads missing newly released steps were sent back to the writer
   revalidatePath("/", "layout");
   return { pushed, skipped, errors };
 }
@@ -160,13 +179,15 @@ export async function pushAllApproved(clientId: number | null) {
  */
 export async function approveAllUnflagged(clientId: number | null): Promise<number> {
   const ids = all<{ id: number }>(
-    `SELECT l.id FROM leads l WHERE l.stage = 'review' ${clientId ? "AND l.client_id = ?" : ""}
-       AND NOT EXISTS (SELECT 1 FROM drafts d WHERE d.lead_id = l.id AND d.flags IS NOT NULL)`,
+    `SELECT l.id FROM leads l JOIN campaigns c ON c.id = l.campaign_id
+     WHERE l.stage IN ('review', 'extend_review') ${clientId ? "AND l.client_id = ?" : ""}
+       AND NOT EXISTS (SELECT 1 FROM drafts d WHERE d.lead_id = l.id AND d.flags IS NOT NULL
+                       AND (l.stage = 'review' OR d.step > COALESCE(c.hold_after, 0)))`,
     ...(clientId ? [clientId] : []),
   ).map((r) => r.id);
   tx(() => {
     for (const id of ids) {
-      run("UPDATE drafts SET status = 'approved', reviewed_at = datetime('now') WHERE lead_id = ?", id);
+      run("UPDATE drafts SET status = 'approved', reviewed_at = datetime('now') WHERE lead_id = ? AND step >= ?", id, decisionScope(id).fromStep);
       refreshLeadStage(id);
     }
   });

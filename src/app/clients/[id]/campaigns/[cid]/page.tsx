@@ -1,6 +1,9 @@
 import { notFound } from "next/navigation";
 import { all, get } from "@/lib/db";
-import { getCampaign } from "@/lib/campaigns";
+import { campaignStepProblems, getCampaign, liveSteps, pushedLeadCount } from "@/lib/campaigns";
+import { AutoRefresh } from "@/components/AutoRefresh";
+import { holdStatus } from "@/lib/hold";
+import { HoldPanel } from "@/components/HoldPanel";
 import { saveCampaign, pauseCampaign, resumeCampaign } from "@/app/campaigns/actions";
 import { CampaignForm } from "@/components/CampaignForm";
 import { LeadJourney } from "@/components/LeadJourney";
@@ -20,9 +23,16 @@ export default async function CampaignPage({ params }: PageProps<"/clients/[id]/
     c.id,
   )!;
   const pipeline = get<{ review: number; approved: number; pushed: number }>(
-    `SELECT SUM(stage = 'review') review, SUM(stage = 'approved') approved, SUM(stage = 'pushed') pushed FROM leads WHERE campaign_id = ?`,
+    `SELECT SUM(stage = 'review') review, SUM(stage = 'approved') approved, SUM(stage = 'pushed' OR stage LIKE 'extend_%') pushed FROM leads WHERE campaign_id = ?`,
     c.id,
   )!;
+  const live = liveSteps(c);
+  const hasHold = c.managed === 1 && (c.hold_after !== null || c.release_to !== null);
+  const hold = hasHold ? holdStatus(c.id) : null;
+  // For each "release up to step N" choice, what still needs finishing in the held steps.
+  const stepProblems = Object.fromEntries(
+    c.steps.map((_, i) => [i + 1, campaignStepProblems(c.steps.slice(0, i + 1))]),
+  );
 
   return (
     <div className="flex flex-col gap-6">
@@ -63,10 +73,13 @@ export default async function CampaignPage({ params }: PageProps<"/clients/[id]/
         ))}
       </div>
 
+      <AutoRefresh active={!!hold?.writing} />
+      {hold && <HoldPanel campaignId={c.id} clientId={clientId} status={hold} stepProblems={stepProblems} />}
+
       {c.managed ? (
         <section className="flex flex-col gap-2">
           <h3 className="font-semibold">Lead journey</h3>
-          <LeadJourney campaignId={c.id} stepCount={c.steps.length} delays={c.steps.map((s) => s.delay_days)} />
+          <LeadJourney campaignId={c.id} stepCount={c.steps.length} live={live} delays={c.steps.map((s) => s.delay_days)} />
         </section>
       ) : null}
 
@@ -84,6 +97,8 @@ export default async function CampaignPage({ params }: PageProps<"/clients/[id]/
             mailboxes={mailboxes.map((m) => ({ email: m.email, healthy: m.status === 1 }))}
             managed={c.managed === 1}
             submitLabel="Save and update Instantly"
+            holdAfter={c.hold_after}
+            lockedLive={pushedLeadCount(c.id) ? liveSteps(c) : 0}
           />
         </div>
       </details>

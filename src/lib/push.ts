@@ -1,7 +1,7 @@
 import "server-only";
 import { all, run, tx, logActivity } from "./db";
 import { requireClient } from "./clients";
-import { requireCampaign, subjectVar, bodyVar } from "./campaigns";
+import { requireCampaign, subjectVar, bodyVar, liveSteps } from "./campaigns";
 import { instantly, type LeadInput } from "./instantly";
 import type { LeadRow } from "./leads";
 
@@ -29,18 +29,19 @@ export async function pushApproved(campaignId: number): Promise<{ pushed: number
 
   const ready: { lead: LeadRow; input: LeadInput }[] = [];
   for (const lead of leads) {
-    const mine = drafts.filter((d) => d.lead_id === lead.id);
+    const live = liveSteps(campaign);
+    const mine = drafts.filter((d) => d.lead_id === lead.id && d.step <= live);
+    // A hold was released while this lead waited: write the steps it's missing, then it comes back for review.
+    if (mine.length < live) {
+      run("UPDATE leads SET stage = 'drafting' WHERE id = ?", lead.id);
+      continue;
+    }
     // Belt and braces: re-check approval at the last moment.
-    if (mine.length !== campaign.steps.length || mine.some((d) => d.status !== "approved")) {
+    if (mine.some((d) => d.status !== "approved")) {
       run("UPDATE leads SET stage = 'review' WHERE id = ?", lead.id);
       continue;
     }
-    const vars: Record<string, string> = {};
-    for (const d of mine) {
-      if (d.step === 1) vars[subjectVar(1)] = d.subject;
-      // Designed emails (html) go out exactly as approved; AI plain text keeps its line breaks.
-      vars[bodyVar(d.step)] = d.format === "html" ? d.body : toHtml(d.body);
-    }
+    const vars = copyVars(mine);
     ready.push({
       lead,
       input: {
@@ -86,3 +87,17 @@ export async function pushApproved(campaignId: number): Promise<{ pushed: number
   );
   return { pushed, skipped };
 }
+
+type DraftCopy = { step: number; subject: string; body: string; format: string };
+
+/** The custom variables that carry a lead's approved copy into Instantly's placeholder steps. */
+export function copyVars(drafts: DraftCopy[]): Record<string, string> {
+  const vars: Record<string, string> = {};
+  for (const d of drafts) {
+    if (d.step === 1) vars[subjectVar(1)] = d.subject;
+    // Designed emails (html) go out exactly as approved; AI plain text keeps its line breaks.
+    vars[bodyVar(d.step)] = d.format === "html" ? d.body : toHtml(d.body);
+  }
+  return vars;
+}
+

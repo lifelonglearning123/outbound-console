@@ -18,6 +18,8 @@ export default async function NewCampaignPage({ params }: PageProps<"/clients/[i
       mailboxes={mailboxes.map((m) => ({ email: m.email, healthy: m.status === 1 }))}
       managed
       submitLabel="Create campaign in Instantly (as draft)"
+      holdAfter={null}
+      lockedLive={0}
     />
   );
 }

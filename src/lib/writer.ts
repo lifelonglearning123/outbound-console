@@ -2,7 +2,7 @@ import "server-only";
 import OpenAI from "openai";
 import { all, get, run, tx, logActivity } from "./db";
 import { requireClient, type Brief } from "./clients";
-import { requireCampaign, type Step } from "./campaigns";
+import { requireCampaign, writeTarget, type Step } from "./campaigns";
 import type { LeadRow } from "./leads";
 import { htmlToText, renderMerge } from "./merge";
 
@@ -94,7 +94,7 @@ function stepsPrompt(steps: Step[], fixed: (Rendered | null)[]): string {
       const head = `Step ${i + 1}${i === 0 ? " (opener)" : ` (follow-up, sent ${steps[i - 1].delay_days} days after step ${i})`}`;
       const f = fixed[i];
       if (f) {
-        return `${head}: ALREADY WRITTEN by the client and sent exactly as below. Do not return it; make your emails fit after it without repeating it.\n---\n${f.subject ? `Subject: ${f.subject}\n` : ""}${htmlToText(f.body)}\n---`;
+        return `${head}: ALREADY WRITTEN (the client's own email, or one already approved). Do not return it; make your emails fit around it without repeating it.\n---\n${f.subject ? `Subject: ${f.subject}\n` : ""}${htmlToText(f.body)}\n---`;
       }
       return `${head}: ${s.instructions}`;
     })
@@ -130,13 +130,30 @@ function signOff(brief: Brief): string {
 
 async function writeForLead(leadId: number) {
   const lead = get<LeadRow>("SELECT * FROM leads WHERE id = ?", leadId);
-  if (!lead || lead.stage !== "drafting" || !lead.campaign_id) return;
+  // 'drafting' = a new lead; 'extending' = a lead already in Instantly getting the steps after a released hold.
+  if (!lead || !["drafting", "extending"].includes(lead.stage) || !lead.campaign_id) return;
+  const extending = lead.stage === "extending";
   const client = requireClient(lead.client_id);
   const campaign = requireCampaign(lead.campaign_id);
 
-  // "My text" steps are filled in with merge fields, no AI. The AI only writes the other steps.
-  const fixed = campaign.steps.map((s) => (s.mode === "fixed" ? renderFixed(s, lead) : null));
-  const aiSteps = campaign.steps.map((_, i) => i + 1).filter((n) => !fixed[n - 1]);
+  // Only steps up to the hold (or the hold being released) are written; later steps wait.
+  const steps = campaign.steps.slice(0, writeTarget(campaign));
+  const existing = new Map(
+    all<{ step: number; subject: string; body: string; format: string }>("SELECT step, subject, body, format FROM drafts WHERE lead_id = ?", leadId).map(
+      (d) => [d.step, d],
+    ),
+  );
+  const needed = steps.map((_, i) => i + 1).filter((n) => !existing.has(n));
+
+  // "My email" steps are filled in with merge fields, no AI. The AI only writes the other missing steps.
+  const fixed = steps.map((s, i) => (s.mode === "fixed" && needed.includes(i + 1) ? renderFixed(s, lead) : null));
+  // What the lead has had (or will get) already, so new emails follow on from it.
+  const known = steps.map((_, i) => {
+    const d = existing.get(i + 1);
+    if (d) return { subject: d.subject, body: d.format === "html" ? htmlToText(d.body) : d.body };
+    return fixed[i];
+  });
+  const aiSteps = needed.filter((n) => !fixed[n - 1]);
 
   let out: { emails: { step: number; subject: string; body: string }[]; flags: string[] } = { emails: [], flags: [] };
   if (aiSteps.length) {
@@ -145,7 +162,7 @@ async function writeForLead(leadId: number) {
       reasoning: { effort: "low" },
       instructions: systemPrompt(client.brief),
       input:
-        `Sequence (${campaign.steps.length} emails). Write ONLY step(s) ${aiSteps.join(", ")}.\n${stepsPrompt(campaign.steps, fixed)}` +
+        `Sequence (${steps.length} emails). Write ONLY step(s) ${aiSteps.join(", ")}.\n${stepsPrompt(steps, known)}` +
         `\n\nLead record:\n${leadRecord(lead)}`,
       text: { format: { type: "json_schema", name: "cold_sequence", schema: SCHEMA, strict: true } },
     });
@@ -156,21 +173,21 @@ async function writeForLead(leadId: number) {
   const byStep = new Map(out.emails.map((e) => [e.step, e]));
   const flags = [...fixed.flatMap((f) => f?.notes ?? []), ...out.flags];
   tx(() => {
-    run("DELETE FROM drafts WHERE lead_id = ?", leadId);
-    campaign.steps.forEach((_, i) => {
+    needed.forEach((n, k) => {
+      const i = n - 1;
       const f = fixed[i];
-      const e = f ?? byStep.get(i + 1);
-      if (!e) throw new Error(`Writer skipped step ${i + 1}`);
+      const e = f ?? byStep.get(n);
+      if (!e) throw new Error(`Writer skipped step ${n}`);
       // The client's own text already has its sign-off; AI-written steps get the brief's.
       const body = f ? f.body : sig ? `${e.body.trim()}\n\n${sig}` : e.body.trim();
       run(
         "INSERT INTO drafts (lead_id, step, subject, body, flags, format) VALUES (?, ?, ?, ?, ?, ?)",
-        leadId, i + 1, i === 0 ? e.subject.trim() : "", body,
-        i === 0 && flags.length ? [...new Set(flags)].join(" · ") : null,
+        leadId, n, i === 0 ? e.subject.trim() : "", body,
+        k === 0 && flags.length ? [...new Set(flags)].join(" · ") : null,
         f ? "html" : "text",
       );
     });
-    run("UPDATE leads SET stage = 'review', stage_message = NULL WHERE id = ?", leadId);
+    run("UPDATE leads SET stage = ?, stage_message = NULL WHERE id = ?", extending ? "extend_review" : "review", leadId);
   });
 }
 
@@ -179,19 +196,21 @@ declare global {
   var __outbound_writer_running: boolean | undefined;
 }
 
-/** Write drafts for every lead in stage 'drafting'. Safe to call repeatedly; only one run at a time. */
+/** Write drafts for every lead in stage 'drafting' or 'extending'. Safe to call repeatedly; only one run at a time. */
 export async function runWriter() {
   if (globalThis.__outbound_writer_running) return;
   globalThis.__outbound_writer_running = true;
   try {
     for (;;) {
-      const batch = all<{ id: number; client_id: number }>("SELECT id, client_id FROM leads WHERE stage = 'drafting' ORDER BY id LIMIT ?", CONCURRENCY);
+      const batch = all<{ id: number; client_id: number; stage: string }>("SELECT id, client_id, stage FROM leads WHERE stage IN ('drafting','extending') ORDER BY id LIMIT ?", CONCURRENCY);
       if (batch.length === 0) break;
       const results = await Promise.allSettled(batch.map((l) => writeForLead(l.id)));
       results.forEach((r, i) => {
         if (r.status === "rejected") {
           const msg = (r.reason as Error).message ?? String(r.reason);
-          run("UPDATE leads SET stage = 'error', stage_message = ? WHERE id = ?", `Writer: ${msg}`, batch[i].id);
+          // A lead already in Instantly keeps that fact; it just can't move on until its new steps are written.
+          const failed = batch[i].stage === "extending" ? "extend_error" : "error";
+          run("UPDATE leads SET stage = ?, stage_message = ? WHERE id = ?", failed, `Writer: ${msg}`, batch[i].id);
           logActivity(batch[i].client_id, "error", `Couldn't write emails for lead ${batch[i].id}: ${msg}`);
         }
       });

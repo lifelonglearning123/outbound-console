@@ -187,6 +187,9 @@ const ADDED_COLUMNS: [table: string, column: string, type: string][] = [
   ["clients", "instantly_tag_id", "TEXT"],
   ["clients", "instantly_tag_label", "TEXT"],
   ["drafts", "format", "TEXT NOT NULL DEFAULT 'text'"],
+  ["campaigns", "hold_after", "INTEGER"],
+  ["campaigns", "release_to", "INTEGER"],
+  ["campaigns", "release_resume", "INTEGER"],
 ];
 
 function migrate(db: DatabaseSync) {

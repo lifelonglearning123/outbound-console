@@ -15,6 +15,12 @@ const STAGES = [
   { key: "pushed", label: "In Instantly", tone: "text-go" },
   { key: "rejected", label: "Rejected", tone: "text-muted" },
   { key: "error", label: "Error", tone: "text-bad" },
+  { key: "extending", label: "Writing next emails", tone: "text-info" },
+  { key: "extend_review", label: "Next emails to review", tone: "text-wait" },
+  { key: "extend_approved", label: "Next emails approved", tone: "text-go" },
+  { key: "extend_rejected", label: "Leaving at release", tone: "text-muted" },
+  { key: "extend_error", label: "Next emails failed", tone: "text-bad" },
+  { key: "removed", label: "Removed", tone: "text-muted" },
 ];
 
 type Row = {

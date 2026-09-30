@@ -191,6 +191,7 @@ export function ApprovalQueue({
                   <div className="truncate text-xs text-muted">
                     {showClient ? `${l.client_name} · ` : ""}{l.company ?? l.email}
                   </div>
+                  {l.extending && <div className="text-xs text-info">next emails after hold</div>}
                   {l.drafts[0]?.flags && <div className="truncate text-xs text-wait">⚑ {l.drafts[0].flags}</div>}
                 </button>
               </li>
@@ -219,11 +220,17 @@ export function ApprovalQueue({
                     </dl>
                   </details>
                 )}
+                {selected.extending && (
+                  <div className="mt-2 rounded bg-info-soft px-2 py-1 text-xs text-info">
+                    Already in Instantly. These are the next emails after the hold; approve to send them, or reject to take this lead out of
+                    the campaign when the hold is released.
+                  </div>
+                )}
                 {selected.drafts[0]?.flags && <div className="mt-2 rounded bg-wait-soft px-2 py-1 text-xs text-wait">⚑ {selected.drafts[0].flags}</div>}
               </div>
               <div className="flex shrink-0 gap-2">
                 <button className="btn-bad" onClick={reject}>Reject</button>
-                <button className="btn-go" onClick={approve}>Approve all steps</button>
+                <button className="btn-go" onClick={approve}>{selected.extending ? "Approve next emails" : "Approve all steps"}</button>
               </div>
             </div>
 

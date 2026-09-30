@@ -61,6 +61,7 @@ function sendOne() {
           timestamp_email: new Date(Date.now() + 1000).toISOString(), timestamp_created: new Date(Date.now() + 1000).toISOString(),
         });
         lead.status = 3;
+        lead._replied = true;
       }
       return;
     }
@@ -82,7 +83,10 @@ const routes = [
   ["GET", /^\/custom-tags$/, (m, q) => page(tags, q)],
   ["POST", /^\/custom-tags$/, (m, q, body) => { const t = { id: randomUUID(), label: body.label }; tags.push(t); tagged.set(t.id, new Set()); return t; }],
   ["POST", /^\/custom-tags\/toggle-resource$/, (m, q, body) => {
-    for (const id of body.tag_ids) for (const r of body.resource_ids) body.assign ? tagged.get(id)?.add(r) : tagged.get(id)?.delete(r);
+    for (const id of body.tag_ids) for (const r of body.resource_ids) {
+      if (body.assign) tagged.get(id)?.add(r);
+      else tagged.get(id)?.delete(r);
+    }
     return { success: true };
   }],
   ["POST", /^\/accounts\/(.+)\/(pause|resume)$/, (m) => {
@@ -108,7 +112,23 @@ const routes = [
   }],
   ["GET", /^\/campaigns\/([\w-]+)\/sending-status$/, () => ({ summary: { status: "healthy", status_message: "Sending" }, diagnostics: null })],
   ["GET", /^\/campaigns\/([\w-]+)$/, (m) => campaigns.get(m[1])],
-  ["PATCH", /^\/campaigns\/([\w-]+)$/, (m, q, body) => Object.assign(campaigns.get(m[1]), body)],
+  ["PATCH", /^\/campaigns\/([\w-]+)$/, (m, q, body) => {
+    const c = campaigns.get(m[1]);
+    const before = c.sequences?.[0]?.steps?.length ?? 0;
+    Object.assign(c, body);
+    // Like Instantly: adding steps re-activates leads that finished the sequence without replying.
+    if ((c.sequences?.[0]?.steps?.length ?? 0) > before) {
+      for (const l of leads.values()) if (l.campaign === c.id && l.status === 3 && !l._replied) l.status = 1;
+    }
+    return c;
+  }],
+  ["PATCH", /^\/leads\/([\w-]+)$/, (m, q, body) => {
+    const l = leads.get(m[1]);
+    if (!l) throw Object.assign(new Error("lead not found"), { code: 404 });
+    if (body.custom_variables) l.payload = { ...l.payload, ...body.custom_variables };
+    return l;
+  }],
+  ["DELETE", /^\/leads\/([\w-]+)$/, (m) => { leads.delete(m[1]); return { id: m[1] }; }],
   ["POST", /^\/campaigns\/([\w-]+)\/activate$/, (m) => Object.assign(campaigns.get(m[1]), { status: 1 })],
   ["POST", /^\/campaigns\/([\w-]+)\/pause$/, (m) => Object.assign(campaigns.get(m[1]), { status: 2 })],
   ["POST", /^\/campaigns\/([\w-]+)\/variables$/, (m) => campaigns.get(m[1])],

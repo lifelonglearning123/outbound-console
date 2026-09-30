@@ -4,6 +4,7 @@ import { requireClient } from "./clients";
 import { instantly, type CampaignSchedule } from "./instantly";
 import { campaignState } from "./connection";
 import { DEFAULT_TIMEZONE } from "./timezones";
+import { htmlToText } from "./merge";
 
 // mode "fixed" = the client wrote this email (subject/body with merge fields); otherwise the AI writes it from `instructions`.
 export type Step = { delay_days: number; instructions: string; mode?: "ai" | "fixed"; subject?: string; body?: string };
@@ -23,6 +24,8 @@ export type Campaign = {
   stop_on_reply: number;
   managed: number;
   not_sending: string | null;
+  hold_after: number | null;   // steps live in Instantly; later steps are on hold (null = no hold)
+  release_to: number | null;   // while releasing a hold: how many steps will be live once applied
   last_synced_at: string | null;
   created_at: string;
 };
@@ -77,13 +80,20 @@ export function toInstantlySchedule(s: Schedule): CampaignSchedule {
   };
 }
 
-function toInstantlyBody(c: Campaign) {
+/** Steps currently live in Instantly. Steps after a hold are kept here until the hold is released. */
+export const liveSteps = (c: Pick<Campaign, "steps" | "hold_after">) => Math.min(c.hold_after ?? c.steps.length, c.steps.length);
+
+/** Steps each lead needs approved copy for right now (includes a release in progress). */
+export const writeTarget = (c: Pick<Campaign, "steps" | "hold_after" | "release_to">) =>
+  Math.min(c.release_to ?? liveSteps(c), c.steps.length);
+
+function toInstantlyBody(c: Campaign, live = liveSteps(c)) {
   return {
     name: c.name,
     campaign_schedule: toInstantlySchedule(c.schedule),
     sequences: [
       {
-        steps: c.steps.map((s, i) => ({
+        steps: c.steps.slice(0, live).map((s, i) => ({
           type: "email",
           delay: s.delay_days,
           delay_unit: "days",
@@ -121,7 +131,7 @@ export async function syncCampaignToInstantly(id: number) {
   // attempt is repaired by saving again.
   if (client.instantly_tag_id) await api.tagResources(client.instantly_tag_id, 2, [remote.id]);
 
-  const vars = c.steps.flatMap((_, i) => (i === 0 ? [subjectVar(1), bodyVar(1)] : [bodyVar(i + 1)]));
+  const vars = c.steps.slice(0, liveSteps(c)).flatMap((_, i) => (i === 0 ? [subjectVar(1), bodyVar(1)] : [bodyVar(i + 1)]));
   await api.addVariables(remote.id, vars);
 
   run(
@@ -143,4 +153,24 @@ export async function setCampaignRunning(id: number, running: boolean) {
     remote.status, campaignState(remote.status), new Date().toISOString(), id,
   );
   logActivity(c.client_id, running ? "resume" : "pause", `${running ? "Started" : "Paused"} "${c.name}"`);
+}
+
+/** What's still missing from steps before they can be written or sent (held steps may be unfinished until released). */
+export function campaignStepProblems(steps: Step[]): string[] {
+  const problems: string[] = [];
+  steps.forEach((s, i) => {
+    const n = i + 1;
+    if (s.mode === "fixed") {
+      if (!htmlToText(s.body ?? "")) problems.push(`step ${n} has no email yet`);
+      if (n === 1 && !s.subject?.trim()) problems.push("step 1 needs a subject line");
+    } else if (!s.instructions.trim()) {
+      problems.push(`step ${n} has no instructions for the AI`);
+    }
+  });
+  return problems;
+}
+
+/** Leads already in Instantly for this campaign; once there are any, the live steps can only grow via a hold release. */
+export function pushedLeadCount(campaignId: number): number {
+  return get<{ n: number }>("SELECT COUNT(*) n FROM leads WHERE campaign_id = ? AND instantly_lead_id IS NOT NULL", campaignId)?.n ?? 0;
 }
