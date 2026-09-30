@@ -10,6 +10,24 @@ import { contactsWithTag, listTags } from "@/lib/ghl";
 import { runWriter, rewriteStep } from "@/lib/writer";
 import { pushApproved } from "@/lib/push";
 
+/** Add one lead typed in by hand, optionally sending it straight to the AI writer. */
+export async function addManualLead(
+  clientId: number,
+  campaignId: number,
+  lead: LeadFields,
+  writeNow: boolean,
+): Promise<ImportResult & { error?: string }> {
+  const c = requireCampaign(campaignId);
+  const r = importLeads(clientId, campaignId, "manual", "typed in", [lead]);
+  if (writeNow && (r.added || r.updated)) {
+    run("UPDATE leads SET stage = 'drafting' WHERE client_id = ? AND email = ? AND stage = 'new'", clientId, lead.email.trim().toLowerCase());
+    logActivity(clientId, "write", `Writing emails for ${lead.email} in "${c.name}"`);
+    after(runWriter);
+  }
+  revalidatePath("/", "layout");
+  return r;
+}
+
 export async function importCsvLeads(clientId: number, campaignId: number, fileName: string, leads: LeadFields[]): Promise<ImportResult> {
   requireCampaign(campaignId);
   const r = importLeads(clientId, campaignId, "csv", fileName, leads);

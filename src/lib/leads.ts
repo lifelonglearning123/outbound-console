@@ -48,7 +48,7 @@ export type ImportResult = { added: number; updated: number; skippedInvalid: num
 export function importLeads(
   clientId: number,
   campaignId: number,
-  source: "csv" | "ghl",
+  source: "csv" | "ghl" | "manual",
   sourceRef: string,
   leads: LeadFields[],
 ): ImportResult {

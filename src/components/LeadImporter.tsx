@@ -2,7 +2,7 @@
 
 import { useState, useTransition } from "react";
 import Papa from "papaparse";
-import { importCsvLeads, importGhlLeads, ghlTags } from "@/app/leads/actions";
+import { addManualLead, importCsvLeads, importGhlLeads, ghlTags } from "@/app/leads/actions";
 import type { LeadFields, ImportResult } from "@/lib/leads";
 
 const COLUMNS = [
@@ -38,7 +38,9 @@ function guess(headers: string[]): Partial<Record<Col, string>> {
 }
 
 export function LeadImporter({ clientId, campaigns, hasGhl }: { clientId: number; campaigns: { id: number; name: string }[]; hasGhl: boolean }) {
-  const [mode, setMode] = useState<"csv" | "ghl">("csv");
+  const [mode, setMode] = useState<"manual" | "csv" | "ghl">("manual");
+  const [manual, setManual] = useState({ email: "", first_name: "", last_name: "", company: "", title: "", website: "" });
+  const [writeNow, setWriteNow] = useState(true);
   const [campaignId, setCampaignId] = useState<number>(campaigns[0]?.id ?? 0);
   const [file, setFile] = useState<{ name: string; headers: string[]; rows: Record<string, string>[] } | null>(null);
   const [map, setMap] = useState<Partial<Record<Col, string>>>({});
@@ -107,14 +109,14 @@ export function LeadImporter({ clientId, campaigns, hasGhl }: { clientId: number
       <div className="flex items-center justify-between">
         <h2 className="font-semibold">Import leads</h2>
         <div className="flex rounded-md border border-line p-0.5 text-sm">
-          {(["csv", "ghl"] as const).map((m) => (
+          {(["manual", "csv", "ghl"] as const).map((m) => (
             <button
               key={m}
               type="button"
               onClick={() => { setMode(m); setResult(""); if (m === "ghl" && tags === null && hasGhl) loadTags(); }}
               className={`rounded px-3 py-1 ${mode === m ? "bg-ink text-paper" : "text-muted"}`}
             >
-              {m === "csv" ? "CSV file" : "From GHL"}
+              {m === "manual" ? "Type it in" : m === "csv" ? "CSV file" : "From GHL"}
             </button>
           ))}
         </div>
@@ -127,7 +129,53 @@ export function LeadImporter({ clientId, campaigns, hasGhl }: { clientId: number
         </select>
       </div>
 
-      {mode === "csv" ? (
+      {mode === "manual" ? (
+        <form
+          className="flex flex-col gap-3"
+          onSubmit={(e) => {
+            e.preventDefault();
+            start(async () => {
+              const r = await addManualLead(clientId, campaignId, manual, writeNow);
+              if (r.added || r.updated) {
+                setResult(`Added ${manual.email}${writeNow ? "; the AI is writing its emails now, then it'll be in Approvals" : ""}.`);
+                setManual({ email: "", first_name: "", last_name: "", company: "", title: "", website: "" });
+              } else {
+                setResult(r.error ?? (r.skippedExisting ? `${manual.email} is already in progress for this client.` : "That email address doesn't look valid."));
+              }
+            });
+          }}
+        >
+          <div className="grid grid-cols-2 gap-3">
+            {([
+              ["email", "Email *", "email"],
+              ["first_name", "First name", "text"],
+              ["last_name", "Last name", "text"],
+              ["company", "Company", "text"],
+              ["title", "Job title", "text"],
+              ["website", "Website", "text"],
+            ] as const).map(([k, label, type]) => (
+              <div key={k}>
+                <label className="label" htmlFor={`m-${k}`}>{label}</label>
+                <input
+                  id={`m-${k}`}
+                  type={type}
+                  required={k === "email"}
+                  className="field"
+                  value={manual[k]}
+                  onChange={(e) => setManual({ ...manual, [k]: e.target.value })}
+                />
+              </div>
+            ))}
+          </div>
+          <label className="flex items-center gap-2 text-sm">
+            <input type="checkbox" checked={writeNow} onChange={(e) => setWriteNow(e.target.checked)} />
+            Write this lead&apos;s emails straight away
+          </label>
+          <button className="btn-go self-start" disabled={pending || !manual.email}>
+            {pending ? "Adding…" : "Add lead"}
+          </button>
+        </form>
+      ) : mode === "csv" ? (
         <>
           <input type="file" accept=".csv,text/csv" onChange={(e) => e.target.files?.[0] && onFile(e.target.files[0])} className="text-sm" />
           {file && (
