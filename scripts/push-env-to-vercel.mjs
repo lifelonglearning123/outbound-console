@@ -12,14 +12,25 @@ const env = Object.fromEntries(
     .map((l) => [l.slice(0, l.indexOf("=")), l.slice(l.indexOf("=") + 1)]),
 );
 
-const missing = KEYS.filter((k) => !env[k]);
+// DATABASE_URL may live only in Vercel (Neon integration); everything else must be in .env.local.
+const missing = KEYS.filter((k) => !env[k] && k !== "DATABASE_URL");
 if (missing.length) {
   console.error(`Add these to .env.local first: ${missing.join(", ")}`);
   process.exit(1);
 }
 
+// DATABASE_URL is managed by the Neon integration when the database was created from Vercel; leave it alone.
+const existing = spawnSync("vercel", ["env", "ls", "production"], { shell: true }).stdout?.toString() ?? "";
 for (const key of KEYS) {
+  if (key === "DATABASE_URL" && /\bDATABASE_URL\b/.test(existing)) {
+    console.log("DATABASE_URL: already set in Vercel (Neon integration), left as is");
+    continue;
+  }
   spawnSync("vercel", ["env", "rm", key, "production", "--yes"], { shell: true, stdio: "ignore" });
+  if (!env[key]) {
+    console.log(`${key}: not in .env.local, skipped`);
+    continue;
+  }
   // The value goes in on stdin with no trailing newline, so it arrives exactly as written.
   const r = spawnSync("vercel", ["env", "add", key, "production"], { shell: true, input: env[key], stdio: ["pipe", "ignore", "pipe"] });
   console.log(`${key}: ${r.status === 0 ? "set" : `failed (${r.stderr.toString().trim().split("\n").pop()})`}`);
