@@ -1,3 +1,4 @@
+import { requireClientAccess } from "@/lib/auth";
 import Link from "next/link";
 import { all } from "@/lib/db";
 import { requireClient } from "@/lib/clients";
@@ -31,10 +32,11 @@ type Row = {
 
 export default async function LeadsPage({ params, searchParams }: PageProps<"/clients/[id]/leads">) {
   const id = Number((await params).id);
+  await requireClientAccess(id); // only admins and this client's own logins
   const sp = await searchParams;
   const stage = typeof sp.stage === "string" ? sp.stage : "";
-  const client = requireClient(id);
-  const campaigns = all<{ id: number; name: string; managed: number; new_count: number; error_count: number }>(
+  const client = await requireClient(id);
+  const campaigns = await all<{ id: number; name: string; managed: number; new_count: number; error_count: number }>(
     `SELECT c.id, c.name, c.managed,
        (SELECT COUNT(*) FROM leads l WHERE l.campaign_id = c.id AND l.stage = 'new') new_count,
        (SELECT COUNT(*) FROM leads l WHERE l.campaign_id = c.id AND l.stage = 'error' AND l.pushed_at IS NULL) error_count
@@ -42,9 +44,9 @@ export default async function LeadsPage({ params, searchParams }: PageProps<"/cl
     id,
   );
   const counts = Object.fromEntries(
-    all<{ stage: string; n: number }>("SELECT stage, COUNT(*) n FROM leads WHERE client_id = ? GROUP BY stage", id).map((r) => [r.stage, r.n]),
+    (await all<{ stage: string; n: number }>("SELECT stage, COUNT(*) n FROM leads WHERE client_id = ? GROUP BY stage", id)).map((r) => [r.stage, r.n]),
   );
-  const rows = all<Row>(
+  const rows = await all<Row>(
     `SELECT l.*, c.name campaign_name FROM leads l LEFT JOIN campaigns c ON c.id = l.campaign_id
      WHERE l.client_id = ? ${stage ? "AND l.stage = ?" : ""} ORDER BY l.id DESC LIMIT 300`,
     ...(stage ? [id, stage] : [id]),

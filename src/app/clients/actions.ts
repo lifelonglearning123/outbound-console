@@ -1,10 +1,12 @@
 "use server";
 
+import { requireAdmin, requireClientAccess } from "@/lib/auth";
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { all, run, logActivity } from "@/lib/db";
 import { requireClient, type Brief } from "@/lib/clients";
 import { checkConnection } from "@/lib/connection";
+import { encrypt } from "@/lib/secrets";
 
 const BRIEF_KEYS: (keyof Brief)[] = ["offer", "icp", "tone", "proof", "cta", "sender_name", "signature", "avoid"];
 
@@ -14,6 +16,7 @@ function text(form: FormData, key: string): string | null {
 }
 
 export async function saveClient(form: FormData) {
+  await requireAdmin();
   const id = Number(form.get("id") || 0);
   const name = text(form, "name");
   if (!name) throw new Error("Client name is required");
@@ -44,8 +47,8 @@ export async function saveClient(form: FormData) {
 
   let clientId = id;
   if (id) {
-    const existing = requireClient(id);
-    run(
+    const existing = await requireClient(id);
+    await run(
       `UPDATE clients SET name = @name, ghl_location_id = @ghl_location_id, ghl_pipeline_id = @ghl_pipeline_id,
          ghl_stage_id = @ghl_stage_id, brief = @brief, instantly_api_key = @key, ghl_token = @token,
          ghl_meeting_calendars = CASE WHEN @meetingsSent = 1 THEN @ghl_meeting_calendars ELSE ghl_meeting_calendars END,
@@ -59,22 +62,23 @@ export async function saveClient(form: FormData) {
         id,
         tagLabel,
         tagChanged: (tagLabel ?? "") !== (existing.instantly_tag_label ?? "") ? 1 : 0,
-        key: apiKey ?? existing.instantly_api_key,
-        token: ghlToken ?? existing.ghl_token,
+        // Keys are stored encrypted; a blank field keeps the current key.
+        key: encrypt(apiKey ?? existing.instantly_api_key),
+        token: encrypt(ghlToken ?? existing.ghl_token),
         keyChanged: apiKey && apiKey !== existing.instantly_api_key ? 1 : 0,
       },
     );
-    logActivity(id, "client", `Updated client settings`);
+    await logActivity(id, "client", `Updated client settings`);
   } else {
-    clientId = run(
+    clientId = (await run(
       `INSERT INTO clients (name, ghl_location_id, ghl_pipeline_id, ghl_stage_id, brief, instantly_api_key, ghl_token, instantly_tag_label)
        VALUES (@name, @ghl_location_id, @ghl_pipeline_id, @ghl_stage_id, @brief, @key, @token, @tagLabel)`,
-      { ...fields, key: apiKey, token: ghlToken, tagLabel },
-    ).id;
-    logActivity(clientId, "client", `Added client ${name}`);
+      { ...fields, key: encrypt(apiKey), token: encrypt(ghlToken), tagLabel },
+    )).id;
+    await logActivity(clientId, "client", `Added client ${name}`);
   }
 
-  if (requireClient(clientId).instantly_api_key) await recheckWorkspace(clientId);
+  if ((await requireClient(clientId)).instantly_api_key) await recheckWorkspace(clientId);
   revalidatePath("/", "layout");
   redirect(`/clients/${clientId}`);
 }
@@ -82,20 +86,22 @@ export async function saveClient(form: FormData) {
 /** Check this client, then every other client sharing its Instantly workspace, since a tag change affects them all. */
 async function recheckWorkspace(clientId: number) {
   await checkConnection(clientId);
-  const ws = requireClient(clientId).instantly_workspace_id;
+  const ws = (await requireClient(clientId)).instantly_workspace_id;
   if (!ws) return;
-  const others = all<{ id: number }>("SELECT id FROM clients WHERE instantly_workspace_id = ? AND id != ? AND archived = 0", ws, clientId);
+  const others = await all<{ id: number }>("SELECT id FROM clients WHERE instantly_workspace_id = ? AND id != ? AND archived = 0", ws, clientId);
   for (const o of others) await checkConnection(o.id);
 }
 
 export async function recheckConnection(clientId: number) {
+  await requireClientAccess(clientId);
   await recheckWorkspace(clientId);
   revalidatePath("/", "layout");
 }
 
 export async function archiveClient(clientId: number) {
-  run("UPDATE clients SET archived = 1 WHERE id = ?", clientId);
-  logActivity(clientId, "client", "Archived client");
+  await requireAdmin();
+  await run("UPDATE clients SET archived = 1 WHERE id = ?", clientId);
+  await logActivity(clientId, "client", "Archived client");
   revalidatePath("/", "layout");
   redirect("/");
 }

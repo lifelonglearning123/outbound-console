@@ -1,4 +1,6 @@
 import Link from "next/link";
+import { redirect } from "next/navigation";
+import { requireUser } from "@/lib/auth";
 import { all, get, getSetting } from "@/lib/db";
 import { listClients } from "@/lib/clients";
 import { funnelFor } from "@/lib/stats";
@@ -12,11 +14,14 @@ type ClientRow = {
   active: number; review: number; approved: number; sent_today: number; replies_7d: number; interested_7d: number; mailboxes_bad: number;
 };
 
-export default function OverviewPage() {
-  const clients = listClients();
+export default async function OverviewPage() {
+  const u = await requireUser();
+  // Client logins work inside their own client; this cross-client page is for admins.
+  if (u.role !== "admin") redirect(u.clientIds.length ? `/clients/${u.clientIds[0]}` : "/account");
+  const clients = await listClients();
   const today = new Date().toISOString().slice(0, 10);
   const week = new Date(nowMs() - 7 * 86400_000).toISOString();
-  const rows = all<ClientRow>(
+  const rows = await all<ClientRow>(
     `SELECT c.id, c.name, c.key_status, c.key_message,
        (SELECT COUNT(*) FROM campaigns x WHERE x.client_id = c.id AND x.status = 'active') active,
        (SELECT COUNT(*) FROM leads l WHERE l.client_id = c.id AND l.stage = 'review') review,
@@ -25,16 +30,16 @@ export default function OverviewPage() {
        (SELECT COUNT(*) FROM emails e WHERE e.client_id = c.id AND e.direction = 'in' AND e.sent_at >= ?) replies_7d,
        (SELECT COUNT(*) FROM emails e WHERE e.client_id = c.id AND e.direction = 'in' AND e.interest = 'interested' AND e.sent_at >= ?) interested_7d,
        (SELECT COUNT(*) FROM mailboxes m WHERE m.client_id = c.id AND (m.status != 1 OR m.auto_paused_at IS NOT NULL)) mailboxes_bad
-     FROM clients c WHERE c.archived = 0 ORDER BY c.name COLLATE NOCASE`,
+     FROM clients c WHERE c.archived = 0 ORDER BY lower(c.name)`,
     today, week, week,
   );
 
   const attention = {
     review: rows.reduce((a, r) => a + r.review, 0),
     approved: rows.reduce((a, r) => a + r.approved, 0),
-    replies: get<{ n: number }>("SELECT COUNT(*) n FROM emails WHERE direction = 'in' AND is_unread = 1 AND (interest IS NULL OR interest IN ('interested','not_now','other'))")?.n ?? 0,
-    paused: get<{ n: number }>("SELECT COUNT(*) n FROM mailboxes WHERE auto_paused_at IS NOT NULL AND status != 1")?.n ?? 0,
-    idle: all<{ id: number; client_id: number; name: string; not_sending: string }>(
+    replies: (await get<{ n: number }>("SELECT COUNT(*) n FROM emails WHERE direction = 'in' AND is_unread = 1 AND (interest IS NULL OR interest IN ('interested','not_now','other'))"))?.n ?? 0,
+    paused: (await get<{ n: number }>("SELECT COUNT(*) n FROM mailboxes WHERE auto_paused_at IS NOT NULL AND status != 1"))?.n ?? 0,
+    idle: await all<{ id: number; client_id: number; name: string; not_sending: string }>(
       "SELECT id, client_id, name, not_sending FROM campaigns WHERE status = 'active' AND not_sending IS NOT NULL",
     ),
     broken: rows.filter((r) => r.key_status === "error"),
@@ -72,7 +77,7 @@ export default function OverviewPage() {
           <h1 className="text-2xl font-semibold tracking-tight">Overview</h1>
           <p className="text-sm text-muted">All clients, last 30 days.</p>
         </div>
-        <SyncButton lastSync={ago(getSetting("last_sync_all", "") || null)} />
+        <SyncButton lastSync={ago(await getSetting("last_sync_all", "") || null)} />
       </header>
 
       {items.length > 0 && (
@@ -85,7 +90,7 @@ export default function OverviewPage() {
         </div>
       )}
 
-      <Funnel data={funnelFor(null, 30)} />
+      <Funnel data={await funnelFor(null, 30)} />
 
       <section className="flex flex-col gap-2">
         <h2 className="font-semibold">Clients</h2>

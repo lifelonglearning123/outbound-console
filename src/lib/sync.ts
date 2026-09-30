@@ -1,5 +1,5 @@
 import "server-only";
-import { all, get, run, tx, logActivity, getSetting, setSetting } from "./db";
+import { all, get, run, tx, logActivity, getSetting, setSetting, withLock } from "./db";
 import { listClients, requireClient, type Client } from "./clients";
 import { instantly, type Email, type InstantlyClient } from "./instantly";
 import { pruneForeignEmails, upsertCampaigns, upsertMailboxes } from "./connection";
@@ -32,11 +32,11 @@ function newestPart(text: string): string {
 
 export type HealthRules = { bouncePct: number; minSent: number; minWarmupScore: number };
 
-export function healthRules(): HealthRules {
+export async function healthRules(): Promise<HealthRules> {
   return {
-    bouncePct: Number(getSetting("health_bounce_pct", "3")),
-    minSent: Number(getSetting("health_min_sent", "20")),
-    minWarmupScore: Number(getSetting("health_min_warmup", "70")),
+    bouncePct: Number(await getSetting("health_bounce_pct", "3")),
+    minSent: Number(await getSetting("health_min_sent", "20")),
+    minWarmupScore: Number(await getSetting("health_min_warmup", "70")),
   };
 }
 
@@ -56,37 +56,37 @@ async function syncEmails(client: Client, api: InstantlyClient) {
   const clientId = client.id;
   const cursorKey = `emails_cursor_${clientId}`;
   // One-off: re-read history once so emails stored before step parsing was fixed get their step number.
-  if (getSetting(`step_backfill_${clientId}`, "") !== "1") {
-    setSetting(cursorKey, "");
-    setSetting(`step_backfill_${clientId}`, "1");
+  if (await getSetting(`step_backfill_${clientId}`, "") !== "1") {
+    await setSetting(cursorKey, "");
+    await setSetting(`step_backfill_${clientId}`, "1");
   }
-  const since = getSetting(cursorKey, "") || null;
+  const since = await getSetting(cursorKey, "") || null;
   // Shared workspace: Instantly can't filter emails by tag, so filter by the client's own mailboxes.
-  const own = scopedMailboxes(client);
+  const own = await scopedMailboxes(client);
   if (own && own.length === 0) return 0;
   const emails = await api.emailsSince(since, 5, own);
   if (emails.length === 0) return 0;
 
   const campaigns = new Map(
-    all<{ id: number; instantly_campaign_id: string }>("SELECT id, instantly_campaign_id FROM campaigns WHERE client_id = ?", clientId).map((c) => [
+    (await all<{ id: number; instantly_campaign_id: string }>("SELECT id, instantly_campaign_id FROM campaigns WHERE client_id = ?", clientId)).map((c) => [
       c.instantly_campaign_id,
       c.id,
     ]),
   );
-  const leadId = (email: string | null) =>
-    email ? get<{ id: number }>("SELECT id FROM leads WHERE client_id = ? AND email = ?", clientId, email.toLowerCase())?.id ?? null : null;
+  const leadId = async (email: string | null) =>
+    email ? ((await get<{ id: number }>("SELECT id FROM leads WHERE client_id = ? AND email = ?", clientId, email.toLowerCase()))?.id ?? null) : null;
 
   let newest = since ?? "";
   let inbound = 0;
-  tx(() => {
+  await tx(async () => {
     for (const e of emails as Email[]) {
       if (e.timestamp_created > newest) newest = e.timestamp_created;
       if (e.ue_type === 4) continue; // scheduled: handled by syncScheduled
       const direction = e.ue_type === 2 ? "in" : "out";
       const text = e.body?.text || (e.body?.html ? stripHtml(e.body.html) : e.content_preview ?? "");
       const lead = e.lead?.toLowerCase() ?? null;
-      const known = get<{ client_id: number }>("SELECT client_id FROM emails WHERE id = ?", e.id);
-      run(
+      const known = await get<{ client_id: number }>("SELECT client_id FROM emails WHERE id = ?", e.id);
+      await run(
         // Re-reads fill in details stored before (step), and a mailbox that moved to this client from another
         // one sharing the workspace brings its emails with it.
         `INSERT INTO emails (id, client_id, campaign_id, lead_id, lead_email, direction, step, account_email, subject,
@@ -95,40 +95,42 @@ async function syncEmails(client: Client, api: InstantlyClient) {
          ON CONFLICT(id) DO UPDATE SET client_id = excluded.client_id,
            campaign_id = COALESCE(excluded.campaign_id, emails.campaign_id), lead_id = COALESCE(excluded.lead_id, emails.lead_id),
            step = COALESCE(emails.step, excluded.step)`,
-        e.id, clientId, e.campaign_id ? campaigns.get(e.campaign_id) ?? null : null, leadId(lead), lead, direction,
+        e.id, clientId, e.campaign_id ? campaigns.get(e.campaign_id) ?? null : null, await leadId(lead), lead, direction,
         parseStep(e.step), e.eaccount, e.subject,
         direction === "in" ? newestPart(text) : text,
         e.thread_id, e.timestamp_email, e.is_unread ? 1 : 0,
         direction === "in" && e.is_auto_reply ? "ooo" : null,
       );
       if (known && known.client_id === clientId) continue; // not new to this client
-      const lid = leadId(lead);
-      if (lid && direction === "out") run("UPDATE leads SET last_sent_at = MAX(COALESCE(last_sent_at, ''), ?) WHERE id = ?", e.timestamp_email, lid);
-      if (lid && direction === "in") run("UPDATE leads SET last_reply_at = MAX(COALESCE(last_reply_at, ''), ?) WHERE id = ?", e.timestamp_email, lid);
+      const lid = await leadId(lead);
+      if (lid && direction === "out") await run("UPDATE leads SET last_sent_at = GREATEST(COALESCE(last_sent_at, ''), ?) WHERE id = ?", e.timestamp_email, lid);
+      if (lid && direction === "in") await run("UPDATE leads SET last_reply_at = GREATEST(COALESCE(last_reply_at, ''), ?) WHERE id = ?", e.timestamp_email, lid);
       if (direction === "in") inbound++;
     }
   });
-  setSetting(cursorKey, newest);
-  if (inbound) logActivity(clientId, "reply", `${inbound} new ${inbound === 1 ? "reply" : "replies"}`);
+  await setSetting(cursorKey, newest);
+  if (inbound) await logActivity(clientId, "reply", `${inbound} new ${inbound === 1 ? "reply" : "replies"}`);
   return emails.length;
 }
 
 async function syncScheduled(client: Client, api: InstantlyClient) {
   const clientId = client.id;
-  const own = scopedMailboxes(client);
+  const own = await scopedMailboxes(client);
   // One page is plenty at this scale; it's a preview of what goes out next.
   const res = own && own.length === 0 ? [] : await api.scheduledEmails(own);
   const campaigns = new Map(
-    all<{ id: number; instantly_campaign_id: string }>("SELECT id, instantly_campaign_id FROM campaigns WHERE client_id = ?", clientId).map((c) => [
+    (await all<{ id: number; instantly_campaign_id: string }>("SELECT id, instantly_campaign_id FROM campaigns WHERE client_id = ?", clientId)).map((c) => [
       c.instantly_campaign_id,
       c.id,
     ]),
   );
-  tx(() => {
-    run("DELETE FROM scheduled WHERE client_id = ?", clientId);
+  await tx(async () => {
+    await run("DELETE FROM scheduled WHERE client_id = ?", clientId);
     for (const e of res) {
-      run(
-        "INSERT OR REPLACE INTO scheduled (id, client_id, campaign_id, lead_email, account_email, step, subject, due_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+      await run(
+        `INSERT INTO scheduled (id, client_id, campaign_id, lead_email, account_email, step, subject, due_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT (id) DO UPDATE SET client_id = EXCLUDED.client_id, campaign_id = EXCLUDED.campaign_id, step = EXCLUDED.step,
+           subject = EXCLUDED.subject, due_at = EXCLUDED.due_at`,
         e.id, clientId, e.campaign_id ? campaigns.get(e.campaign_id) ?? null : null, e.lead, e.eaccount,
         parseStep(e.step), e.subject, e.timestamp_email,
       );
@@ -137,17 +139,17 @@ async function syncScheduled(client: Client, api: InstantlyClient) {
 }
 
 async function syncStats(clientId: number, api: InstantlyClient) {
-  const campaigns = all<{ id: number; instantly_campaign_id: string; status: string }>(
+  const campaigns = await all<{ id: number; instantly_campaign_id: string; status: string }>(
     "SELECT id, instantly_campaign_id, status FROM campaigns WHERE client_id = ? AND instantly_campaign_id IS NOT NULL",
     clientId,
   );
   // The first stats sync reaches back 120 days so the dashboard's longer ranges have data; later ones refresh 30.
-  const backfilled = getSetting(`stats_backfill_${clientId}`, "") === "1";
+  const backfilled = await getSetting(`stats_backfill_${clientId}`, "") === "1";
   const history = backfilled ? 30 : 120;
   for (const c of campaigns) {
     const daily = await api.campaignDaily(c.instantly_campaign_id, day(history), day(0));
     for (const d of daily) {
-      run(
+      await run(
         `INSERT INTO daily_stats (client_id, campaign_id, date, sent, contacted, opened, replied, clicked, opportunities)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(campaign_id, date) DO UPDATE SET sent = excluded.sent, contacted = excluded.contacted, opened = excluded.opened,
@@ -170,31 +172,31 @@ async function syncStats(clientId: number, api: InstantlyClient) {
       t.opps += r.unique_opportunities ?? 0;
       byStep.set(n, t);
     }
-    tx(() => {
-      run("DELETE FROM step_stats WHERE campaign_id = ?", c.id);
+    await tx(async () => {
+      await run("DELETE FROM step_stats WHERE campaign_id = ?", c.id);
       for (const [n, t] of byStep) {
-        run("INSERT INTO step_stats (campaign_id, step, sent, opened, replied, opportunities) VALUES (?, ?, ?, ?, ?, ?)", c.id, n, t.sent, t.opened, t.replied, t.opps);
+        await run("INSERT INTO step_stats (campaign_id, step, sent, opened, replied, opportunities) VALUES (?, ?, ?, ?, ?, ?)", c.id, n, t.sent, t.opened, t.replied, t.opps);
       }
     });
     if (c.status === "active") {
       try {
         const s = await api.sendingStatus(c.instantly_campaign_id);
         const st = s.summary?.status;
-        run("UPDATE campaigns SET not_sending = ? WHERE id = ?", st && st !== "healthy" ? s.summary?.status_message ?? st : null, c.id);
+        await run("UPDATE campaigns SET not_sending = ? WHERE id = ?", st && st !== "healthy" ? s.summary?.status_message ?? st : null, c.id);
       } catch {
         // Diagnostics are nice-to-have; ignore failures.
       }
     }
   }
 
-  const mailboxes = all<{ email: string }>("SELECT email FROM mailboxes WHERE client_id = ?", clientId).map((m) => m.email);
+  const mailboxes = (await all<{ email: string }>("SELECT email FROM mailboxes WHERE client_id = ?", clientId)).map((m) => m.email);
   // Instantly allows at most 31 days per mailbox-analytics call, so history is fetched in 30-day windows.
   const windows = backfilled ? [[14, 0]] : [[120, 91], [90, 61], [60, 31], [30, 0]];
   for (let i = 0; i < mailboxes.length; i += 100) {
     for (const [start, end] of windows) {
       const daily = await api.accountDaily(mailboxes.slice(i, i + 100), day(start), day(end));
       for (const d of daily) {
-        run(
+        await run(
           `INSERT INTO mailbox_daily (client_id, email, date, sent, bounced, opened, replied) VALUES (?, ?, ?, ?, ?, ?, ?)
            ON CONFLICT(client_id, email, date) DO UPDATE SET sent = excluded.sent, bounced = excluded.bounced,
              opened = excluded.opened, replied = excluded.replied`,
@@ -203,8 +205,8 @@ async function syncStats(clientId: number, api: InstantlyClient) {
       }
     }
   }
-  setSetting(`stats_backfill_${clientId}`, "1");
-  run(
+  await setSetting(`stats_backfill_${clientId}`, "1");
+  await run(
     `UPDATE mailboxes SET
        sent_today = (SELECT COALESCE(SUM(sent),0) FROM mailbox_daily d WHERE d.client_id = mailboxes.client_id AND d.email = mailboxes.email AND d.date = ?),
        sent_7d = (SELECT COALESCE(SUM(sent),0) FROM mailbox_daily d WHERE d.client_id = mailboxes.client_id AND d.email = mailboxes.email AND d.date >= ?),
@@ -215,16 +217,16 @@ async function syncStats(clientId: number, api: InstantlyClient) {
 }
 
 async function syncLeads(clientId: number, api: InstantlyClient) {
-  const campaigns = all<{ id: number; instantly_campaign_id: string }>(
+  const campaigns = await all<{ id: number; instantly_campaign_id: string }>(
     "SELECT id, instantly_campaign_id FROM campaigns WHERE client_id = ? AND managed = 1 AND instantly_campaign_id IS NOT NULL AND status IN ('active','paused')",
     clientId,
   );
   for (const c of campaigns) {
     const leads = await api.leadsInCampaign(c.instantly_campaign_id);
-    tx(() => {
+    await tx(async () => {
       for (const l of leads) {
         if (!l.email) continue;
-        run(
+        await run(
           `UPDATE leads SET instantly_status = ?, interest_status = COALESCE(?, interest_status), last_open_at = COALESCE(?, last_open_at)
            WHERE client_id = ? AND email = ?`,
           // Instantly omits fields that were never set (e.g. no opens yet); undefined can't be bound.
@@ -237,9 +239,9 @@ async function syncLeads(clientId: number, api: InstantlyClient) {
 
 /** Pause mailboxes that break the health rules (bounce rate, warmup score). Only ever pauses; never auto-resumes. */
 async function enforceHealth(clientId: number, api: InstantlyClient) {
-  if (getSetting("health_auto_pause", "1") !== "1") return;
-  const rules = healthRules();
-  const boxes = all<{ email: string; status: number; warmup_score: number | null; sent_7d: number; bounced_7d: number; auto_paused_at: string | null }>(
+  if (await getSetting("health_auto_pause", "1") !== "1") return;
+  const rules = await healthRules();
+  const boxes = await all<{ email: string; status: number; warmup_score: number | null; sent_7d: number; bounced_7d: number; auto_paused_at: string | null }>(
     "SELECT * FROM mailboxes WHERE client_id = ? AND status = 1",
     clientId,
   );
@@ -253,25 +255,25 @@ async function enforceHealth(clientId: number, api: InstantlyClient) {
     if (!reason) continue;
     try {
       await api.pauseAccount(b.email);
-      run(
+      await run(
         "UPDATE mailboxes SET status = 2, auto_paused_at = datetime('now'), auto_paused_reason = ? WHERE client_id = ? AND email = ?",
         reason, clientId, b.email,
       );
-      logActivity(clientId, "auto_pause", `Paused ${b.email}: ${reason}`);
+      await logActivity(clientId, "auto_pause", `Paused ${b.email}: ${reason}`);
     } catch (e) {
-      logActivity(clientId, "error", `Wanted to pause ${b.email} (${reason}) but Instantly said: ${(e as Error).message}`);
+      await logActivity(clientId, "error", `Wanted to pause ${b.email} (${reason}) but Instantly said: ${(e as Error).message}`);
     }
   }
 }
 
 export async function syncClient(clientId: number): Promise<{ ok: boolean; message: string }> {
-  const client = requireClient(clientId);
+  const client = await requireClient(clientId);
   if (!client.instantly_api_key || client.key_status === "error") return { ok: false, message: "Instantly not connected" };
   // Never sync a shared workspace unless every client in it is tagged, or one client would see another's data.
-  const problem = sharingProblem(client);
+  const problem = await sharingProblem(client);
   if (problem) {
-    run("UPDATE clients SET key_status = 'error', key_message = ? WHERE id = ?", problem, clientId);
-    logActivity(clientId, "error", problem);
+    await run("UPDATE clients SET key_status = 'error', key_message = ? WHERE id = ?", problem, clientId);
+    await logActivity(clientId, "error", problem);
     return { ok: false, message: problem };
   }
   const api = instantly(client.instantly_api_key);
@@ -281,20 +283,20 @@ export async function syncClient(clientId: number): Promise<{ ok: boolean; messa
     tagId = await ensureTag(api, client);
   } catch (e) {
     const message = `Couldn't look up tag "${client.instantly_tag_label}": ${(e as Error).message}`;
-    logActivity(clientId, "error", message);
+    await logActivity(clientId, "error", message);
     return { ok: false, message };
   }
   const steps: [string, () => Promise<unknown>][] = [
     ["mailboxes", async () => {
-      upsertMailboxes(clientId, await api.accounts(tagId));
-      if (tagId) pruneForeignEmails(clientId);
+      await upsertMailboxes(clientId, await api.accounts(tagId));
+      if (tagId) await pruneForeignEmails(clientId);
     }],
     ["campaigns", async () => {
       const campaigns = await api.campaigns(tagId);
-      upsertCampaigns(clientId, campaigns);
-      const boxes = get<{ n: number }>("SELECT COUNT(*) n FROM mailboxes WHERE client_id = ?", clientId)?.n ?? 0;
+      await upsertCampaigns(clientId, campaigns);
+      const boxes = (await get<{ n: number }>("SELECT COUNT(*) n FROM mailboxes WHERE client_id = ?", clientId))?.n ?? 0;
       const scope = tagId ? ` tagged "${client.instantly_tag_label}"` : "";
-      run("UPDATE clients SET key_message = ?, key_checked_at = ? WHERE id = ?", `${boxes} mailboxes, ${campaigns.length} campaigns${scope}`, new Date().toISOString(), clientId);
+      await run("UPDATE clients SET key_message = ?, key_checked_at = ? WHERE id = ?", `${boxes} mailboxes, ${campaigns.length} campaigns${scope}`, new Date().toISOString(), clientId);
     }],
     ["emails", () => syncEmails(client, api)],
     ["scheduled", () => syncScheduled(client, api)],
@@ -306,7 +308,7 @@ export async function syncClient(clientId: number): Promise<{ ok: boolean; messa
     // GHL is the source of truth for contacts: link new leads, pull newly tagged contacts, log emails.
     ["ghl contacts", () => linkPendingLeads(client)],
     ["ghl tags", async () => {
-      if (await pullTaggedContacts(client)) void runWriter();
+      if (await pullTaggedContacts(client)) void await runWriter();
     }],
     ["ghl conversations", () => logEmailsToGhl(client)],
   ];
@@ -319,30 +321,26 @@ export async function syncClient(clientId: number): Promise<{ ok: boolean; messa
       if ((e as { status?: number }).status === 401) break;
     }
   }
-  setSetting(`last_sync_${clientId}`, new Date().toISOString());
+  await setSetting(`last_sync_${clientId}`, new Date().toISOString());
   if (errors.length) {
     const message = errors.join(" | ");
-    logActivity(clientId, "error", `Sync problems — ${message}`);
+    await logActivity(clientId, "error", `Sync problems — ${message}`);
     return { ok: false, message };
   }
   return { ok: true, message: "Synced" };
 }
 
-declare global {
-   
-  var __outbound_sync_running: boolean | undefined;
+/** Sync every connected client, then write any queued emails. One run at a time across all server instances. */
+export async function syncAll() {
+  return withLock("sync", 12 * 60_000, syncEveryClient);
 }
 
-export async function syncAll() {
-  if (globalThis.__outbound_sync_running) return;
-  globalThis.__outbound_sync_running = true;
-  try {
-    for (const c of listClients()) {
+async function syncEveryClient() {
+  {
+    for (const c of await listClients()) {
       if (c.instantly_api_key && c.key_status === "ok") await syncClient(c.id);
     }
-    setSetting("last_sync_all", new Date().toISOString());
+    await setSetting("last_sync_all", new Date().toISOString());
     await runWriter(); // pick up any drafting left over from a restart
-  } finally {
-    globalThis.__outbound_sync_running = false;
   }
 }

@@ -14,7 +14,7 @@ const MAIN = [
   { href: "/activity", label: "Activity" },
 ];
 
-export function Nav({ clients }: { clients: NavClient[] }) {
+export function Nav({ clients, user }: { clients: NavClient[]; user: { email: string; isAdmin: boolean } }) {
   const path = usePathname();
   const isActive = (href: string) => (href === "/" ? path === "/" : path.startsWith(href));
   const item = (href: string, active: boolean) =>
@@ -40,9 +40,11 @@ export function Nav({ clients }: { clients: NavClient[] }) {
       <div className="flex min-h-0 flex-col gap-0.5">
         <div className="flex items-center justify-between px-2.5 pb-1">
           <span className="text-xs font-medium uppercase tracking-wide text-muted">Clients</span>
-          <Link href="/clients/new" className="text-xs text-muted hover:text-ink" title="Add client">
-            + Add
-          </Link>
+          {user.isAdmin && (
+            <Link href="/clients/new" className="text-xs text-muted hover:text-ink" title="Add client">
+              + Add
+            </Link>
+          )}
         </div>
         <div className="flex flex-col gap-0.5 overflow-y-auto">
           {clients.length === 0 && <div className="px-2.5 text-xs text-muted">No clients yet</div>}
@@ -62,6 +64,14 @@ export function Nav({ clients }: { clients: NavClient[] }) {
             );
           })}
         </div>
+      </div>
+      <div className="mt-auto flex flex-col gap-0.5 border-t border-line pt-3">
+        {user.isAdmin && (
+          <Link href="/admin/users" className={item("/admin/users", path.startsWith("/admin/users"))}>Users</Link>
+        )}
+        <Link href="/account" className={item("/account", path === "/account")}>
+          <span className="truncate text-xs">{user.email}</span>
+        </Link>
       </div>
     </aside>
   );

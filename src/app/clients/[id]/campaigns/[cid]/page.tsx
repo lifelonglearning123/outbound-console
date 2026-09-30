@@ -1,3 +1,4 @@
+import { requireClientAccess } from "@/lib/auth";
 import { notFound } from "next/navigation";
 import { all, get } from "@/lib/db";
 import { campaignStepProblems, getCampaign, liveSteps, pushedLeadCount } from "@/lib/campaigns";
@@ -15,28 +16,30 @@ import { ago, pct } from "@/lib/format";
 export default async function CampaignPage({ params }: PageProps<"/clients/[id]/campaigns/[cid]">) {
   const { id, cid } = await params;
   const clientId = Number(id);
-  const c = getCampaign(Number(cid));
+  await requireClientAccess(clientId); // only admins and this client's own logins
+  const c = await getCampaign(Number(cid));
   if (!c || c.client_id !== clientId) notFound();
 
-  const mailboxes = all<{ email: string; status: number }>("SELECT email, status FROM mailboxes WHERE client_id = ? ORDER BY email", clientId);
+  const mailboxes = await all<{ email: string; status: number }>("SELECT email, status FROM mailboxes WHERE client_id = ? ORDER BY email", clientId);
   // Tags from the client's GHL for the campaign's "GHL tag" suggestions (null = GHL not connected).
-  const ghlClient = requireClient(clientId);
+  const ghlClient = await requireClient(clientId);
   let ghlTags: string[] | null = null;
   if (ghlClient.ghl_location_id && ghlClient.ghl_token) {
     ghlTags = await listTags({ locationId: ghlClient.ghl_location_id, token: ghlClient.ghl_token }).catch(() => []);
   }
-  const t = get<{ sent: number; opened: number; replied: number; opportunities: number }>(
+  const t = (await get<{ sent: number; opened: number; replied: number; opportunities: number }>(
     `SELECT COALESCE(SUM(sent),0) sent, COALESCE(SUM(opened),0) opened, COALESCE(SUM(replied),0) replied, COALESCE(SUM(opportunities),0) opportunities
      FROM daily_stats WHERE campaign_id = ?`,
     c.id,
-  )!;
-  const pipeline = get<{ review: number; approved: number; pushed: number }>(
-    `SELECT SUM(stage = 'review') review, SUM(stage = 'approved') approved, SUM(stage = 'pushed' OR stage LIKE 'extend_%') pushed FROM leads WHERE campaign_id = ?`,
+  ))!;
+  const pipeline = (await get<{ review: number; approved: number; pushed: number }>(
+    `SELECT COUNT(*) FILTER (WHERE stage = 'review') review, COUNT(*) FILTER (WHERE stage = 'approved') approved,
+       COUNT(*) FILTER (WHERE stage = 'pushed' OR stage LIKE 'extend_%') pushed FROM leads WHERE campaign_id = ?`,
     c.id,
-  )!;
+  ))!;
   const live = liveSteps(c);
   const hasHold = c.managed === 1 && (c.hold_after !== null || c.release_to !== null);
-  const hold = hasHold ? holdStatus(c.id) : null;
+  const hold = hasHold ? await holdStatus(c.id) : null;
   // For each "release up to step N" choice, what still needs finishing in the held steps.
   const stepProblems = Object.fromEntries(
     c.steps.map((_, i) => [i + 1, campaignStepProblems(c.steps.slice(0, i + 1))]),
@@ -106,7 +109,7 @@ export default async function CampaignPage({ params }: PageProps<"/clients/[id]/
             managed={c.managed === 1}
             submitLabel="Save and update Instantly"
             holdAfter={c.hold_after}
-            lockedLive={pushedLeadCount(c.id) ? liveSteps(c) : 0}
+            lockedLive={await pushedLeadCount(c.id) ? liveSteps(c) : 0}
             ghlTag={c.ghl_tag}
             ghlTags={ghlTags}
           />

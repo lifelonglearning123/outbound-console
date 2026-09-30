@@ -7,7 +7,7 @@ type Event = { account: string; client: string; at: string; kind: "out" | "in" |
  * One row per sending mailbox, time running left to right. Filled green = sent, amber = reply received,
  * hollow = queued in Instantly. The dark line is now.
  */
-export function SendTimeline({ clientId, pastHours, futureHours }: { clientId: number | null; pastHours: number; futureHours: number }) {
+export async function SendTimeline({ clientId, pastHours, futureHours }: { clientId: number | null; pastHours: number; futureHours: number }) {
   const now = nowMs();
   const start = now - pastHours * 3600_000;
   const end = now + futureHours * 3600_000;
@@ -17,18 +17,18 @@ export function SendTimeline({ clientId, pastHours, futureHours }: { clientId: n
   const p = { clientId: clientId ?? 0, startIso, endIso };
 
   const events = [
-    ...all<Event>(
+    ...(await all<Event>(
       `SELECT e.account_email account, c.name client, e.sent_at at, e.direction kind, e.lead_email who, e.subject, e.step
        FROM emails e JOIN clients c ON c.id = e.client_id
        WHERE e.sent_at >= @startIso AND e.sent_at <= @endIso ${scope}`,
       p,
-    ),
-    ...all<Event>(
+    )),
+    ...(await all<Event>(
       `SELECT e.account_email account, c.name client, e.due_at at, 'scheduled' kind, e.lead_email who, e.subject, e.step
        FROM scheduled e JOIN clients c ON c.id = e.client_id
        WHERE e.due_at >= @startIso AND e.due_at <= @endIso ${scope}`,
       p,
-    ),
+    )),
   ].filter((e) => e.account);
 
   const rows = new Map<string, { client: string; events: Event[] }>();

@@ -1,5 +1,6 @@
 "use server";
 
+import { clientOfCampaign, requireClientAccess } from "@/lib/auth";
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { run, logActivity } from "@/lib/db";
@@ -16,11 +17,13 @@ import { instantly } from "@/lib/instantly";
 import { sanitizeEmailHtml } from "@/lib/merge";
 
 export async function pauseCampaign(id: number) {
+  await requireClientAccess(await clientOfCampaign(id));
   await setCampaignRunning(id, false);
   revalidatePath("/", "layout");
 }
 
 export async function resumeCampaign(id: number) {
+  await requireClientAccess(await clientOfCampaign(id));
   await setCampaignRunning(id, true);
   revalidatePath("/", "layout");
 }
@@ -72,12 +75,14 @@ function readForm(form: FormData) {
 }
 
 export async function saveCampaign(clientId: number, campaignId: number | null, form: FormData) {
+  await requireClientAccess(clientId);
+  if (campaignId && (await clientOfCampaign(campaignId)) !== clientId) throw new Error("Campaign not found");
   const { step_count, ...fields } = readForm(form);
   let id = campaignId;
   if (id) {
-    const existing = requireCampaign(id);
+    const existing = await requireCampaign(id);
     if (existing.managed && existing.release_to) throw new Error("A hold release is in progress. Apply or cancel it before editing the steps.");
-    if (existing.managed && pushedLeadCount(id) > 0) {
+    if (existing.managed && await pushedLeadCount(id) > 0) {
       // Leads are already in Instantly with their copy: the live steps stay as they are, and any steps
       // beyond them are held until released from the campaign page (so nobody gets a step without copy).
       const live = liveSteps(existing);
@@ -86,34 +91,34 @@ export async function saveCampaign(clientId: number, campaignId: number | null, 
     }
     if (!existing.managed) {
       // External campaigns: only the controls we can safely change from here.
-      run("UPDATE campaigns SET daily_limit = @daily_limit, accounts = @accounts, schedule = @schedule WHERE id = @id", { ...fields, id });
+      await run("UPDATE campaigns SET daily_limit = @daily_limit, accounts = @accounts, schedule = @schedule WHERE id = @id", { ...fields, id });
     } else {
-      run(
+      await run(
         `UPDATE campaigns SET name = @name, steps = @steps, schedule = @schedule, daily_limit = @daily_limit,
            accounts = @accounts, stop_on_reply = @stop_on_reply, hold_after = @hold_after, ghl_tag = @ghl_tag WHERE id = @id`,
         { ...fields, id },
       );
     }
   } else {
-    id = run(
+    id = (await run(
       `INSERT INTO campaigns (client_id, name, steps, schedule, daily_limit, accounts, stop_on_reply, hold_after, ghl_tag)
        VALUES (@clientId, @name, @steps, @schedule, @daily_limit, @accounts, @stop_on_reply, @hold_after, @ghl_tag)`,
       { ...fields, clientId },
-    ).id;
-    logActivity(clientId, "campaign", `Created campaign "${fields.name}"`);
+    )).id;
+    await logActivity(clientId, "campaign", `Created campaign "${fields.name}"`);
   }
 
-  const c = requireCampaign(id);
+  const c = await requireCampaign(id);
   if (c.managed) {
     await syncCampaignToInstantly(id);
   } else if (c.instantly_campaign_id) {
-    const client = requireClient(clientId);
+    const client = await requireClient(clientId);
     await instantly(client.instantly_api_key!).patchCampaign(c.instantly_campaign_id, {
       daily_limit: c.daily_limit,
       email_list: c.accounts,
       campaign_schedule: toInstantlySchedule(c.schedule),
     });
-    logActivity(clientId, "campaign", `Updated schedule and limits for "${c.name}"`);
+    await logActivity(clientId, "campaign", `Updated schedule and limits for "${c.name}"`);
   }
 
   revalidatePath("/", "layout");
@@ -123,12 +128,14 @@ export async function saveCampaign(clientId: number, campaignId: number | null, 
 // ---------- Hold release ----------
 
 export async function startRelease(campaignId: number, form: FormData) {
-  prepareRelease(campaignId, Number(form.get("up_to")));
+  await requireClientAccess(await clientOfCampaign(campaignId));
+  await prepareRelease(campaignId, Number(form.get("up_to")));
   after(runWriter);
   revalidatePath("/", "layout");
 }
 
 export async function finishRelease(campaignId: number): Promise<string> {
+  await requireClientAccess(await clientOfCampaign(campaignId));
   try {
     const msg = await applyRelease(campaignId);
     revalidatePath("/", "layout");
@@ -140,12 +147,14 @@ export async function finishRelease(campaignId: number): Promise<string> {
 }
 
 export async function abandonRelease(campaignId: number) {
-  cancelRelease(campaignId);
+  await requireClientAccess(await clientOfCampaign(campaignId));
+  await cancelRelease(campaignId);
   revalidatePath("/", "layout");
 }
 
 export async function retryRelease(campaignId: number) {
-  retryFailed(campaignId);
+  await requireClientAccess(await clientOfCampaign(campaignId));
+  await retryFailed(campaignId);
   after(runWriter);
   revalidatePath("/", "layout");
 }

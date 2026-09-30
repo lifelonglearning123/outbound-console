@@ -1,0 +1,26 @@
+// Copy the settings the app needs from .env.local into the linked Vercel project (Production), without
+// printing them. Run after `vercel link`:   node scripts/push-env-to-vercel.mjs
+// Existing values with the same name are replaced.
+import { readFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+
+const KEYS = ["DATABASE_URL", "SECRETS_KEY", "AUTH_SECRET", "CRON_SECRET", "SETUP_TOKEN", "ADMIN_EMAIL", "OPENAI_API_KEY", "OPENAI_MODEL"];
+const env = Object.fromEntries(
+  readFileSync(".env.local", "utf8")
+    .split(/\r?\n/)
+    .filter((l) => /^[A-Z_]+=/.test(l))
+    .map((l) => [l.slice(0, l.indexOf("=")), l.slice(l.indexOf("=") + 1)]),
+);
+
+const missing = KEYS.filter((k) => !env[k]);
+if (missing.length) {
+  console.error(`Add these to .env.local first: ${missing.join(", ")}`);
+  process.exit(1);
+}
+
+for (const key of KEYS) {
+  spawnSync("vercel", ["env", "rm", key, "production", "--yes"], { shell: true, stdio: "ignore" });
+  // The value goes in on stdin with no trailing newline, so it arrives exactly as written.
+  const r = spawnSync("vercel", ["env", "add", key, "production"], { shell: true, input: env[key], stdio: ["pipe", "ignore", "pipe"] });
+  console.log(`${key}: ${r.status === 0 ? "set" : `failed (${r.stderr.toString().trim().split("\n").pop()})`}`);
+}

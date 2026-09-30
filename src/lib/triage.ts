@@ -51,21 +51,21 @@ async function classify(subject: string, body: string): Promise<{ interest: stri
 
 /** Send an interested reply to the client's GHL: contact, opportunity (if a stage is set), and a note with the reply. */
 export async function pushToGhl(emailId: string): Promise<string> {
-  const e = get<{ client_id: number; lead_email: string; lead_id: number | null; subject: string; body_text: string; sent_at: string; campaign_id: number | null }>(
+  const e = await get<{ client_id: number; lead_email: string; lead_id: number | null; subject: string; body_text: string; sent_at: string; campaign_id: number | null }>(
     "SELECT * FROM emails WHERE id = ?",
     emailId,
   );
   if (!e) throw new Error("Email not found");
-  const client = requireClient(e.client_id);
+  const client = await requireClient(e.client_id);
   if (!client.ghl_location_id || !client.ghl_token) throw new Error("GHL not set up for this client");
   const creds = { locationId: client.ghl_location_id, token: client.ghl_token };
   const lead = e.lead_id
-    ? get<{ first_name: string | null; last_name: string | null; company: string | null; phone: string | null; ghl_contact_id: string | null }>(
+    ? await get<{ first_name: string | null; last_name: string | null; company: string | null; phone: string | null; ghl_contact_id: string | null }>(
         "SELECT * FROM leads WHERE id = ?",
         e.lead_id,
       )
     : undefined;
-  const campaign = e.campaign_id ? get<{ name: string }>("SELECT name FROM campaigns WHERE id = ?", e.campaign_id) : undefined;
+  const campaign = e.campaign_id ? await get<{ name: string }>("SELECT name FROM campaigns WHERE id = ?", e.campaign_id) : undefined;
 
   const contactId = await upsertContact(creds, {
     email: e.lead_email,
@@ -75,7 +75,7 @@ export async function pushToGhl(emailId: string): Promise<string> {
     phone: lead?.phone,
     tags: ["cold-email-reply", "interested"],
   });
-  if (e.lead_id) run("UPDATE leads SET ghl_contact_id = ? WHERE id = ?", contactId, e.lead_id);
+  if (e.lead_id) await run("UPDATE leads SET ghl_contact_id = ? WHERE id = ?", contactId, e.lead_id);
 
   let oppNote = "no pipeline stage set";
   if (client.ghl_pipeline_id && client.ghl_stage_id) {
@@ -99,49 +99,49 @@ export async function pushToGhl(emailId: string): Promise<string> {
     `Interested reply to cold email${campaign ? ` (campaign: ${campaign.name})` : ""}, received ${e.sent_at}\n\nSubject: ${e.subject}\n\n${e.body_text}`,
   );
   const msg = `Contact + note added, ${oppNote}`;
-  run("UPDATE emails SET ghl_pushed_at = datetime('now'), ghl_message = ? WHERE id = ?", msg, emailId);
-  logActivity(e.client_id, "ghl", `${e.lead_email}: ${msg}`);
+  await run("UPDATE emails SET ghl_pushed_at = datetime('now'), ghl_message = ? WHERE id = ?", msg, emailId);
+  await logActivity(e.client_id, "ghl", `${e.lead_email}: ${msg}`);
   return msg;
 }
 
 /** Record the operator's (or AI's) interest tag, mirror it to Instantly, and act on it. */
 export async function applyInterest(emailId: string, interest: string, reason: string | null, source: "ai" | "manual") {
-  const e = get<{ client_id: number; lead_email: string; lead_id: number | null; campaign_id: number | null; ghl_pushed_at: string | null; sent_at: string }>(
+  const e = await get<{ client_id: number; lead_email: string; lead_id: number | null; campaign_id: number | null; ghl_pushed_at: string | null; sent_at: string }>(
     "SELECT * FROM emails WHERE id = ?",
     emailId,
   );
   if (!e) return;
-  run("UPDATE emails SET interest = ?, interest_reason = ? WHERE id = ?", interest, reason, emailId);
-  const client = requireClient(e.client_id);
+  await run("UPDATE emails SET interest = ?, interest_reason = ? WHERE id = ?", interest, reason, emailId);
+  const client = await requireClient(e.client_id);
   const api = client.instantly_api_key ? instantly(client.instantly_api_key) : null;
-  const campaign = e.campaign_id ? get<{ instantly_campaign_id: string | null }>("SELECT instantly_campaign_id FROM campaigns WHERE id = ?", e.campaign_id) : undefined;
+  const campaign = e.campaign_id ? await get<{ instantly_campaign_id: string | null }>("SELECT instantly_campaign_id FROM campaigns WHERE id = ?", e.campaign_id) : undefined;
 
   if (api && campaign?.instantly_campaign_id && interest in TO_INSTANTLY) {
     try {
       await api.setInterest(e.lead_email, campaign.instantly_campaign_id, TO_INSTANTLY[interest]);
-      if (e.lead_id) run("UPDATE leads SET interest_status = ? WHERE id = ?", TO_INSTANTLY[interest], e.lead_id);
+      if (e.lead_id) await run("UPDATE leads SET interest_status = ? WHERE id = ?", TO_INSTANTLY[interest], e.lead_id);
     } catch (err) {
-      logActivity(e.client_id, "error", `Couldn't set interest in Instantly for ${e.lead_email}: ${(err as Error).message}`);
+      await logActivity(e.client_id, "error", `Couldn't set interest in Instantly for ${e.lead_email}: ${(err as Error).message}`);
     }
   }
   if (interest === "unsubscribe" && api) {
     try {
       await api.blockEmail(e.lead_email);
-      logActivity(e.client_id, "unsubscribe", `${e.lead_email} asked to be removed; added to the Instantly blocklist`);
+      await logActivity(e.client_id, "unsubscribe", `${e.lead_email} asked to be removed; added to the Instantly blocklist`);
     } catch (err) {
-      logActivity(e.client_id, "error", `Couldn't blocklist ${e.lead_email}: ${(err as Error).message}`);
+      await logActivity(e.client_id, "error", `Couldn't blocklist ${e.lead_email}: ${(err as Error).message}`);
     }
   }
   // GHL is the source of truth: honour the removal there too, so no GHL automation emails them either.
   if (interest === "unsubscribe" && client.ghl_location_id && client.ghl_token) {
     const creds = { locationId: client.ghl_location_id, token: client.ghl_token };
     try {
-      const lead = e.lead_id ? get<{ ghl_contact_id: string | null }>("SELECT ghl_contact_id FROM leads WHERE id = ?", e.lead_id) : undefined;
+      const lead = e.lead_id ? await get<{ ghl_contact_id: string | null }>("SELECT ghl_contact_id FROM leads WHERE id = ?", e.lead_id) : undefined;
       const contactId = lead?.ghl_contact_id ?? (await upsertContact(creds, { email: e.lead_email }));
       await setEmailDnd(creds, contactId, "Asked to be removed (reply to a cold email)");
-      logActivity(e.client_id, "unsubscribe", `${e.lead_email}: email Do-Not-Disturb set in GHL`);
+      await logActivity(e.client_id, "unsubscribe", `${e.lead_email}: email Do-Not-Disturb set in GHL`);
     } catch (err) {
-      logActivity(e.client_id, "error", `Couldn't set Do-Not-Disturb in GHL for ${e.lead_email}: ${(err as Error).message}`);
+      await logActivity(e.client_id, "error", `Couldn't set Do-Not-Disturb in GHL for ${e.lead_email}: ${(err as Error).message}`);
     }
   }
   // The first sync imports the workspace's whole history; only replies that arrive after the client
@@ -151,16 +151,16 @@ export async function applyInterest(emailId: string, interest: string, reason: s
     try {
       await pushToGhl(emailId);
     } catch (err) {
-      run("UPDATE emails SET ghl_message = ? WHERE id = ?", `GHL failed: ${(err as Error).message}`, emailId);
-      logActivity(e.client_id, "error", `GHL push failed for ${e.lead_email}: ${(err as Error).message}`);
+      await run("UPDATE emails SET ghl_message = ? WHERE id = ?", `GHL failed: ${(err as Error).message}`, emailId);
+      await logActivity(e.client_id, "error", `GHL push failed for ${e.lead_email}: ${(err as Error).message}`);
     }
   }
-  if (source === "manual") logActivity(e.client_id, "tag", `${e.lead_email} tagged ${INTEREST_LABELS[interest] ?? interest}`);
+  if (source === "manual") await logActivity(e.client_id, "tag", `${e.lead_email} tagged ${INTEREST_LABELS[interest] ?? interest}`);
 }
 
 /** Classify every inbound email that has no interest tag yet. */
 export async function triageNewReplies(clientId: number) {
-  const rows = all<{ id: string; subject: string; body_text: string }>(
+  const rows = await all<{ id: string; subject: string; body_text: string }>(
     "SELECT id, subject, body_text FROM emails WHERE client_id = ? AND direction = 'in' AND interest IS NULL ORDER BY sent_at LIMIT 50",
     clientId,
   );
@@ -169,7 +169,7 @@ export async function triageNewReplies(clientId: number) {
       const c = await classify(r.subject ?? "", r.body_text ?? "");
       await applyInterest(r.id, c.interest, c.reason, "ai");
     } catch (err) {
-      logActivity(clientId, "error", `Couldn't classify a reply: ${(err as Error).message}`);
+      await logActivity(clientId, "error", `Couldn't classify a reply: ${(err as Error).message}`);
       break;
     }
   }

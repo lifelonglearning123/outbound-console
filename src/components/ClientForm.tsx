@@ -33,7 +33,7 @@ export async function ClientForm({ client }: { client?: Client }) {
     } catch {}
   }
   const sharedWith = client?.instantly_workspace_id
-    ? all<{ name: string; instantly_tag_label: string | null }>(
+    ? await all<{ name: string; instantly_tag_label: string | null }>(
         "SELECT name, instantly_tag_label FROM clients WHERE instantly_workspace_id = ? AND id != ? AND archived = 0",
         client.instantly_workspace_id, client.id,
       )

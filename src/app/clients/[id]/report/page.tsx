@@ -1,3 +1,4 @@
+import { requireClientAccess } from "@/lib/auth";
 import Link from "next/link";
 import { buildReport, RANGES } from "@/lib/report";
 import { requireClient } from "@/lib/clients";
@@ -9,10 +10,11 @@ import { PrintButton } from "@/components/PrintButton";
 // Client-facing: results only (no mailboxes, bounces or tooling). Print → "Save as PDF" to send it.
 export default async function ClientReportPage({ params, searchParams }: PageProps<"/clients/[id]/report">) {
   const clientId = Number((await params).id);
+  await requireClientAccess(clientId); // only admins and this client's own logins
   const sp = await searchParams;
   const campaignId = Number(sp.campaign) || null;
-  const client = requireClient(clientId);
-  const r = buildReport(clientId, typeof sp.range === "string" ? sp.range : "30d", campaignId);
+  const client = await requireClient(clientId);
+  const r = await buildReport(clientId, typeof sp.range === "string" ? sp.range : "30d", campaignId);
   const campaign = r.campaigns.find((c) => c.id === campaignId);
   const fmt = (d: string) => new Date(`${d}T12:00:00Z`).toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" });
   const replyRows = r.replies.filter((x) => x.n > 0 && x.key !== "ooo").map((x) => ({ label: x.label, value: x.n }));

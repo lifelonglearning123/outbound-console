@@ -1,25 +1,35 @@
 # Outbound Console
 
-A local control room for cold email sent through Instantly, for several clients at once.
-The AI writes each email and you approve it, Instantly sends it, and replies come back here.
-Interested replies go to the client's GHL. Decisions and design are in `PLAN.md`.
-The Instantly API notes are in `docs/instantly-api.md`.
+A control room for cold email sent through Instantly, for several clients at once, hosted on Vercel with a
+Neon Postgres database. The AI writes each email and you approve it, Instantly sends it, and replies come back
+here and into each client's GHL. Decisions and design are in `PLAN.md`; Instantly API notes in `docs/instantly-api.md`.
 
-## Setup
+## Logins
 
-1. `npm install` (behind the corporate proxy: `$env:NODE_OPTIONS="--use-system-ca"` first)
-2. Create `.env.local`:
-   ```
-   OPENAI_API_KEY=sk-...
-   OPENAI_MODEL=gpt-5.5
-   SYNC_MINUTES=3
-   ```
-3. `npm run app:install` adds a Desktop shortcut and a Startup entry, so the sync runs from Windows login.
-4. Open the console, click **+ Add** under Clients, and paste the client's Instantly API v2 key.
-   Create the key inside that client's workspace with the `all:all` scope.
+- **Admin** (`ADMIN_EMAIL`): every client, API keys, client settings, and the **Users** page.
+- **Client logins**: only the clients ticked for them on **Users**. They can see stats and reports, read the inbox,
+  approve emails and run campaigns, but never see API keys, client settings or other clients.
 
-Day to day, use the Desktop shortcut. The first start builds the app, which takes about a minute.
-It runs on http://127.0.0.1:3480. Stop it with Start Menu → Outbound Console → Stop.
+The admin's first password is set once at `/setup` with the `SETUP_TOKEN`; that page closes afterwards.
+Client logins are added on **Users** with a first password, which they can change under **Account**.
+
+## Deploying (Vercel + Neon)
+
+1. Create a Neon project and put its **pooled** connection string in `.env.local` as `DATABASE_URL`.
+   `.env.local` also needs the values listed in `.env.example`.
+2. Copy the data from the old local app (once): stop the local app, then `npm run db:migrate`.
+3. `vercel link` in this folder (Pro plan: the sync runs every 3 minutes via `vercel.json`).
+4. `npm run vercel:env` copies the settings from `.env.local` into the Vercel project.
+5. `vercel --prod`, then open `/setup` on the new URL to set the admin password.
+
+`SECRETS_KEY` encrypts the Instantly and GHL keys in the database. Keep it the same everywhere and never change it
+once there's data, or the stored keys can't be read.
+
+## Local development
+
+`npm install` (behind the corporate proxy: `$env:NODE_OPTIONS="--use-system-ca"` first), then `npm run dev`
+(http://127.0.0.1:3480). With `DATABASE_URL` pointing at Neon, local runs share the live data; use a Neon branch
+for experiments. Set `SYNC_DISABLED=1` to stop the local server syncing alongside Vercel.
 
 ## Several clients in one Instantly workspace
 
@@ -55,7 +65,7 @@ Still shared across the workspace: the blocklist (an unsubscribe applies to ever
 
 ```
 npm run mock:instantly
-$env:INSTANTLY_BASE_URL="http://127.0.0.1:3471/api/v2"; $env:DATA_DIR="C:\temp\oc-test"; npm run dev
+$env:INSTANTLY_BASE_URL="http://127.0.0.1:3471/api/v2"; $env:DATABASE_URL="<a Neon test branch>"; npm run dev
 ```
 The mock accepts any key. It "sends" one email per sync, and every third lead replies.
 

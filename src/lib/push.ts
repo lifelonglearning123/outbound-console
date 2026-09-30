@@ -15,15 +15,15 @@ export { toHtml };
  * Only leads whose every step is approved are in stage 'approved', so nothing unapproved can leave.
  */
 export async function pushApproved(campaignId: number): Promise<{ pushed: number; skipped: number }> {
-  const campaign = requireCampaign(campaignId);
+  const campaign = await requireCampaign(campaignId);
   if (!campaign.instantly_campaign_id) throw new Error("Create the campaign in Instantly first");
-  const client = requireClient(campaign.client_id);
+  const client = await requireClient(campaign.client_id);
   const api = instantly(client.instantly_api_key!);
 
-  const leads = all<LeadRow>("SELECT * FROM leads WHERE campaign_id = ? AND stage = 'approved' ORDER BY id LIMIT 1000", campaignId);
+  const leads = await all<LeadRow>("SELECT * FROM leads WHERE campaign_id = ? AND stage = 'approved' ORDER BY id LIMIT 1000", campaignId);
   if (leads.length === 0) return { pushed: 0, skipped: 0 };
 
-  const drafts = all<{ lead_id: number; step: number; subject: string; body: string; status: string; format: string }>(
+  const drafts = await all<{ lead_id: number; step: number; subject: string; body: string; status: string; format: string }>(
     `SELECT lead_id, step, subject, body, status, format FROM drafts WHERE lead_id IN (${leads.map(() => "?").join(",")}) ORDER BY step`,
     ...leads.map((l) => l.id),
   );
@@ -36,7 +36,7 @@ export async function pushApproved(campaignId: number): Promise<{ pushed: number
       try {
         lead.ghl_contact_id = await linkLead(client, lead);
       } catch (e) {
-        run("UPDATE leads SET stage_message = ? WHERE id = ?", `Not sent: couldn't add to GHL (${(e as Error).message})`, lead.id);
+        await run("UPDATE leads SET stage_message = ? WHERE id = ?", `Not sent: couldn't add to GHL (${(e as Error).message})`, lead.id);
         continue;
       }
     }
@@ -44,12 +44,12 @@ export async function pushApproved(campaignId: number): Promise<{ pushed: number
     const mine = drafts.filter((d) => d.lead_id === lead.id && d.step <= live);
     // A hold was released while this lead waited: write the steps it's missing, then it comes back for review.
     if (mine.length < live) {
-      run("UPDATE leads SET stage = 'drafting' WHERE id = ?", lead.id);
+      await run("UPDATE leads SET stage = 'drafting' WHERE id = ?", lead.id);
       continue;
     }
     // Belt and braces: re-check approval at the last moment.
     if (mine.some((d) => d.status !== "approved")) {
-      run("UPDATE leads SET stage = 'review' WHERE id = ?", lead.id);
+      await run("UPDATE leads SET stage = 'review' WHERE id = ?", lead.id);
       continue;
     }
     const vars = copyVars(mine);
@@ -74,23 +74,23 @@ export async function pushApproved(campaignId: number): Promise<{ pushed: number
   const now = new Date().toISOString();
   let pushed = 0;
   let skipped = 0;
-  tx(() => {
-    ready.forEach((r, i) => {
+  await tx(async () => {
+    for (const [i, r] of ready.entries()) {
       const id = created.get(i);
       if (id) {
-        run("UPDATE leads SET stage = 'pushed', instantly_lead_id = ?, instantly_status = 1, pushed_at = ?, stage_message = NULL WHERE id = ?", id, now, r.lead.id);
+        await run("UPDATE leads SET stage = 'pushed', instantly_lead_id = ?, instantly_status = 1, pushed_at = ?, stage_message = NULL WHERE id = ?", id, now, r.lead.id);
         pushed++;
       } else {
-        run(
+        await run(
           "UPDATE leads SET stage = 'error', stage_message = ? WHERE id = ?",
           "Instantly didn't add this lead (already in the campaign, on the blocklist, or invalid email)",
           r.lead.id,
         );
         skipped++;
       }
-    });
+    }
   });
-  logActivity(
+  await logActivity(
     client.id,
     "push",
     `Sent ${pushed} approved leads to "${campaign.name}"` +

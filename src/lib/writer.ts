@@ -1,6 +1,6 @@
 import "server-only";
 import OpenAI from "openai";
-import { all, get, run, tx, logActivity } from "./db";
+import { all, get, run, tx, logActivity, withLock } from "./db";
 import { requireClient, type Brief } from "./clients";
 import { requireCampaign, writeTarget, type Step } from "./campaigns";
 import type { LeadRow } from "./leads";
@@ -130,21 +130,21 @@ function signOff(brief: Brief): string {
 }
 
 async function writeForLead(leadId: number) {
-  const lead = get<LeadRow>("SELECT * FROM leads WHERE id = ?", leadId);
+  const lead = await get<LeadRow>("SELECT * FROM leads WHERE id = ?", leadId);
   // 'drafting' = a new lead; 'extending' = a lead already in Instantly getting the steps after a released hold.
   if (!lead || !["drafting", "extending"].includes(lead.stage) || !lead.campaign_id) return;
   const extending = lead.stage === "extending";
-  const client = requireClient(lead.client_id);
-  const campaign = requireCampaign(lead.campaign_id);
+  const client = await requireClient(lead.client_id);
+  const campaign = await requireCampaign(lead.campaign_id);
 
   // GHL is the source of truth: take the contact's current details (and respect its Do-Not-Disturb).
   if (!(await refreshFromGhl(client, lead))) return;
-  Object.assign(lead, get<LeadRow>("SELECT * FROM leads WHERE id = ?", leadId));
+  Object.assign(lead, await get<LeadRow>("SELECT * FROM leads WHERE id = ?", leadId));
 
   // Only steps up to the hold (or the hold being released) are written; later steps wait.
   const steps = campaign.steps.slice(0, writeTarget(campaign));
   const existing = new Map(
-    all<{ step: number; subject: string; body: string; format: string }>("SELECT step, subject, body, format FROM drafts WHERE lead_id = ?", leadId).map(
+    (await all<{ step: number; subject: string; body: string; format: string }>("SELECT step, subject, body, format FROM drafts WHERE lead_id = ?", leadId)).map(
       (d) => [d.step, d],
     ),
   );
@@ -177,64 +177,60 @@ async function writeForLead(leadId: number) {
   const sig = signOff(client.brief);
   const byStep = new Map(out.emails.map((e) => [e.step, e]));
   const flags = [...fixed.flatMap((f) => f?.notes ?? []), ...out.flags];
-  tx(() => {
-    needed.forEach((n, k) => {
+  await tx(async () => {
+    for (const [k, n] of needed.entries()) {
       const i = n - 1;
       const f = fixed[i];
       const e = f ?? byStep.get(n);
       if (!e) throw new Error(`Writer skipped step ${n}`);
       // The client's own text already has its sign-off; AI-written steps get the brief's.
       const body = f ? f.body : sig ? `${e.body.trim()}\n\n${sig}` : e.body.trim();
-      run(
+      await run(
         "INSERT INTO drafts (lead_id, step, subject, body, flags, format) VALUES (?, ?, ?, ?, ?, ?)",
         leadId, n, i === 0 ? e.subject.trim() : "", body,
         k === 0 && flags.length ? [...new Set(flags)].join(" · ") : null,
         f ? "html" : "text",
       );
-    });
-    run("UPDATE leads SET stage = ?, stage_message = NULL WHERE id = ?", extending ? "extend_review" : "review", leadId);
+    }
+    await run("UPDATE leads SET stage = ?, stage_message = NULL WHERE id = ?", extending ? "extend_review" : "review", leadId);
   });
-}
-
-declare global {
-   
-  var __outbound_writer_running: boolean | undefined;
 }
 
 /** Write drafts for every lead in stage 'drafting' or 'extending'. Safe to call repeatedly; only one run at a time. */
 export async function runWriter() {
-  if (globalThis.__outbound_writer_running) return;
-  globalThis.__outbound_writer_running = true;
-  try {
+  // One writer at a time, across every server instance, so two can't write the same lead.
+  await withLock("writer", 15 * 60_000, writeAll);
+}
+
+async function writeAll() {
+  {
     for (;;) {
-      const batch = all<{ id: number; client_id: number; stage: string }>("SELECT id, client_id, stage FROM leads WHERE stage IN ('drafting','extending') ORDER BY id LIMIT ?", CONCURRENCY);
+      const batch = await all<{ id: number; client_id: number; stage: string }>("SELECT id, client_id, stage FROM leads WHERE stage IN ('drafting','extending') ORDER BY id LIMIT ?", CONCURRENCY);
       if (batch.length === 0) break;
       const results = await Promise.allSettled(batch.map((l) => writeForLead(l.id)));
-      results.forEach((r, i) => {
+      for (const [i, r] of results.entries()) {
         if (r.status === "rejected") {
           const msg = (r.reason as Error).message ?? String(r.reason);
           // A lead already in Instantly keeps that fact; it just can't move on until its new steps are written.
           const failed = batch[i].stage === "extending" ? "extend_error" : "error";
-          run("UPDATE leads SET stage = ?, stage_message = ? WHERE id = ?", failed, `Writer: ${msg}`, batch[i].id);
-          logActivity(batch[i].client_id, "error", `Couldn't write emails for lead ${batch[i].id}: ${msg}`);
+          await run("UPDATE leads SET stage = ?, stage_message = ? WHERE id = ?", failed, `Writer: ${msg}`, batch[i].id);
+          await logActivity(batch[i].client_id, "error", `Couldn't write emails for lead ${batch[i].id}: ${msg}`);
         }
-      });
+      }
       // If the key is missing every lead would fail; stop rather than churn.
       if (results.every((r) => r.status === "rejected")) break;
     }
-  } finally {
-    globalThis.__outbound_writer_running = false;
   }
 }
 
 /** Rewrite one step with extra guidance from the reviewer. Returns the new draft text. */
 export async function rewriteStep(draftId: number, guidance: string) {
-  const d = get<{ lead_id: number; step: number; subject: string; body: string }>("SELECT * FROM drafts WHERE id = ?", draftId);
+  const d = await get<{ lead_id: number; step: number; subject: string; body: string }>("SELECT * FROM drafts WHERE id = ?", draftId);
   if (!d) throw new Error("Draft not found");
-  const lead = get<LeadRow>("SELECT * FROM leads WHERE id = ?", d.lead_id)!;
-  const client = requireClient(lead.client_id);
-  const campaign = requireCampaign(lead.campaign_id!);
-  const others = all<{ step: number; subject: string; body: string }>("SELECT step, subject, body FROM drafts WHERE lead_id = ? AND step != ? ORDER BY step", d.lead_id, d.step);
+  const lead = (await get<LeadRow>("SELECT * FROM leads WHERE id = ?", d.lead_id))!;
+  const client = await requireClient(lead.client_id);
+  const campaign = await requireCampaign(lead.campaign_id!);
+  const others = await all<{ step: number; subject: string; body: string }>("SELECT step, subject, body FROM drafts WHERE lead_id = ? AND step != ? ORDER BY step", d.lead_id, d.step);
 
   const res = await ai().responses.create({
     model: MODEL,
@@ -252,7 +248,7 @@ export async function rewriteStep(draftId: number, guidance: string) {
   const e = out.emails[0];
   if (!e) throw new Error("Writer returned nothing");
   const sig = signOff(client.brief);
-  run(
+  await run(
     "UPDATE drafts SET subject = ?, body = ?, edited = 1, status = 'pending' WHERE id = ?",
     d.step === 1 ? e.subject.trim() : "", sig ? `${e.body.trim()}\n\n${sig}` : e.body.trim(), draftId,
   );

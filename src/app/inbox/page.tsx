@@ -1,3 +1,4 @@
+import { canSeeClient, clientScope, requireUser } from "@/lib/auth";
 import Link from "next/link";
 import { all, get } from "@/lib/db";
 import { listClients } from "@/lib/clients";
@@ -33,31 +34,35 @@ const TAG_STYLE: Record<string, string> = {
 };
 
 export default async function InboxPage({ searchParams }: PageProps<"/inbox">) {
+  const u = await requireUser();
   const sp = await searchParams;
   const filter = FILTERS.find((f) => f.key === sp.f) ?? FILTERS[0];
-  const clientId = Number(sp.client) || null;
+  const asked = Number(sp.client) || null;
+  const clientId = asked && canSeeClient(u, asked) ? asked : null;
   const selectedId = typeof sp.id === "string" ? sp.id : null;
 
   const base = `FROM emails e JOIN clients cl ON cl.id = e.client_id LEFT JOIN campaigns c ON c.id = e.campaign_id
                 LEFT JOIN leads l ON l.id = e.lead_id
-                WHERE e.direction = 'in' ${clientId ? "AND e.client_id = @clientId" : ""}`;
+                WHERE e.direction = 'in' ${clientId ? "AND e.client_id = @clientId" : ""} ${clientScope(u, "e.client_id")}`;
   const p = { clientId: clientId ?? 0 };
-  const list = all<Msg>(
+  const list = await all<Msg>(
     `SELECT e.*, cl.name client_name, c.name campaign_name, l.first_name, l.last_name, l.company ${base} AND ${filter.where}
      ORDER BY e.sent_at DESC LIMIT 200`,
     p,
   );
   const counts = Object.fromEntries(
-    FILTERS.map((f) => [f.key, get<{ n: number }>(`SELECT COUNT(*) n ${base} AND ${f.where}`, p)?.n ?? 0]),
+    await Promise.all(
+      FILTERS.map(async (f) => [f.key, (await get<{ n: number }>(`SELECT COUNT(*) n ${base} AND ${f.where}`, p))?.n ?? 0] as const),
+    ),
   );
   const selected = (selectedId && list.find((m) => m.id === selectedId)) || list[0] || null;
   const thread = selected
-    ? all<Msg>(
-        `SELECT e.* FROM emails e WHERE e.client_id = ? AND (e.thread_id = ? OR e.lead_email = ?) ORDER BY e.sent_at`,
+    ? await all<Msg>(
+        `SELECT e.* FROM emails e WHERE e.client_id = ? AND (e.thread_id = ? OR e.lead_email = ?) ${clientScope(u, "e.client_id")} ORDER BY e.sent_at`,
         selected.client_id, selected.thread_id ?? "", selected.lead_email,
       )
     : [];
-  const clients = listClients();
+  const clients = (await listClients()).filter((c) => canSeeClient(u, c.id));
   const href = (patch: Record<string, string | number | null>) => {
     const q = new URLSearchParams();
     const next = { f: filter.key, client: clientId, ...patch };

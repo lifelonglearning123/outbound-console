@@ -1,312 +1,153 @@
 import "server-only";
-import { DatabaseSync } from "node:sqlite";
-import path from "node:path";
-import fs from "node:fs";
+import { AsyncLocalStorage } from "node:async_hooks";
+import pg from "pg";
+import { NOW_TEXT, SCHEMA } from "./schema";
 
-const DATA_DIR = process.env.DATA_DIR
-  ? path.resolve(process.env.DATA_DIR)
-  : path.resolve(process.cwd(), "data");
+export { NOW_TEXT };
+
+// Postgres (Neon) access. Queries are written with ? or @name placeholders and translated to $n here,
+// so SQL reads the same everywhere. Inside tx(), every query automatically uses the transaction's connection.
 
 type Row = Record<string, unknown>;
-type Param = string | number | bigint | null | Uint8Array;
-type Params = Param[] | [Record<string, Param>];
+type Params = unknown[];
 
-const SCHEMA = `
-CREATE TABLE IF NOT EXISTS clients (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  name TEXT NOT NULL,
-  instantly_api_key TEXT,
-  instantly_workspace_id TEXT,
-  instantly_workspace_name TEXT,
-  instantly_tag_id TEXT,           -- shared-workspace mode: only resources with this Instantly tag belong to the client
-  instantly_tag_label TEXT,
-  key_status TEXT,                 -- ok | error | null (unchecked)
-  key_message TEXT,
-  key_checked_at TEXT,
-  ghl_location_id TEXT,
-  ghl_token TEXT,
-  ghl_pipeline_id TEXT,
-  ghl_stage_id TEXT,
-  brief TEXT NOT NULL DEFAULT '{}', -- JSON: offer, icp, tone, proof, cta, sender_name, signature, avoid
-  archived INTEGER NOT NULL DEFAULT 0,
-  created_at TEXT NOT NULL DEFAULT (datetime('now'))
-);
-
-CREATE TABLE IF NOT EXISTS campaigns (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  client_id INTEGER NOT NULL REFERENCES clients(id),
-  instantly_campaign_id TEXT,
-  name TEXT NOT NULL,
-  status TEXT NOT NULL DEFAULT 'draft', -- draft | active | paused | completed | error (mirrors Instantly)
-  instantly_status INTEGER,
-  steps TEXT NOT NULL DEFAULT '[]',     -- JSON: [{ delay_days, instructions }]
-  schedule TEXT NOT NULL DEFAULT '{}',  -- JSON: { days: number[], from: "09:00", to: "17:00", timezone }
-  daily_limit INTEGER NOT NULL DEFAULT 30,
-  accounts TEXT NOT NULL DEFAULT '[]',  -- JSON: sending mailbox emails
-  stop_on_reply INTEGER NOT NULL DEFAULT 1,
-  managed INTEGER NOT NULL DEFAULT 1,   -- 1 = built here with approval placeholders; 0 = created in Instantly directly
-  not_sending TEXT,                     -- Instantly's reason an active campaign is idle
-  last_synced_at TEXT,
-  created_at TEXT NOT NULL DEFAULT (datetime('now'))
-);
-
-CREATE TABLE IF NOT EXISTS leads (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  client_id INTEGER NOT NULL REFERENCES clients(id),
-  campaign_id INTEGER REFERENCES campaigns(id),
-  email TEXT NOT NULL,
-  first_name TEXT,
-  last_name TEXT,
-  company TEXT,
-  title TEXT,
-  phone TEXT,
-  website TEXT,
-  fields TEXT NOT NULL DEFAULT '{}',    -- JSON: every other column / GHL custom field
-  source TEXT NOT NULL,                 -- csv | ghl
-  source_ref TEXT,                      -- file name or GHL tag
-  ghl_contact_id TEXT,
-  stage TEXT NOT NULL DEFAULT 'new',    -- new | drafting | review | approved | rejected | pushed | error
-  stage_message TEXT,
-  instantly_lead_id TEXT,
-  instantly_status INTEGER,
-  interest_status INTEGER,
-  step_reached INTEGER,                 -- last sequence step Instantly sent (1-based)
-  last_sent_at TEXT,
-  last_open_at TEXT,
-  last_reply_at TEXT,
-  pushed_at TEXT,
-  created_at TEXT NOT NULL DEFAULT (datetime('now')),
-  UNIQUE (client_id, email)
-);
-
-CREATE TABLE IF NOT EXISTS drafts (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  lead_id INTEGER NOT NULL REFERENCES leads(id) ON DELETE CASCADE,
-  step INTEGER NOT NULL,                -- 1-based sequence step
-  subject TEXT NOT NULL,
-  body TEXT NOT NULL,
-  status TEXT NOT NULL DEFAULT 'pending', -- pending | approved | rejected
-  edited INTEGER NOT NULL DEFAULT 0,
-  flags TEXT,                           -- writer's notes for the reviewer, e.g. "no first name"
-  format TEXT NOT NULL DEFAULT 'text',  -- text (AI-written, plain) | html (client's own designed email, sent as-is)
-  reviewed_at TEXT,
-  created_at TEXT NOT NULL DEFAULT (datetime('now')),
-  UNIQUE (lead_id, step)
-);
-
-CREATE TABLE IF NOT EXISTS mailboxes (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  client_id INTEGER NOT NULL REFERENCES clients(id),
-  email TEXT NOT NULL,
-  status INTEGER,
-  warmup_status INTEGER,
-  warmup_score REAL,
-  daily_limit INTEGER,
-  sent_today INTEGER,
-  bounced_7d INTEGER,
-  sent_7d INTEGER,
-  auto_paused_at TEXT,
-  auto_paused_reason TEXT,
-  last_synced_at TEXT,
-  UNIQUE (client_id, email)
-);
-
--- One row per email Instantly sent or received. Drives the timeline, journey and inbox.
-CREATE TABLE IF NOT EXISTS emails (
-  id TEXT PRIMARY KEY,                  -- Instantly email id
-  client_id INTEGER NOT NULL REFERENCES clients(id),
-  campaign_id INTEGER REFERENCES campaigns(id),
-  lead_id INTEGER REFERENCES leads(id),
-  lead_email TEXT,
-  direction TEXT NOT NULL,              -- out | in
-  step INTEGER,
-  account_email TEXT,
-  subject TEXT,
-  body_text TEXT,
-  thread_id TEXT,
-  sent_at TEXT NOT NULL,
-  is_unread INTEGER NOT NULL DEFAULT 0,
-  interest TEXT,                        -- AI tag for inbound: interested | not_now | not_interested | unsubscribe | ooo | other
-  interest_reason TEXT,
-  ghl_pushed_at TEXT,
-  ghl_message TEXT
-);
-CREATE INDEX IF NOT EXISTS emails_client_time ON emails(client_id, sent_at);
-CREATE INDEX IF NOT EXISTS emails_lead ON emails(lead_id);
-
-CREATE TABLE IF NOT EXISTS daily_stats (
-  client_id INTEGER NOT NULL REFERENCES clients(id),
-  campaign_id INTEGER NOT NULL REFERENCES campaigns(id),
-  date TEXT NOT NULL,
-  sent INTEGER NOT NULL DEFAULT 0,
-  opened INTEGER NOT NULL DEFAULT 0,
-  replied INTEGER NOT NULL DEFAULT 0,
-  clicked INTEGER NOT NULL DEFAULT 0,
-  bounced INTEGER NOT NULL DEFAULT 0,
-  opportunities INTEGER NOT NULL DEFAULT 0,
-  PRIMARY KEY (campaign_id, date)
-);
-
-CREATE TABLE IF NOT EXISTS mailbox_daily (
-  client_id INTEGER NOT NULL REFERENCES clients(id),
-  email TEXT NOT NULL,
-  date TEXT NOT NULL,
-  sent INTEGER NOT NULL DEFAULT 0,
-  bounced INTEGER NOT NULL DEFAULT 0,
-  PRIMARY KEY (client_id, email, date)
-);
-
--- Emails Instantly has queued but not sent yet (replaced on every sync).
-CREATE TABLE IF NOT EXISTS scheduled (
-  id TEXT PRIMARY KEY,
-  client_id INTEGER NOT NULL REFERENCES clients(id),
-  campaign_id INTEGER REFERENCES campaigns(id),
-  lead_email TEXT,
-  account_email TEXT,
-  step INTEGER,
-  subject TEXT,
-  due_at TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS activity (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  client_id INTEGER,
-  kind TEXT NOT NULL,                   -- sync | push | pause | resume | auto_pause | ghl | error | ...
-  message TEXT NOT NULL,
-  at TEXT NOT NULL DEFAULT (datetime('now'))
-);
-
--- Instantly's per-step totals for a campaign since launch (summed over A/B variants).
-CREATE TABLE IF NOT EXISTS step_stats (
-  campaign_id INTEGER NOT NULL REFERENCES campaigns(id),
-  step INTEGER NOT NULL,                -- 1-based
-  sent INTEGER NOT NULL DEFAULT 0,
-  opened INTEGER NOT NULL DEFAULT 0,
-  replied INTEGER NOT NULL DEFAULT 0,
-  opportunities INTEGER NOT NULL DEFAULT 0,
-  PRIMARY KEY (campaign_id, step)
-);
-
--- Meetings booked by leads, found in the client's GHL (calendar bookings or a pipeline stage).
-CREATE TABLE IF NOT EXISTS meetings (
-  id TEXT PRIMARY KEY,                  -- "cal:<eventId>" or "opp:<opportunityId>"
-  client_id INTEGER NOT NULL REFERENCES clients(id),
-  lead_id INTEGER NOT NULL REFERENCES leads(id),
-  source TEXT NOT NULL,                 -- calendar | pipeline
-  booked_at TEXT NOT NULL,              -- when it was booked / reached the stage
-  starts_at TEXT,                       -- calendar bookings only
-  title TEXT,
-  status TEXT
-);
-CREATE INDEX IF NOT EXISTS meetings_client ON meetings(client_id, booked_at);
-
--- GHL contact id -> email, so bookings can be matched to leads without refetching contacts.
-CREATE TABLE IF NOT EXISTS ghl_contacts (
-  client_id INTEGER NOT NULL,
-  contact_id TEXT NOT NULL,
-  email TEXT,
-  PRIMARY KEY (client_id, contact_id)
-);
-
-CREATE TABLE IF NOT EXISTS settings (
-  key TEXT PRIMARY KEY,
-  value TEXT NOT NULL
-);
-`;
-
-// Columns added after the first release; CREATE TABLE IF NOT EXISTS won't add them to an existing file.
-const ADDED_COLUMNS: [table: string, column: string, type: string][] = [
-  ["clients", "instantly_tag_id", "TEXT"],
-  ["clients", "instantly_tag_label", "TEXT"],
-  ["drafts", "format", "TEXT NOT NULL DEFAULT 'text'"],
-  ["campaigns", "hold_after", "INTEGER"],
-  ["campaigns", "release_to", "INTEGER"],
-  ["campaigns", "release_resume", "INTEGER"],
-  ["daily_stats", "contacted", "INTEGER NOT NULL DEFAULT 0"],
-  ["mailbox_daily", "replied", "INTEGER NOT NULL DEFAULT 0"],
-  ["mailbox_daily", "opened", "INTEGER NOT NULL DEFAULT 0"],
-  ["clients", "ghl_meeting_calendars", "TEXT"], // JSON array of calendar ids; null/[] = every calendar
-  ["clients", "ghl_meeting_stage", "TEXT"], // "pipelineId:stageId" that counts as a booked meeting
-  ["clients", "ghl_log_since", "TEXT"], // emails from this time on are copied into GHL conversations
-  ["campaigns", "ghl_tag", "TEXT"], // contacts with this GHL tag join the campaign automatically
-  ["emails", "ghl_logged_at", "TEXT"],
-  ["emails", "ghl_log_error", "TEXT"],
-  ["leads", "ghl_synced_at", "TEXT"], // last time the lead's details were refreshed from GHL
-];
-
-function migrate(db: DatabaseSync) {
-  for (const [table, column, type] of ADDED_COLUMNS) {
-    const cols = db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[];
-    if (!cols.some((c) => c.name === column)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
-  }
-}
-
-function open(): DatabaseSync {
-  fs.mkdirSync(DATA_DIR, { recursive: true });
-  const db = new DatabaseSync(path.join(DATA_DIR, "outbound.db"));
-  db.exec("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;");
-  db.exec(SCHEMA);
-  migrate(db);
-  return db;
-}
+// Counts and sums come back from Postgres as int8/numeric strings; the app wants numbers.
+pg.types.setTypeParser(20, (v) => Number(v)); // int8
+pg.types.setTypeParser(1700, (v) => Number(v)); // numeric
 
 declare global {
-   
-  var __outbound_db: DatabaseSync | undefined;
+  var __outbound_pool: pg.Pool | undefined;
+  var __outbound_schema: Promise<void> | undefined;
 }
 
-export function db(): DatabaseSync {
-  globalThis.__outbound_db ??= open();
-  return globalThis.__outbound_db;
+function pool(): pg.Pool {
+  if (!globalThis.__outbound_pool) {
+    if (!process.env.DATABASE_URL) throw new Error("DATABASE_URL is not set");
+    globalThis.__outbound_pool = new pg.Pool({ connectionString: process.env.DATABASE_URL, max: 5, idleTimeoutMillis: 10_000 });
+  }
+  return globalThis.__outbound_pool;
 }
 
-// Shared named-parameter objects may carry keys a query does not use.
-function prep(sql: string) {
-  const stmt = db().prepare(sql);
-  stmt.setAllowUnknownNamedParameters(true);
-  return stmt;
+const txClient = new AsyncLocalStorage<pg.PoolClient>();
+
+async function ensureSchema() {
+  globalThis.__outbound_schema ??= pool()
+    .query(SCHEMA)
+    .then(() => undefined)
+    .catch((e) => {
+      globalThis.__outbound_schema = undefined;
+      throw e;
+    });
+  return globalThis.__outbound_schema;
 }
 
-// node:sqlite rows have a null prototype, which React refuses to pass to client components; copy to plain objects.
-export function all<T = Row>(sql: string, ...params: Params): T[] {
-  return prep(sql).all(...(params as Param[])).map((r) => ({ ...r })) as T[];
+/**
+ * Turn ? / @name placeholders into $1, $2… (outside quoted strings), and SQLite's datetime('now') into
+ * Postgres. A single plain-object argument means named parameters.
+ */
+export function translate(sql: string, params: Params): { text: string; values: unknown[] } {
+  const first = params[0];
+  const named = params.length === 1 && first !== null && typeof first === "object" && !Array.isArray(first) && !(first instanceof Date);
+  const obj = named ? (first as Record<string, unknown>) : null;
+  const values: unknown[] = [];
+  const index = new Map<string, number>();
+  let out = "";
+  let inQuote = false;
+  let positional = 0;
+  const src = sql.replace(/datetime\('now'\)/g, NOW_TEXT);
+  for (let i = 0; i < src.length; i++) {
+    const ch = src[i];
+    if (ch === "'") {
+      inQuote = !inQuote;
+      out += ch;
+      continue;
+    }
+    if (!inQuote && ch === "?" && !obj) {
+      values.push(params[positional++]);
+      out += `$${values.length}`;
+      continue;
+    }
+    if (!inQuote && ch === "@" && obj && /[A-Za-z_]/.test(src[i + 1] ?? "")) {
+      const name = /^@([A-Za-z_]\w*)/.exec(src.slice(i))![1];
+      if (!index.has(name)) {
+        values.push(obj[name] ?? null);
+        index.set(name, values.length);
+      }
+      out += `$${index.get(name)}`;
+      i += name.length;
+      continue;
+    }
+    out += ch;
+  }
+  // Callers read the new row's id from run(); Postgres only returns it when asked.
+  if (/^\s*INSERT\b/i.test(out) && !/\bRETURNING\b/i.test(out)) out += " RETURNING *";
+  return { text: out, values: values.map((v) => (v === undefined ? null : v)) };
 }
 
-export function get<T = Row>(sql: string, ...params: Params): T | undefined {
-  const r = prep(sql).get(...(params as Param[]));
-  return (r ? { ...r } : undefined) as T | undefined;
+async function query(sql: string, params: Params): Promise<pg.QueryResult> {
+  await ensureSchema();
+  const { text, values } = translate(sql, params);
+  return (txClient.getStore() ?? pool()).query(text, values);
 }
 
-export function run(sql: string, ...params: Params) {
-  const r = prep(sql).run(...(params as Param[]));
-  return { changes: Number(r.changes), id: Number(r.lastInsertRowid) };
+export async function all<T = Row>(sql: string, ...params: Params): Promise<T[]> {
+  return (await query(sql, params)).rows as T[];
 }
 
-export function tx<T>(fn: () => T): T {
-  const d = db();
-  d.exec("BEGIN");
+export async function get<T = Row>(sql: string, ...params: Params): Promise<T | undefined> {
+  return (await query(sql, params)).rows[0] as T | undefined;
+}
+
+export async function run(sql: string, ...params: Params): Promise<{ changes: number; id: number }> {
+  const r = await query(sql, params);
+  return { changes: r.rowCount ?? 0, id: Number(r.rows[0]?.id ?? 0) };
+}
+
+/** Run fn in a transaction; queries inside it (at any depth) use the same connection. Nested calls join the outer one. */
+export async function tx<T>(fn: () => Promise<T>): Promise<T> {
+  if (txClient.getStore()) return fn();
+  await ensureSchema();
+  const client = await pool().connect();
   try {
-    const out = fn();
-    d.exec("COMMIT");
+    await client.query("BEGIN");
+    const out = await txClient.run(client, fn);
+    await client.query("COMMIT");
     return out;
   } catch (e) {
-    d.exec("ROLLBACK");
+    await client.query("ROLLBACK").catch(() => {});
     throw e;
+  } finally {
+    client.release();
   }
 }
 
-export function logActivity(clientId: number | null, kind: string, message: string) {
-  run("INSERT INTO activity (client_id, kind, message) VALUES (?, ?, ?)", clientId, kind, message);
+export async function logActivity(clientId: number | null, kind: string, message: string) {
+  await run("INSERT INTO activity (client_id, kind, message) VALUES (?, ?, ?)", clientId, kind, message);
 }
 
-export function getSetting(key: string, fallback: string): string {
-  return get<{ value: string }>("SELECT value FROM settings WHERE key = ?", key)?.value ?? fallback;
+export async function getSetting(key: string, fallback: string): Promise<string> {
+  return (await get<{ value: string }>("SELECT value FROM settings WHERE key = ?", key))?.value ?? fallback;
 }
 
-export function setSetting(key: string, value: string) {
-  run(
-    "INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-    key,
-    value,
+export async function setSetting(key: string, value: string) {
+  await run("INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value", key, value);
+}
+
+/**
+ * A lock that works across serverless instances, so only one sync or writer runs at a time. It expires
+ * after ttlMs in case a run dies without releasing it.
+ */
+export async function withLock<T>(name: string, ttlMs: number, fn: () => Promise<T>): Promise<T | undefined> {
+  const now = Date.now();
+  const got = await run(
+    `INSERT INTO settings (key, value) VALUES (?, ?)
+     ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value WHERE settings.value::bigint < ?`,
+    `lock_${name}`, String(now + ttlMs), now,
   );
+  if (!got.changes) return undefined;
+  try {
+    return await fn();
+  } finally {
+    await run("DELETE FROM settings WHERE key = ?", `lock_${name}`);
+  }
 }

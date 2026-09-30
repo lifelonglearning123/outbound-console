@@ -1,3 +1,4 @@
+import { requireClientAccess } from "@/lib/auth";
 import Link from "next/link";
 import { buildReport, leadList, LEAD_FILTERS, RANGES } from "@/lib/report";
 import { requireClient } from "@/lib/clients";
@@ -21,13 +22,14 @@ function Section({ title, note, children, className = "" }: { title: string; not
 
 export default async function StatsPage({ params, searchParams }: PageProps<"/clients/[id]/stats">) {
   const clientId = Number((await params).id);
+  await requireClientAccess(clientId); // only admins and this client's own logins
   const sp = await searchParams;
   const rangeKey = typeof sp.range === "string" ? sp.range : "30d";
   const campaignId = Number(sp.campaign) || null;
   const leadFilter = typeof sp.leads === "string" ? sp.leads : "interested_no_meeting";
-  const client = requireClient(clientId);
-  const r = buildReport(clientId, rangeKey, campaignId);
-  const leads = leadList({ clientId, campaignId }, leadFilter);
+  const client = await requireClient(clientId);
+  const r = await buildReport(clientId, rangeKey, campaignId);
+  const leads = await leadList({ clientId, campaignId }, leadFilter);
   const rules = { bounce: 0.03 };
 
   const href = (patch: Record<string, string | number | null>) => {

@@ -1,5 +1,6 @@
 import "server-only";
 import { all, get } from "./db";
+import { decrypt } from "./secrets";
 
 export type Brief = {
   offer?: string;
@@ -42,22 +43,23 @@ function parse(row: ClientRow): Client {
   try {
     brief = JSON.parse(row.brief || "{}");
   } catch {}
-  return { ...row, brief };
+  // Keys are stored encrypted; the rest of the app works with the plain values.
+  return { ...row, brief, instantly_api_key: decrypt(row.instantly_api_key), ghl_token: decrypt(row.ghl_token) };
 }
 
-export function listClients(includeArchived = false): Client[] {
-  return all<ClientRow>(
-    `SELECT * FROM clients ${includeArchived ? "" : "WHERE archived = 0"} ORDER BY name COLLATE NOCASE`,
+export async function listClients(includeArchived = false): Promise<Client[]> {
+  return (
+    await all<ClientRow>(`SELECT * FROM clients ${includeArchived ? "" : "WHERE archived = 0"} ORDER BY lower(name)`)
   ).map(parse);
 }
 
-export function getClient(id: number): Client | undefined {
-  const row = get<ClientRow>("SELECT * FROM clients WHERE id = ?", id);
+export async function getClient(id: number): Promise<Client | undefined> {
+  const row = await get<ClientRow>("SELECT * FROM clients WHERE id = ?", id);
   return row ? parse(row) : undefined;
 }
 
-export function requireClient(id: number): Client {
-  const c = getClient(id);
+export async function requireClient(id: number): Promise<Client> {
+  const c = await getClient(id);
   if (!c) throw new Error(`Client ${id} not found`);
   return c;
 }

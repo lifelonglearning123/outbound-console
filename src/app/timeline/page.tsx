@@ -1,3 +1,4 @@
+import { canSeeClient, requireUser } from "@/lib/auth";
 import Link from "next/link";
 import { listClients } from "@/lib/clients";
 import { SendTimeline } from "@/components/SendTimeline";
@@ -10,10 +11,13 @@ const RANGES = [
 ];
 
 export default async function TimelinePage({ searchParams }: PageProps<"/timeline">) {
+  const u = await requireUser();
   const sp = await searchParams;
-  const clientId = Number(sp.client) || null;
+  const asked = Number(sp.client) || null;
+  // Client logins always see one of their own clients; admins can also see all at once.
+  const clientId = asked && canSeeClient(u, asked) ? asked : u.role === "admin" ? null : (u.clientIds[0] ?? -1);
   const range = RANGES.find((r) => r.key === sp.range) ?? RANGES[1];
-  const clients = listClients();
+  const clients = (await listClients()).filter((c) => canSeeClient(u, c.id));
   const href = (patch: Record<string, string | number | null>) => {
     const q = new URLSearchParams();
     const next = { client: clientId, range: range.key, ...patch };
@@ -30,7 +34,7 @@ export default async function TimelinePage({ searchParams }: PageProps<"/timelin
         <p className="text-sm text-muted">Every email per mailbox. Hover a dot for the lead and subject. Refreshes every minute.</p>
       </header>
       <div className="flex flex-wrap items-center gap-1.5">
-        <Link href={href({ client: null })} className={chip(!clientId)}>All clients</Link>
+        {u.role === "admin" && <Link href={href({ client: null })} className={chip(!clientId)}>All clients</Link>}
         {clients.map((c) => <Link key={c.id} href={href({ client: c.id })} className={chip(clientId === c.id)}>{c.name}</Link>)}
         <span className="mx-2 h-5 w-px bg-line" />
         {RANGES.map((r) => <Link key={r.key} href={href({ range: r.key })} className={chip(range.key === r.key)}>{r.label}</Link>)}

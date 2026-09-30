@@ -52,55 +52,55 @@ type Scope = { clientId: number; campaignId: number | null };
 /** Campaign filter for tables that carry campaign_id. */
 const camp = (s: Scope, col = "campaign_id") => (s.campaignId ? `AND ${col} = @campaignId` : "");
 
-function headline(s: Scope, r: Range): Headline {
+async function headline(s: Scope, r: Range): Promise<Headline> {
   const p = { clientId: s.clientId, campaignId: s.campaignId ?? 0, from: r.from, to: r.to, toEnd: `${r.to}T23:59:59.999Z` };
-  const d = get<{ contacted: number; sent: number; replied: number; opened: number }>(
+  const d = (await get<{ contacted: number; sent: number; replied: number; opened: number }>(
     `SELECT COALESCE(SUM(contacted),0) contacted, COALESCE(SUM(sent),0) sent, COALESCE(SUM(replied),0) replied, COALESCE(SUM(opened),0) opened
      FROM daily_stats WHERE client_id = @clientId ${camp(s)} AND date BETWEEN @from AND @to`,
     p,
-  )!;
-  const tagged = get<{ positive: number; unsubscribed: number }>(
+  ))!;
+  const tagged = (await get<{ positive: number; unsubscribed: number }>(
     `SELECT COUNT(DISTINCT CASE WHEN interest = 'interested' THEN lead_email END) positive,
             COUNT(DISTINCT CASE WHEN interest = 'unsubscribe' THEN lead_email END) unsubscribed
      FROM emails WHERE client_id = @clientId ${camp(s)} AND direction = 'in' AND sent_at BETWEEN @from AND @toEnd`,
     p,
-  )!;
+  ))!;
   const meetings =
-    get<{ n: number }>(
+    (await get<{ n: number }>(
       `SELECT COUNT(DISTINCT m.lead_id) n FROM meetings m JOIN leads l ON l.id = m.lead_id
        WHERE m.client_id = @clientId ${camp(s, "l.campaign_id")} AND substr(m.booked_at, 1, 10) BETWEEN @from AND @to`,
       p,
-    )?.n ?? 0;
+    ))?.n ?? 0;
   // Bounces are reported per mailbox. With a campaign selected, use that campaign's mailboxes.
   const boxes = s.campaignId
-    ? `AND email IN (SELECT value FROM json_each((SELECT accounts FROM campaigns WHERE id = @campaignId)))`
+    ? `AND email IN (SELECT json_array_elements_text(accounts::json) FROM campaigns WHERE id = @campaignId)`
     : "";
-  const b = get<{ bounced: number; sent: number }>(
+  const b = (await get<{ bounced: number; sent: number }>(
     `SELECT COALESCE(SUM(bounced),0) bounced, COALESCE(SUM(sent),0) sent FROM mailbox_daily
      WHERE client_id = @clientId ${boxes} AND date BETWEEN @from AND @to`,
     p,
-  )!;
+  ))!;
   return { ...d, ...tagged, meetings, bounced: b.bounced, bounceBase: b.sent };
 }
 
 export type Day = { date: string; sent: number; replied: number; positive: number };
 
-function daily(s: Scope, r: Range): Day[] {
+async function daily(s: Scope, r: Range): Promise<Day[]> {
   const p = { clientId: s.clientId, campaignId: s.campaignId ?? 0, from: r.from, to: r.to, toEnd: `${r.to}T23:59:59.999Z` };
   const base = new Map(
-    all<{ date: string; sent: number; replied: number }>(
+    (await all<{ date: string; sent: number; replied: number }>(
       `SELECT date, SUM(sent) sent, SUM(replied) replied FROM daily_stats
        WHERE client_id = @clientId ${camp(s)} AND date BETWEEN @from AND @to GROUP BY date`,
       p,
-    ).map((d) => [d.date, d]),
+    )).map((d) => [d.date, d]),
   );
   const pos = new Map(
-    all<{ date: string; n: number }>(
+    (await all<{ date: string; n: number }>(
       `SELECT substr(sent_at, 1, 10) date, COUNT(DISTINCT lead_email) n FROM emails
        WHERE client_id = @clientId ${camp(s)} AND direction = 'in' AND interest = 'interested' AND sent_at BETWEEN @from AND @toEnd
        GROUP BY 1`,
       p,
-    ).map((d) => [d.date, d.n]),
+    )).map((d) => [d.date, d.n]),
   );
   // Every day in the range, including quiet ones, so the chart's time axis is honest.
   const out: Day[] = [];
@@ -115,9 +115,9 @@ function daily(s: Scope, r: Range): Day[] {
 export type StepRow = { campaign: string; campaignId: number; step: number; sent: number; replied: number; opened: number };
 
 /** Since launch: Instantly's per-step totals aren't split by day. */
-function steps(s: Scope): StepRow[] {
-  return all<StepRow>(
-    `SELECT c.name campaign, c.id campaignId, st.step, st.sent, st.replied, st.opened
+async function steps(s: Scope): Promise<StepRow[]> {
+  return await all<StepRow>(
+    `SELECT c.name campaign, c.id "campaignId", st.step, st.sent, st.replied, st.opened
      FROM step_stats st JOIN campaigns c ON c.id = st.campaign_id
      WHERE c.client_id = @clientId ${camp(s, "c.id")} ORDER BY c.created_at DESC, st.step`,
     { clientId: s.clientId, campaignId: s.campaignId ?? 0 },
@@ -134,14 +134,14 @@ export const REPLY_TYPES = [
   { key: "other", label: "Other" },
 ] as const;
 
-function replyBreakdown(s: Scope, r: Range): { key: string; label: string; n: number }[] {
+async function replyBreakdown(s: Scope, r: Range): Promise<{ key: string; label: string; n: number }[]> {
   const p = { clientId: s.clientId, campaignId: s.campaignId ?? 0, from: r.from, toEnd: `${r.to}T23:59:59.999Z` };
   const counts = new Map(
-    all<{ interest: string | null; n: number }>(
+    (await all<{ interest: string | null; n: number }>(
       `SELECT interest, COUNT(DISTINCT lead_email) n FROM emails
        WHERE client_id = @clientId ${camp(s)} AND direction = 'in' AND sent_at BETWEEN @from AND @toEnd GROUP BY interest`,
       p,
-    ).map((x) => [x.interest ?? "other", x.n]),
+    )).map((x) => [x.interest ?? "other", x.n]),
   );
   return REPLY_TYPES.map((t) => ({ ...t, n: counts.get(t.key) ?? 0 }));
 }
@@ -156,19 +156,19 @@ export type MailboxRow = {
   replied: number;
 };
 
-function mailboxes(s: Scope, r: Range): MailboxRow[] {
-  return all<MailboxRow>(
+async function mailboxes(s: Scope, r: Range): Promise<MailboxRow[]> {
+  return await all<MailboxRow>(
     `SELECT m.email, m.status, m.warmup_score, m.auto_paused_reason,
        COALESCE(SUM(d.sent),0) sent, COALESCE(SUM(d.bounced),0) bounced, COALESCE(SUM(d.replied),0) replied
      FROM mailboxes m LEFT JOIN mailbox_daily d ON d.client_id = m.client_id AND d.email = m.email AND d.date BETWEEN @from AND @to
-     WHERE m.client_id = @clientId GROUP BY m.email ORDER BY sent DESC, m.email`,
+     WHERE m.client_id = @clientId GROUP BY m.id ORDER BY sent DESC, m.email`,
     { clientId: s.clientId, from: r.from, to: r.to },
   );
 }
 
 /** Replies (not auto/out-of-office) by UK weekday (0 = Mon) and hour. */
-function replyTimes(s: Scope, r: Range): number[][] {
-  const rows = all<{ sent_at: string }>(
+async function replyTimes(s: Scope, r: Range): Promise<number[][]> {
+  const rows = await all<{ sent_at: string }>(
     `SELECT sent_at FROM emails WHERE client_id = @clientId ${camp(s)} AND direction = 'in'
        AND COALESCE(interest, '') NOT IN ('ooo') AND sent_at BETWEEN @from AND @toEnd`,
     { clientId: s.clientId, campaignId: s.campaignId ?? 0, from: r.from, toEnd: `${r.to}T23:59:59.999Z` },
@@ -208,19 +208,20 @@ export const LEAD_FILTERS = [
   { key: "bounced", label: "Bounced / unsubscribed" },
 ] as const;
 
-export function leadList(s: Scope, filter: string): LeadRow[] {
-  const rows = all<LeadRow & { first_name: string | null; last_name: string | null }>(
-    `SELECT l.id, l.first_name, l.last_name, l.email, l.company, c.name campaign, l.instantly_status status,
+export async function leadList(s: Scope, filter: string): Promise<LeadRow[]> {
+  const rows = (await all<LeadRow & { first_name: string | null; last_name: string | null }>(
+    // Wrapped so the ORDER BY can use the computed columns (Postgres won't use aliases inside expressions).
+    `SELECT * FROM (SELECT l.id, l.first_name, l.last_name, l.email, l.company, c.name campaign, l.instantly_status status, l.pushed_at,
        (SELECT COUNT(DISTINCT e.step) FROM emails e WHERE e.lead_id = l.id AND e.direction = 'out') steps_sent,
        (SELECT MAX(e.sent_at) FROM emails e WHERE e.lead_id = l.id AND e.direction = 'out') last_sent,
        (SELECT MIN(e.sent_at) FROM emails e WHERE e.lead_id = l.id AND e.direction = 'in') replied_at,
        (SELECT e.interest FROM emails e WHERE e.lead_id = l.id AND e.direction = 'in' ORDER BY e.sent_at DESC LIMIT 1) interest,
        (SELECT MIN(m.booked_at) FROM meetings m WHERE m.lead_id = l.id) meeting_at
      FROM leads l JOIN campaigns c ON c.id = l.campaign_id
-     WHERE l.client_id = @clientId ${camp(s, "l.campaign_id")} AND l.instantly_lead_id IS NOT NULL
-     ORDER BY COALESCE(meeting_at, replied_at, last_sent, l.pushed_at) DESC LIMIT 1000`,
+     WHERE l.client_id = @clientId ${camp(s, "l.campaign_id")} AND l.instantly_lead_id IS NOT NULL) x
+     ORDER BY COALESCE(meeting_at, replied_at, last_sent, pushed_at) DESC LIMIT 1000`,
     { clientId: s.clientId, campaignId: s.campaignId ?? 0 },
-  ).map((l) => ({ ...l, name: [l.first_name, l.last_name].filter(Boolean).join(" ") || l.email }));
+  )).map((l) => ({ ...l, name: [l.first_name, l.last_name].filter(Boolean).join(" ") || l.email }));
   const keep: Record<string, (l: LeadRow) => boolean> = {
     all: () => true,
     interested_no_meeting: (l) => l.interest === "interested" && !l.meeting_at,
@@ -234,14 +235,14 @@ export function leadList(s: Scope, filter: string): LeadRow[] {
 
 export type MeetingRow = { name: string; company: string | null; campaign: string; booked_at: string; starts_at: string | null; source: string };
 
-function meetingList(s: Scope, r: Range): MeetingRow[] {
-  return all<MeetingRow & { first_name: string | null; last_name: string | null; email: string }>(
+async function meetingList(s: Scope, r: Range): Promise<MeetingRow[]> {
+  return (await all<MeetingRow & { first_name: string | null; last_name: string | null; email: string }>(
     `SELECT l.first_name, l.last_name, l.email, l.company, c.name campaign, m.booked_at, m.starts_at, m.source
      FROM meetings m JOIN leads l ON l.id = m.lead_id JOIN campaigns c ON c.id = l.campaign_id
      WHERE m.client_id = @clientId ${camp(s, "l.campaign_id")} AND substr(m.booked_at, 1, 10) BETWEEN @from AND @to
      ORDER BY m.booked_at DESC`,
     { clientId: s.clientId, campaignId: s.campaignId ?? 0, from: r.from, to: r.to },
-  ).map((m) => ({ ...m, name: [m.first_name, m.last_name].filter(Boolean).join(" ") || m.email }));
+  )).map((m) => ({ ...m, name: [m.first_name, m.last_name].filter(Boolean).join(" ") || m.email }));
 }
 
 export type Report = {
@@ -259,25 +260,25 @@ export type Report = {
   lastSync: string | null;
 };
 
-export function buildReport(clientId: number, rangeKey: string | undefined, campaignId: number | null): Report {
+export async function buildReport(clientId: number, rangeKey: string | undefined, campaignId: number | null): Promise<Report> {
   const scope = { clientId, campaignId };
   const range = rangeFor(rangeKey);
   const prev = previous(range);
   return {
     range,
     previousRange: prev,
-    now: headline(scope, range),
-    before: headline(scope, prev),
-    daily: daily(scope, range),
-    steps: steps(scope),
-    replies: replyBreakdown(scope, range),
-    mailboxes: mailboxes(scope, range),
-    replyTimes: replyTimes(scope, range),
-    meetings: meetingList(scope, range),
-    campaigns: all<{ id: number; name: string }>(
+    now: await headline(scope, range),
+    before: await headline(scope, prev),
+    daily: await daily(scope, range),
+    steps: await steps(scope),
+    replies: await replyBreakdown(scope, range),
+    mailboxes: await mailboxes(scope, range),
+    replyTimes: await replyTimes(scope, range),
+    meetings: await meetingList(scope, range),
+    campaigns: await all<{ id: number; name: string }>(
       "SELECT id, name FROM campaigns WHERE client_id = ? AND instantly_campaign_id IS NOT NULL ORDER BY created_at DESC",
       clientId,
     ),
-    lastSync: get<{ value: string }>("SELECT value FROM settings WHERE key = ?", `last_sync_${clientId}`)?.value ?? null,
+    lastSync: (await get<{ value: string }>("SELECT value FROM settings WHERE key = ?", `last_sync_${clientId}`))?.value ?? null,
   };
 }

@@ -1,10 +1,14 @@
+import { redirect } from "next/navigation";
+import { requireUser } from "@/lib/auth";
 import { reviewQueue, approvalCounts } from "@/lib/approvals";
 import { ApprovalQueue } from "@/components/ApprovalQueue";
 import { AutoRefresh } from "@/components/AutoRefresh";
 
-export default function ApprovalsPage() {
-  const leads = reviewQueue(null);
-  const counts = approvalCounts(null);
+export default async function ApprovalsPage() {
+  const u = await requireUser();
+  if (u.role !== "admin") redirect(u.clientIds.length ? `/clients/${u.clientIds[0]}/approvals` : "/account");
+  const leads = await reviewQueue(null);
+  const counts = await approvalCounts(null);
   return (
     <div className="flex flex-col gap-5">
       <header>

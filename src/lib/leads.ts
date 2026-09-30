@@ -45,22 +45,22 @@ export type ImportResult = { added: number; updated: number; skippedInvalid: num
  * Insert leads for a client and attach them to a campaign. A lead already in the client
  * (same email) is left alone if it has moved past 'new'; otherwise its fields are refreshed.
  */
-export function importLeads(
+export async function importLeads(
   clientId: number,
   campaignId: number,
   source: "csv" | "ghl" | "manual",
   sourceRef: string,
   leads: LeadFields[],
-): ImportResult {
+): Promise<ImportResult> {
   const r: ImportResult = { added: 0, updated: 0, skippedInvalid: 0, skippedExisting: 0 };
-  tx(() => {
+  await tx(async () => {
     for (const l of leads) {
       const email = l.email?.trim().toLowerCase();
       if (!email || !EMAIL_RE.test(email)) {
         r.skippedInvalid++;
         continue;
       }
-      const existing = get<{ id: number; stage: string }>("SELECT id, stage FROM leads WHERE client_id = ? AND email = ?", clientId, email);
+      const existing = await get<{ id: number; stage: string }>("SELECT id, stage FROM leads WHERE client_id = ? AND email = ?", clientId, email);
       const values = {
         clientId, campaignId, email, source, sourceRef,
         first_name: l.first_name?.trim() || null,
@@ -73,7 +73,7 @@ export function importLeads(
         ghl: l.ghl_contact_id ?? null,
       };
       if (!existing) {
-        run(
+        await run(
           `INSERT INTO leads (client_id, campaign_id, email, first_name, last_name, company, title, phone, website, fields,
              source, source_ref, ghl_contact_id)
            VALUES (@clientId, @campaignId, @email, @first_name, @last_name, @company, @title, @phone, @website, @fields,
@@ -82,7 +82,7 @@ export function importLeads(
         );
         r.added++;
       } else if (existing.stage === "new") {
-        run(
+        await run(
           `UPDATE leads SET campaign_id = @campaignId, first_name = @first_name, last_name = @last_name, company = @company,
              title = @title, phone = @phone, website = @website, fields = @fields, ghl_contact_id = COALESCE(@ghl, ghl_contact_id)
            WHERE id = @id`,
@@ -94,7 +94,7 @@ export function importLeads(
       }
     }
   });
-  logActivity(
+  await logActivity(
     clientId,
     "import",
     `Imported ${r.added} new leads from ${source.toUpperCase()} (${sourceRef})` +

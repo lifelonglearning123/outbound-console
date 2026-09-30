@@ -1,0 +1,6 @@
+# Never upload local data or secrets to Vercel.
+data/
+.env*
+*.db
+*.db-*
+launcher/

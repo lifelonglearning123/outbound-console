@@ -1,3 +1,4 @@
+import { clientScope, requireUser } from "@/lib/auth";
 import { all } from "@/lib/db";
 import { dateTime } from "@/lib/format";
 
@@ -6,9 +7,11 @@ const TONE: Record<string, string> = {
   push: "text-go", ghl: "text-go", resume: "text-go", reply: "text-wait",
 };
 
-export default function ActivityPage() {
-  const rows = all<{ id: number; kind: string; message: string; at: string; client: string | null }>(
-    "SELECT a.*, c.name client FROM activity a LEFT JOIN clients c ON c.id = a.client_id ORDER BY a.id DESC LIMIT 400",
+export default async function ActivityPage() {
+  const u = await requireUser();
+  const rows = await all<{ id: number; kind: string; message: string; at: string; client: string | null }>(
+    `SELECT a.*, c.name client FROM activity a LEFT JOIN clients c ON c.id = a.client_id
+     WHERE TRUE ${clientScope(u, "a.client_id")} ORDER BY a.id DESC LIMIT 400`,
   );
   return (
     <div className="flex flex-col gap-5">

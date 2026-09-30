@@ -19,8 +19,8 @@ export type QueueLead = {
   extending: boolean; // already in Instantly; these are its next emails after a hold
 };
 
-export function reviewQueue(clientId: number | null, limit = 200): QueueLead[] {
-  const leads = all<Omit<QueueLead, "drafts" | "fields" | "extending"> & { fields: string; stage: string; hold_after: number | null }>(
+export async function reviewQueue(clientId: number | null, limit = 200): Promise<QueueLead[]> {
+  const leads = await all<Omit<QueueLead, "drafts" | "fields" | "extending"> & { fields: string; stage: string; hold_after: number | null }>(
     `SELECT l.id, l.client_id, cl.name client_name, l.campaign_id, c.name campaign_name, l.email, l.first_name, l.last_name,
             l.company, l.title, l.website, l.fields, l.stage, c.hold_after
      FROM leads l JOIN campaigns c ON c.id = l.campaign_id JOIN clients cl ON cl.id = l.client_id
@@ -29,7 +29,7 @@ export function reviewQueue(clientId: number | null, limit = 200): QueueLead[] {
     ...(clientId ? [clientId, limit] : [limit]),
   );
   if (leads.length === 0) return [];
-  const drafts = all<QueueDraft & { lead_id: number }>(
+  const drafts = await all<QueueDraft & { lead_id: number }>(
     `SELECT id, lead_id, step, subject, body, edited, flags, format FROM drafts WHERE lead_id IN (${leads.map(() => "?").join(",")}) ORDER BY step`,
     ...leads.map((l) => l.id),
   );
@@ -45,11 +45,11 @@ export function reviewQueue(clientId: number | null, limit = 200): QueueLead[] {
   });
 }
 
-export function approvalCounts(clientId: number | null) {
+export async function approvalCounts(clientId: number | null) {
   return (
-    get<{ review: number; approved: number; drafting: number }>(
-      `SELECT COALESCE(SUM(stage IN ('review','extend_review')),0) review, COALESCE(SUM(stage = 'approved'),0) approved,
-              COALESCE(SUM(stage IN ('drafting','extending')),0) drafting
+    await get<{ review: number; approved: number; drafting: number }>(
+      `SELECT COUNT(*) FILTER (WHERE stage IN ('review','extend_review')) review, COUNT(*) FILTER (WHERE stage = 'approved') approved,
+              COUNT(*) FILTER (WHERE stage IN ('drafting','extending')) drafting
        FROM leads ${clientId ? "WHERE client_id = ?" : ""}`,
       ...(clientId ? [clientId] : []),
     ) ?? { review: 0, approved: 0, drafting: 0 }

@@ -1,6 +1,8 @@
+import { requireAdmin } from "@/lib/auth";
 import { ClientForm } from "@/components/ClientForm";
 
-export default function NewClientPage() {
+export default async function NewClientPage() {
+  await requireAdmin();
   return (
     <div className="flex flex-col gap-6">
       <header>

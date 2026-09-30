@@ -1,3 +1,4 @@
+import { requireClientAccess } from "@/lib/auth";
 import Link from "next/link";
 import { all } from "@/lib/db";
 import { requireClient } from "@/lib/clients";
@@ -8,9 +9,10 @@ import { funnelFor } from "@/lib/stats";
 
 export default async function ClientOverview({ params }: PageProps<"/clients/[id]">) {
   const id = Number((await params).id);
-  const client = requireClient(id);
-  const campaigns = all<CampaignRow>("SELECT * FROM campaigns WHERE client_id = ? ORDER BY status = 'active' DESC, created_at DESC", id);
-  const mailboxes = all<{
+  await requireClientAccess(id); // only admins and this client's own logins
+  const client = await requireClient(id);
+  const campaigns = await all<CampaignRow>("SELECT * FROM campaigns WHERE client_id = ? ORDER BY status = 'active' DESC, created_at DESC", id);
+  const mailboxes = await all<{
     email: string; status: number | null; warmup_status: number | null; warmup_score: number | null;
     daily_limit: number | null; sent_today: number | null; auto_paused_at: string | null;
   }>("SELECT * FROM mailboxes WHERE client_id = ? ORDER BY email", id);
@@ -27,7 +29,7 @@ export default async function ClientOverview({ params }: PageProps<"/clients/[id
     <div className="flex flex-col gap-6">
       <section className="flex flex-col gap-2">
         <h2 className="font-semibold">Last 30 days</h2>
-        <Funnel data={funnelFor(id, 30)} />
+        <Funnel data={await funnelFor(id, 30)} />
       </section>
 
       <section className="flex flex-col gap-2">

@@ -1,3 +1,4 @@
+import { clientScope, requireUser } from "@/lib/auth";
 import { all, getSetting } from "@/lib/db";
 import { healthRules } from "@/lib/sync";
 import { ACCOUNT_STATUS, WARMUP_STATUS } from "@/lib/instantly";
@@ -10,11 +11,13 @@ type Box = {
   bounced_7d: number | null; auto_paused_at: string | null; auto_paused_reason: string | null;
 };
 
-export default function MailboxesPage() {
-  const rules = healthRules();
-  const auto = getSetting("health_auto_pause", "1") === "1";
-  const boxes = all<Box>(
-    "SELECT m.*, c.name client FROM mailboxes m JOIN clients c ON c.id = m.client_id WHERE c.archived = 0 ORDER BY c.name, m.email",
+export default async function MailboxesPage() {
+  const u = await requireUser();
+  const rules = await healthRules();
+  const auto = await getSetting("health_auto_pause", "1") === "1";
+  const boxes = await all<Box>(
+    `SELECT m.*, c.name client FROM mailboxes m JOIN clients c ON c.id = m.client_id WHERE c.archived = 0 ${clientScope(u, "m.client_id")}
+     ORDER BY c.name, m.email`,
   );
 
   return (
@@ -24,6 +27,7 @@ export default function MailboxesPage() {
         <p className="text-sm text-muted">Every sending account across clients. The sync pauses any mailbox that breaks the rules below.</p>
       </header>
 
+      {u.role === "admin" && (
       <form action={saveHealthRules} className="card flex flex-wrap items-end gap-4 p-4 text-sm">
         <label className="flex items-center gap-2 pb-2">
           <input type="checkbox" name="auto" defaultChecked={auto} /> Auto-pause unhealthy mailboxes
@@ -43,6 +47,7 @@ export default function MailboxesPage() {
         <button className="btn">Save rules</button>
         <p className="w-full text-xs text-muted">Auto-pause never resumes a mailbox by itself; you decide when it&apos;s safe.</p>
       </form>
+      )}
 
       <div className="card overflow-hidden">
         <table className="w-full text-sm">

@@ -1,3 +1,4 @@
+import { requireClientAccess } from "@/lib/auth";
 import { notFound } from "next/navigation";
 import { getClient } from "@/lib/clients";
 import { get } from "@/lib/db";
@@ -6,13 +7,14 @@ import { ConnectionBadge } from "@/components/ConnectionBadge";
 
 export default async function ClientLayout({ children, params }: LayoutProps<"/clients/[id]">) {
   const id = Number((await params).id);
-  const client = getClient(id);
+  const user = await requireClientAccess(id); // only admins and this client's own logins
+  const client = await getClient(id);
   if (!client) notFound();
   const pending =
-    get<{ n: number }>(
+    (await get<{ n: number }>(
       "SELECT COUNT(DISTINCT d.lead_id) AS n FROM drafts d JOIN leads l ON l.id = d.lead_id WHERE l.client_id = ? AND l.stage = 'review'",
       id,
-    )?.n ?? 0;
+    ))?.n ?? 0;
   const base = `/clients/${id}`;
 
   return (
@@ -35,7 +37,8 @@ export default async function ClientLayout({ children, params }: LayoutProps<"/c
             { href: "/leads", label: "Leads" },
             { href: "/approvals", label: "Approvals", count: pending },
             { href: "/campaigns", label: "Campaigns" },
-            { href: "/settings", label: "Settings" },
+            // Settings hold the API keys, so only admins see them.
+            ...(user.role === "admin" ? [{ href: "/settings", label: "Settings" }] : []),
           ]}
         />
       </div>

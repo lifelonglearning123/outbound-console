@@ -16,14 +16,15 @@ type JourneyRow = {
 };
 
 /** One row per lead: a dot per sequence step (sent / next / waiting) plus reply and status. */
-export function LeadJourney({ campaignId, stepCount, live, delays }: { campaignId: number; stepCount: number; live: number; delays: number[] }) {
-  const rows = all<JourneyRow>(
-    `SELECT l.id, l.email, l.first_name, l.company, l.instantly_status, l.interest_status, l.pushed_at,
-            (SELECT GROUP_CONCAT(DISTINCT e.step) FROM emails e WHERE e.lead_id = l.id AND e.direction = 'out') sent_steps,
+export async function LeadJourney({ campaignId, stepCount, live, delays }: { campaignId: number; stepCount: number; live: number; delays: number[] }) {
+  const rows = await all<JourneyRow>(
+    // Wrapped so the ORDER BY can use the computed columns (Postgres won't use aliases inside expressions).
+    `SELECT * FROM (SELECT l.id, l.email, l.first_name, l.company, l.instantly_status, l.interest_status, l.pushed_at,
+            (SELECT string_agg(DISTINCT e.step::text, ',') FROM emails e WHERE e.lead_id = l.id AND e.direction = 'out') sent_steps,
             (SELECT MAX(e.sent_at) FROM emails e WHERE e.lead_id = l.id AND e.direction = 'out') last_out,
             (SELECT MIN(e.sent_at) FROM emails e WHERE e.lead_id = l.id AND e.direction = 'in') replied_at
-     FROM leads l WHERE l.campaign_id = ? AND (l.stage = 'pushed' OR l.stage LIKE 'extend_%')
-     ORDER BY replied_at IS NULL, last_out DESC NULLS LAST, l.pushed_at DESC
+     FROM leads l WHERE l.campaign_id = ? AND (l.stage = 'pushed' OR l.stage LIKE 'extend_%')) j
+     ORDER BY replied_at IS NULL, last_out DESC NULLS LAST, pushed_at DESC
      LIMIT 500`,
     campaignId,
   );

@@ -57,13 +57,13 @@ function parse(row: CampaignDbRow): Campaign {
   };
 }
 
-export function getCampaign(id: number): Campaign | undefined {
-  const row = get<CampaignDbRow>("SELECT * FROM campaigns WHERE id = ?", id);
+export async function getCampaign(id: number): Promise<Campaign | undefined> {
+  const row = await get<CampaignDbRow>("SELECT * FROM campaigns WHERE id = ?", id);
   return row ? parse(row) : undefined;
 }
 
-export function requireCampaign(id: number): Campaign {
-  const c = getCampaign(id);
+export async function requireCampaign(id: number): Promise<Campaign> {
+  const c = await getCampaign(id);
   if (!c) throw new Error(`Campaign ${id} not found`);
   return c;
 }
@@ -115,9 +115,9 @@ function toInstantlyBody(c: Campaign, live = liveSteps(c)) {
 
 /** Create the campaign in Instantly (first time) or push local changes to it. Managed campaigns only. */
 export async function syncCampaignToInstantly(id: number) {
-  const c = requireCampaign(id);
+  const c = await requireCampaign(id);
   if (!c.managed) throw new Error("This campaign was created in Instantly directly; edit its copy there.");
-  const client = requireClient(c.client_id);
+  const client = await requireClient(c.client_id);
   if (!client.instantly_api_key) throw new Error("Client has no Instantly key");
   const api = instantly(client.instantly_api_key);
   const body = toInstantlyBody(c);
@@ -126,7 +126,7 @@ export async function syncCampaignToInstantly(id: number) {
     ? await api.patchCampaign(c.instantly_campaign_id, body)
     : await api.createCampaign(body);
   // Remember the id straight away so a later failure can't lead to a duplicate campaign on retry.
-  if (!c.instantly_campaign_id) run("UPDATE campaigns SET instantly_campaign_id = ? WHERE id = ?", remote.id, id);
+  if (!c.instantly_campaign_id) await run("UPDATE campaigns SET instantly_campaign_id = ? WHERE id = ?", remote.id, id);
 
   // Shared workspace: tag the campaign so it belongs to this client. Re-applied on every save, so a failed
   // attempt is repaired by saving again.
@@ -135,25 +135,25 @@ export async function syncCampaignToInstantly(id: number) {
   const vars = c.steps.slice(0, liveSteps(c)).flatMap((_, i) => (i === 0 ? [subjectVar(1), bodyVar(1)] : [bodyVar(i + 1)]));
   await api.addVariables(remote.id, vars);
 
-  run(
+  await run(
     "UPDATE campaigns SET instantly_campaign_id = ?, instantly_status = ?, status = ?, last_synced_at = ? WHERE id = ?",
     remote.id, remote.status, campaignState(remote.status), new Date().toISOString(), id,
   );
-  logActivity(c.client_id, "campaign", `${c.instantly_campaign_id ? "Updated" : "Created"} "${c.name}" in Instantly`);
+  await logActivity(c.client_id, "campaign", `${c.instantly_campaign_id ? "Updated" : "Created"} "${c.name}" in Instantly`);
   return remote;
 }
 
 export async function setCampaignRunning(id: number, running: boolean) {
-  const c = requireCampaign(id);
+  const c = await requireCampaign(id);
   if (!c.instantly_campaign_id) throw new Error("Campaign isn't in Instantly yet");
-  const client = requireClient(c.client_id);
+  const client = await requireClient(c.client_id);
   const api = instantly(client.instantly_api_key!);
   const remote = running ? await api.activate(c.instantly_campaign_id) : await api.pause(c.instantly_campaign_id);
-  run(
+  await run(
     "UPDATE campaigns SET instantly_status = ?, status = ?, last_synced_at = ? WHERE id = ?",
     remote.status, campaignState(remote.status), new Date().toISOString(), id,
   );
-  logActivity(c.client_id, running ? "resume" : "pause", `${running ? "Started" : "Paused"} "${c.name}"`);
+  await logActivity(c.client_id, running ? "resume" : "pause", `${running ? "Started" : "Paused"} "${c.name}"`);
 }
 
 /** What's still missing from steps before they can be written or sent (held steps may be unfinished until released). */
@@ -172,6 +172,6 @@ export function campaignStepProblems(steps: Step[]): string[] {
 }
 
 /** Leads already in Instantly for this campaign; once there are any, the live steps can only grow via a hold release. */
-export function pushedLeadCount(campaignId: number): number {
-  return get<{ n: number }>("SELECT COUNT(*) n FROM leads WHERE campaign_id = ? AND instantly_lead_id IS NOT NULL", campaignId)?.n ?? 0;
+export async function pushedLeadCount(campaignId: number): Promise<number> {
+  return (await get<{ n: number }>("SELECT COUNT(*) n FROM leads WHERE campaign_id = ? AND instantly_lead_id IS NOT NULL", campaignId))?.n ?? 0;
 }

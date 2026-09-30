@@ -7,9 +7,9 @@ import type { InstantlyClient } from "./instantly";
 // mailboxes and campaigns carrying its Instantly tag. Blocklist and lead dedupe stay workspace-wide.
 
 /** Why this client can't sync safely right now, or null. Every client sharing a workspace needs its own tag. */
-export function sharingProblem(client: Client): string | null {
+export async function sharingProblem(client: Client): Promise<string | null> {
   if (!client.instantly_workspace_id) return null;
-  const others = all<{ name: string; instantly_tag_id: string | null; instantly_tag_label: string | null }>(
+  const others = await all<{ name: string; instantly_tag_id: string | null; instantly_tag_label: string | null }>(
     "SELECT name, instantly_tag_id, instantly_tag_label FROM clients WHERE instantly_workspace_id = ? AND id != ? AND archived = 0",
     client.instantly_workspace_id,
     client.id,
@@ -32,13 +32,13 @@ export async function ensureTag(api: InstantlyClient, client: Client): Promise<s
   if (client.instantly_tag_id) return client.instantly_tag_id;
   const existing = (await api.tags()).find((t) => t.label.trim().toLowerCase() === label.toLowerCase());
   const tag = existing ?? (await api.createTag(label));
-  run("UPDATE clients SET instantly_tag_id = ? WHERE id = ?", tag.id, client.id);
+  await run("UPDATE clients SET instantly_tag_id = ? WHERE id = ?", tag.id, client.id);
   client.instantly_tag_id = tag.id;
   return tag.id;
 }
 
 /** In shared mode, the client's own mailboxes: used to filter emails, since Instantly can't filter emails by tag. */
-export function scopedMailboxes(client: Client): string[] | undefined {
+export async function scopedMailboxes(client: Client): Promise<string[] | undefined> {
   if (!client.instantly_tag_id) return undefined;
-  return all<{ email: string }>("SELECT email FROM mailboxes WHERE client_id = ?", client.id).map((m) => m.email);
+  return (await all<{ email: string }>("SELECT email FROM mailboxes WHERE client_id = ?", client.id)).map((m) => m.email);
 }
