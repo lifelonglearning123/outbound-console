@@ -4,6 +4,7 @@ import { all, get, run, logActivity } from "./db";
 import { requireClient } from "./clients";
 import { instantly } from "./instantly";
 import { addNote, createOpportunity, upsertContact } from "./ghl";
+import { toDate } from "./format";
 
 export const INTEREST_LABELS: Record<string, string> = {
   interested: "Interested",
@@ -105,7 +106,7 @@ export async function pushToGhl(emailId: string): Promise<string> {
 
 /** Record the operator's (or AI's) interest tag, mirror it to Instantly, and act on it. */
 export async function applyInterest(emailId: string, interest: string, reason: string | null, source: "ai" | "manual") {
-  const e = get<{ client_id: number; lead_email: string; lead_id: number | null; campaign_id: number | null; ghl_pushed_at: string | null }>(
+  const e = get<{ client_id: number; lead_email: string; lead_id: number | null; campaign_id: number | null; ghl_pushed_at: string | null; sent_at: string }>(
     "SELECT * FROM emails WHERE id = ?",
     emailId,
   );
@@ -131,7 +132,10 @@ export async function applyInterest(emailId: string, interest: string, reason: s
       logActivity(e.client_id, "error", `Couldn't blocklist ${e.lead_email}: ${(err as Error).message}`);
     }
   }
-  if (interest === "interested" && !e.ghl_pushed_at && client.ghl_location_id && client.ghl_token) {
+  // The first sync imports the workspace's whole history; only replies that arrive after the client
+  // was added go to GHL automatically. Older ones can still be sent by hand from the inbox.
+  const isNew = toDate(e.sent_at) >= toDate(client.created_at);
+  if (interest === "interested" && (source === "manual" || isNew) && !e.ghl_pushed_at && client.ghl_location_id && client.ghl_token) {
     try {
       await pushToGhl(emailId);
     } catch (err) {

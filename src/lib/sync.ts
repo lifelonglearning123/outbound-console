@@ -23,7 +23,7 @@ function stripHtml(html: string): string {
 
 /** Drop the quoted thread under a reply so the inbox shows only what the lead wrote. */
 function newestPart(text: string): string {
-  const cut = text.search(/\n\s*(On .{5,120} wrote:|-----Original Message-----|From: .+\nSent: )/i);
+  const cut = text.search(/\n\s*(On [^\n]{5,120}\n?[^\n]{0,80}wrote:|-----Original Message-----|From: .+\nSent: )/i);
   return (cut > 0 ? text.slice(0, cut) : text).trim();
 }
 
