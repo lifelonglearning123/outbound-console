@@ -88,6 +88,13 @@ export async function pushApproved(campaignId: number): Promise<{ pushed: number
   return { pushed, skipped };
 }
 
+/**
+ * Instantly turns every newline in a body into <br>. In designed HTML the newlines are only layout
+ * whitespace (a space when rendered), but as <br>s between table rows browsers hoist them above the
+ * table, leaving a big empty band at the top. Newlines become spaces, so the email looks exactly as designed.
+ */
+export const flattenHtml = (html: string) => html.replace(/\s*\r?\n\s*/g, " ").trim();
+
 type DraftCopy = { step: number; subject: string; body: string; format: string };
 
 /** The custom variables that carry a lead's approved copy into Instantly's placeholder steps. */
@@ -95,8 +102,8 @@ export function copyVars(drafts: DraftCopy[]): Record<string, string> {
   const vars: Record<string, string> = {};
   for (const d of drafts) {
     if (d.step === 1) vars[subjectVar(1)] = d.subject;
-    // Designed emails (html) go out exactly as approved; AI plain text keeps its line breaks.
-    vars[bodyVar(d.step)] = d.format === "html" ? d.body : toHtml(d.body);
+    // Designed emails (html) go out as approved; AI plain text keeps its line breaks.
+    vars[bodyVar(d.step)] = d.format === "html" ? flattenHtml(d.body) : toHtml(d.body);
   }
   return vars;
 }
