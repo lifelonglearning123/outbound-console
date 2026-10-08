@@ -34,7 +34,7 @@ async function ghl<T>(creds: GhlCreds, path: string, init: RequestInit & { versi
       const j = JSON.parse(text);
       msg = Array.isArray(j.message) ? j.message.join("; ") : j.message ?? msg;
     } catch {}
-    throw new GhlError(`GHL ${res.status}: ${msg}`, res.status);
+    throw new GhlError(`Nexus Portal ${res.status}: ${msg}`, res.status);
   }
   return (text ? JSON.parse(text) : {}) as T;
 }

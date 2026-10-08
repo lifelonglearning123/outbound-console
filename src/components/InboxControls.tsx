@@ -40,9 +40,9 @@ export function GhlButton({ emailId, pushedAt, message }: { emailId: string; pus
   const [pending, start] = useTransition();
   return (
     <div className="flex items-center gap-3 text-xs">
-      {pushedAt ? <span className="text-go">In GHL · {status}</span> : status ? <span className="text-bad">{status}</span> : <span className="text-muted">Not in GHL</span>}
+      {pushedAt ? <span className="text-go">In Nexus Portal · {status}</span> : status ? <span className="text-bad">{status}</span> : <span className="text-muted">Not in Nexus Portal</span>}
       <button className="btn text-xs" disabled={pending} onClick={() => start(async () => setStatus(await sendToGhl(emailId)))}>
-        {pending ? "Sending…" : pushedAt ? "Send to GHL again" : "Send to GHL"}
+        {pending ? "Sending…" : pushedAt ? "Send to Nexus Portal again" : "Send to Nexus Portal"}
       </button>
     </div>
   );

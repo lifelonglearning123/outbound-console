@@ -142,7 +142,7 @@ export async function ClientForm({ client }: { client?: Client }) {
                 {pipelineError
                   ? `Couldn't load pipelines: ${pipelineError}`
                   : client?.ghl_location_id && client.ghl_token
-                    ? "This GHL sub-account has no pipelines yet. Interested replies become a contact with a note; create a pipeline in GHL to get opportunities too."
+                    ? "This Nexus Portal sub-account has no pipelines yet. Interested replies become a contact with a note; create a pipeline in Nexus Portal to get opportunities too."
                     : "Save the location ID and token first, then pick the pipeline stage here."}
               </p>
             </>

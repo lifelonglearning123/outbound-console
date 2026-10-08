@@ -81,7 +81,7 @@ export default async function LeadsPage({ params, searchParams }: PageProps<"/cl
         <div className="card flex flex-col gap-3 p-5">
           <h2 className="font-semibold">Check email addresses</h2>
           <p className="text-xs text-muted">
-            Instantly checks each address before it can be sent to. Invalid ones are rejected; catch-all domains get a reviewer flag.
+            Instantly checks each address before it can be sent to. Invalid ones are rejected; ones it&apos;s unable to verify get a reviewer flag.
             {credits && <> Credits left: <span className="num">{Number(credits).toLocaleString("en-GB")}</span>.</>}
           </p>
           {campaigns.every((c) => !c.unchecked_count) ? (
@@ -101,7 +101,7 @@ export default async function LeadsPage({ params, searchParams }: PageProps<"/cl
           {(checks.verified || checks.catch_all || checks.invalid) ? (
             <>
               <p className="text-xs text-muted">
-                So far: <span className="num text-go">{checks.verified ?? 0}</span> verified · <span className="num text-wait">{checks.catch_all ?? 0}</span> catch-all ·{" "}
+                So far: <span className="num text-go">{checks.verified ?? 0}</span> verified · <span className="num text-wait">{checks.catch_all ?? 0}</span> unable to verify ·{" "}
                 <span className="num text-bad">{checks.invalid ?? 0}</span> invalid
               </p>
               <Link href={`/clients/${id}/verification`} className="text-sm underline">What this means and what to do next →</Link>

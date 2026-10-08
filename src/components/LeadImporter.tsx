@@ -116,7 +116,7 @@ export function LeadImporter({ clientId, campaigns, hasGhl }: { clientId: number
               onClick={() => { setMode(m); setResult(""); if (m === "ghl" && tags === null && hasGhl) loadTags(); }}
               className={`rounded px-3 py-1 ${mode === m ? "bg-ink text-paper" : "text-muted"}`}
             >
-              {m === "manual" ? "Type it in" : m === "csv" ? "CSV file" : "From GHL"}
+              {m === "manual" ? "Type it in" : m === "csv" ? "CSV file" : "From Nexus Portal"}
             </button>
           ))}
         </div>
@@ -205,7 +205,7 @@ export function LeadImporter({ clientId, campaigns, hasGhl }: { clientId: number
           )}
         </>
       ) : !hasGhl ? (
-        <p className="text-sm text-muted">Add this client&apos;s GHL location ID and token in Settings first.</p>
+        <p className="text-sm text-muted">Add this client&apos;s Nexus Portal location ID and token in Settings first.</p>
       ) : (
         <div className="flex items-end gap-3">
           <div className="flex-1">

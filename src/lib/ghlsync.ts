@@ -45,10 +45,10 @@ export async function linkPendingLeads(client: Client, limit = 100): Promise<num
       await linkLead(client, l);
       n++;
     } catch (e) {
-      await run("UPDATE leads SET stage_message = ? WHERE id = ?", `Couldn't add to GHL: ${(e as Error).message}`, l.id);
+      await run("UPDATE leads SET stage_message = ? WHERE id = ?", `Couldn't add to Nexus Portal: ${(e as Error).message}`, l.id);
     }
   }
-  if (n) await logActivity(client.id, "ghl", `Added ${n} leads to GHL as contacts`);
+  if (n) await logActivity(client.id, "ghl", `Added ${n} leads to Nexus Portal as contacts`);
   return n;
 }
 
@@ -60,10 +60,10 @@ export async function refreshFromGhl(client: Client, lead: LeadRow): Promise<boo
   const creds = ghlCreds(client);
   if (!creds || !lead.ghl_contact_id) return true;
   const c = await getContact(creds, lead.ghl_contact_id);
-  if (!c) return true; // deleted in GHL: keep what we have
+  if (!c) return true; // deleted in Nexus Portal: keep what we have
   if (emailDnd(c)) {
     await run(
-      "UPDATE leads SET stage = 'rejected', stage_message = 'Email Do-Not-Disturb is on in GHL', ghl_synced_at = datetime('now') WHERE id = ?",
+      "UPDATE leads SET stage = 'rejected', stage_message = 'Email Do-Not-Disturb is on in Nexus Portal', ghl_synced_at = datetime('now') WHERE id = ?",
       lead.id,
     );
     return false;
@@ -115,7 +115,7 @@ export async function pullTaggedContacts(client: Client): Promise<number> {
       client.id, c.id,
     );
     total += r.added;
-    if (r.added) await logActivity(client.id, "ghl", `${r.added} new contacts tagged "${c.ghl_tag}" in GHL joined "${c.name}"; writing their emails`);
+    if (r.added) await logActivity(client.id, "ghl", `${r.added} new contacts tagged "${c.ghl_tag}" in Nexus Portal joined "${c.name}"; writing their emails`);
   }
   return total;
 }

@@ -1,25 +1,39 @@
 import "server-only";
-import { all, get, run, logActivity, getSetting, setSetting, withLock } from "./db";
+import { all, get, run, tx, logActivity, getSetting, setSetting, withLock } from "./db";
 import { requireClient } from "./clients";
 import { ghlCreds } from "./ghlsync";
 import { addContactTags, deleteContact, GhlError } from "./ghl";
 import { llmKeyHint, llmLabel, llmReady, llmText } from "./llm";
 
 /**
- * What came out of email verification (verify.ts), what it means, and what to do with each group in GHL:
- *   verified  -> tag the GHL contact "email verified"
- *   catch_all -> tag the GHL contact "email catch-all"
- *   invalid   -> remove the lead from the console and tag the contact "email invalid", or delete the contact from GHL too
- * GHL calls are made one lead at a time, so the actions run as a resumable background job (leads.ghl_verification_tag:
- * queued_tag | queued_remove | queued_delete | done), picked up on page views and on each sync.
+ * What came out of email verification (verify.ts), what it means, and what to do with each group in the
+ * Nexus Portal (the client-facing name of their GHL sub-account; GHL is the source of truth for contacts):
+ *   verified  -> tag "Email Verified"
+ *   catch_all -> tag "Email Unable To Verify"
+ *   invalid   -> tag "Email Invalid"
+ * Unable-to-verify and invalid contacts can also be deleted from the portal; the lead then stays in the console as
+ * 'removed' so the lists and exports still show what happened to it.
+ * Portal calls are made one contact at a time, so the actions run as a resumable background job
+ * (leads.ghl_verification_tag: queued_tag | queued_delete | done | deleted), picked up on page views and on each sync.
  */
+
+export const PORTAL = "Nexus Portal";
 
 export type Outcome = "verified" | "catch_all" | "invalid";
 export const OUTCOMES: Outcome[] = ["verified", "catch_all", "invalid"];
-export const GHL_TAGS: Record<Outcome, string> = { verified: "email verified", catch_all: "email catch-all", invalid: "email invalid" };
+/** The exact tag each group gets in the portal. */
+export const GHL_TAGS: Record<Outcome, string> = { verified: "Email Verified", catch_all: "Email Unable To Verify", invalid: "Email Invalid" };
+export const OUTCOME_LABEL: Record<Outcome, string> = { verified: "Verified", catch_all: "Unable to verify", invalid: "Invalid" };
 
-const CONCURRENCY = 3; // GHL allows bursts of 100 per 10s; keep well under it
+const CONCURRENCY = 3; // the portal allows bursts of 100 per 10s; keep well under it
 const BUDGET_MS = 240_000;
+
+type GroupStatus = {
+  tagged: number; // carries the tag in the portal
+  deleted: number; // deleted from the portal
+  tagTodo: number; // in the portal, not tagged yet
+  deletable: number; // in the portal, not yet in Instantly (can be deleted)
+};
 
 export type VerificationReport = {
   total: number;
@@ -30,20 +44,14 @@ export type VerificationReport = {
   pushedUnchecked: number; // already in Instantly before checks existed; can't be checked now
   campaigns: { id: number; name: string; verified: number; catch_all: number; invalid: number; unchecked: number }[];
   catchAllDomains: { domain: string; n: number }[];
-  ghl: {
-    connected: boolean;
-    tagged: Record<Outcome, number>; // done
-    queued: number; // GHL work still to do
-    todo: Record<Outcome, number>; // leads the buttons would act on
-    catchAllRemovable: number; // catch-all leads not yet in Instantly, which "delete from GHL" would remove
-    error: string | null;
-  };
+  portal: { connected: boolean; queued: number; error: string | null; groups: Record<Outcome, GroupStatus> };
   credits: string | null;
   summary: { text: string; at: string } | null;
   summaryError: string | null;
 };
 
 const CHECKABLE = `pushed_at IS NULL AND instantly_lead_id IS NULL AND stage NOT IN ('rejected', 'removed')`;
+const DELETABLE = `pushed_at IS NULL AND instantly_lead_id IS NULL AND ghl_contact_id IS NOT NULL AND (ghl_verification_tag IS NULL OR ghl_verification_tag = 'done')`;
 
 export async function verificationReport(clientId: number): Promise<VerificationReport> {
   const client = await requireClient(clientId);
@@ -70,23 +78,20 @@ export async function verificationReport(clientId: number): Promise<Verification
     clientId,
   );
 
-  const tagRows = await all<{ v: Outcome; done: number; queued: number; todo: number }>(
+  const groupRows = await all<{ v: Outcome } & GroupStatus & { queued: number }>(
     `SELECT verification v,
-       COUNT(*) FILTER (WHERE ghl_verification_tag = 'done') done,
+       COUNT(*) FILTER (WHERE ghl_verification_tag = 'done') tagged,
+       COUNT(*) FILTER (WHERE ghl_verification_tag = 'deleted') deleted,
        COUNT(*) FILTER (WHERE ghl_verification_tag LIKE 'queued%') queued,
-       COUNT(*) FILTER (WHERE ghl_verification_tag IS NULL AND ghl_contact_id IS NOT NULL) todo
+       COUNT(*) FILTER (WHERE ghl_verification_tag IS NULL AND ghl_contact_id IS NOT NULL) "tagTodo",
+       COUNT(*) FILTER (WHERE ${DELETABLE}) deletable
      FROM leads WHERE client_id = ? AND verification IN ('verified', 'catch_all', 'invalid') GROUP BY verification`,
     clientId,
   );
-  const tag = (v: Outcome) => tagRows.find((r) => r.v === v);
-  const removable = async (v: Outcome) =>
-    (await get<{ n: number }>(
-      `SELECT COUNT(*) n FROM leads WHERE client_id = ? AND verification = ? AND pushed_at IS NULL AND instantly_lead_id IS NULL
-       AND (ghl_verification_tag IS NULL OR ghl_verification_tag = 'done')`,
-      clientId, v,
-    ))?.n ?? 0;
-  const invalidTodo = await removable("invalid");
-  const catchAllRemovable = await removable("catch_all");
+  const group = (v: Outcome): GroupStatus => {
+    const g = groupRows.find((r) => r.v === v);
+    return { tagged: g?.tagged ?? 0, deleted: g?.deleted ?? 0, tagTodo: g?.tagTodo ?? 0, deletable: g?.deletable ?? 0 };
+  };
 
   let summary: VerificationReport["summary"] = null;
   try {
@@ -103,13 +108,11 @@ export async function verificationReport(clientId: number): Promise<Verification
     pushedUnchecked,
     campaigns,
     catchAllDomains,
-    ghl: {
+    portal: {
       connected: !!ghlCreds(client),
-      tagged: { verified: tag("verified")?.done ?? 0, catch_all: tag("catch_all")?.done ?? 0, invalid: tag("invalid")?.done ?? 0 },
-      queued: tagRows.reduce((a, r) => a + r.queued, 0),
-      todo: { verified: tag("verified")?.todo ?? 0, catch_all: tag("catch_all")?.todo ?? 0, invalid: invalidTodo },
-      catchAllRemovable,
+      queued: groupRows.reduce((a, r) => a + r.queued, 0),
       error: (await getSetting(`verify_actions_error_${clientId}`, "")) || null,
+      groups: { verified: group("verified"), catch_all: group("catch_all"), invalid: group("invalid") },
     },
     credits: (await getSetting(`verify_credits_${clientId}`, "")) || null,
     summary,
@@ -117,19 +120,53 @@ export async function verificationReport(clientId: number): Promise<Verification
   };
 }
 
+export type GroupLead = {
+  email: string;
+  first_name: string | null;
+  last_name: string | null;
+  company: string | null;
+  campaign: string | null;
+  verified_at: string | null;
+  ghl_verification_tag: string | null;
+  in_portal: boolean;
+  in_instantly: boolean;
+};
+
+/** Every lead in one verification group, for the folded list and the CSV export. */
+export async function groupLeads(clientId: number, outcome: Outcome): Promise<GroupLead[]> {
+  return all<GroupLead>(
+    `SELECT l.email, l.first_name, l.last_name, l.company, c.name campaign, l.verified_at, l.ghl_verification_tag,
+       l.ghl_contact_id IS NOT NULL in_portal, (l.pushed_at IS NOT NULL OR l.instantly_lead_id IS NOT NULL) in_instantly
+     FROM leads l LEFT JOIN campaigns c ON c.id = l.campaign_id
+     WHERE l.client_id = ? AND l.verification = ? ORDER BY l.company NULLS LAST, l.email`,
+    clientId, outcome,
+  );
+}
+
+/** What has happened to the lead's contact in the portal, in words. */
+export function portalStatus(l: Pick<GroupLead, "ghl_verification_tag" | "in_portal">, outcome: Outcome): string {
+  switch (l.ghl_verification_tag) {
+    case "done": return `Tagged "${GHL_TAGS[outcome]}"`;
+    case "deleted": return `Deleted from ${PORTAL}`;
+    case "queued_tag": return "Tagging…";
+    case "queued_delete": return "Deleting…";
+    default: return l.in_portal ? "Not tagged yet" : `Not in ${PORTAL}`;
+  }
+}
+
 /** The reading of the numbers that's always shown, whether or not the AI summary has been written. */
 export function plainReading(r: VerificationReport): string[] {
   const p = (n: number) => (r.checked ? `${Math.round((n / r.checked) * 100)}%` : "0%");
   const out: string[] = [];
   if (!r.checked) return ["No addresses have been checked yet. Use \"Check email addresses\" on the Leads page first."];
-  out.push(`${r.checked.toLocaleString("en-GB")} addresses were checked with Instantly: ${r.counts.verified.toLocaleString("en-GB")} verified (${p(r.counts.verified)}), ${r.counts.catch_all.toLocaleString("en-GB")} catch-all (${p(r.counts.catch_all)}) and ${r.counts.invalid.toLocaleString("en-GB")} invalid (${p(r.counts.invalid)}).`);
+  out.push(`${r.checked.toLocaleString("en-GB")} addresses were checked with Instantly: ${r.counts.verified.toLocaleString("en-GB")} verified (${p(r.counts.verified)}), ${r.counts.catch_all.toLocaleString("en-GB")} unable to verify (${p(r.counts.catch_all)}) and ${r.counts.invalid.toLocaleString("en-GB")} invalid (${p(r.counts.invalid)}).`);
   if (r.counts.invalid / r.checked > 0.08) {
-    out.push(`An invalid share above 8% means the list is stale: sending to it unchecked would have bounced at roughly that rate and put the mailboxes at risk. Those leads are already rejected; removing them keeps the console and GHL clean.`);
+    out.push(`An invalid share above 8% means the list is stale: sending to it unchecked would have bounced at roughly that rate and put the mailboxes at risk. Those leads are already rejected and won't be emailed.`);
   } else if (r.counts.invalid) {
     out.push(`The invalid share is low, so the list is in reasonable shape. Those leads are already rejected.`);
   }
   if (r.counts.catch_all) {
-    out.push(`Catch-all addresses can't be confirmed either way: the company's mail server accepts everything. Treat them as a second tier: send to the verified group first, then release catch-all leads in small daily batches so a bad run can't push a mailbox's bounce rate over 3%.`);
+    out.push(`"Unable to verify" means the company's mail server accepts every address (a catch-all), so no checker can confirm whether the person still works there. Send to the verified group first, then release these in small daily batches so a bad run can't push a mailbox's bounce rate over 3%.`);
   }
   if (r.counts.verified) out.push(`The verified group is safe to approve and send.`);
   if (r.pushedUnchecked) out.push(`${r.pushedUnchecked.toLocaleString("en-GB")} leads were already in Instantly before the check and can't be checked now; their bounces will show on the campaign page.`);
@@ -143,23 +180,25 @@ export function plainReading(r: VerificationReport): string[] {
 export async function writeVerificationSummary(clientId: number): Promise<void> {
   const client = await requireClient(clientId);
   const r = await verificationReport(clientId);
+  const g = r.portal.groups;
   await run("DELETE FROM settings WHERE key = ?", `verify_summary_error_${clientId}`);
   try {
     if (!llmReady()) throw new Error(`No AI key: set ${llmKeyHint()} in Vercel`);
     const facts = [
       `Client: ${client.name}.`,
-      `Leads in the console: ${r.total}. Checked: ${r.checked}. Verified: ${r.counts.verified}. Catch-all: ${r.counts.catch_all}. Invalid: ${r.counts.invalid}.`,
+      `Leads in the console: ${r.total}. Checked: ${r.checked}. Verified: ${r.counts.verified}. Unable to verify (catch-all domain): ${r.counts.catch_all}. Invalid: ${r.counts.invalid}.`,
       `Still unchecked and checkable: ${r.unchecked}. Already in Instantly before checks existed (can't be checked now): ${r.pushedUnchecked}.`,
-      `Per campaign: ${r.campaigns.map((c) => `"${c.name}": ${c.verified} verified, ${c.catch_all} catch-all, ${c.invalid} invalid`).join("; ") || "none"}.`,
-      `Companies with the most catch-all addresses: ${r.catchAllDomains.slice(0, 6).map((d) => `${d.domain} (${d.n})`).join(", ") || "none"}.`,
-      `GHL: ${r.ghl.connected ? "connected" : "not connected"}. Tagged so far: ${r.ghl.tagged.verified} verified, ${r.ghl.tagged.catch_all} catch-all, ${r.ghl.tagged.invalid} invalid.`,
-      `Available actions in the console: tag verified contacts in GHL "email verified"; tag catch-all contacts "email catch-all"; remove invalid leads from the console and tag the GHL contact "email invalid", or also delete those contacts from GHL.`,
+      `Per campaign: ${r.campaigns.map((c) => `"${c.name}": ${c.verified} verified, ${c.catch_all} unable to verify, ${c.invalid} invalid`).join("; ") || "none"}.`,
+      `Companies with the most unable-to-verify addresses: ${r.catchAllDomains.slice(0, 6).map((d) => `${d.domain} (${d.n})`).join(", ") || "none"}.`,
+      `The client's CRM is called the ${PORTAL}. ${r.portal.connected ? "Connected" : "Not connected"}. Tagged so far: ${g.verified.tagged} "${GHL_TAGS.verified}", ${g.catch_all.tagged} "${GHL_TAGS.catch_all}", ${g.invalid.tagged} "${GHL_TAGS.invalid}". Deleted from the portal: ${g.catch_all.deleted + g.invalid.deleted}.`,
+      `Available actions: tag each group in the ${PORTAL} ("${GHL_TAGS.verified}", "${GHL_TAGS.catch_all}", "${GHL_TAGS.invalid}"); delete unable-to-verify or invalid contacts from the ${PORTAL}; export each group's emails as CSV.`,
     ].join("\n");
     const text = await llmText({
       system:
         "You are a cold-email deliverability lead writing for the account owner of a small B2B outreach client. British English, plain text, no headings, no bullet lists, no markdown. " +
+        `Always call the CRM the ${PORTAL}; never say GHL, HighLevel or GoHighLevel. ` +
         "Write three short paragraphs, under 180 words in total: (1) what the check found and what it says about the list quality, with the key percentages; " +
-        "(2) what each group means for deliverability (verified = safe; catch-all = unconfirmed, send in small batches after the verified group; invalid = would bounce, already rejected); " +
+        "(2) what each group means for deliverability (verified = safe; unable to verify = catch-all domain, unconfirmed, send in small batches after the verified group; invalid = would bounce, already rejected); " +
         "(3) the recommended next actions in order, using only the actions listed. Use only the facts given; never invent numbers.",
       user: facts,
       effort: "low",
@@ -174,10 +213,10 @@ export async function writeVerificationSummary(clientId: number): Promise<void> 
   }
 }
 
-// ---------- GHL actions ----------
+// ---------- Portal actions ----------
 
-/** Queue tagging in GHL for every verified or catch-all lead not tagged yet. Returns how many. */
-export async function queueGhlTagging(clientId: number, outcome: "verified" | "catch_all"): Promise<number> {
+/** Queue tagging in the portal for every lead of a group that's in the portal and not tagged yet. Returns how many. */
+export async function queueTagging(clientId: number, outcome: Outcome): Promise<number> {
   return (await run(
     "UPDATE leads SET ghl_verification_tag = 'queued_tag' WHERE client_id = ? AND verification = ? AND ghl_contact_id IS NOT NULL AND ghl_verification_tag IS NULL",
     clientId, outcome,
@@ -185,28 +224,23 @@ export async function queueGhlTagging(clientId: number, outcome: "verified" | "c
 }
 
 /**
- * Queue removal of a group's leads from the console. Invalid: tag the GHL contact "email invalid", or delete it.
- * Catch-all: only the delete option exists (keeping them is what the tag is for). Leads already in Instantly are left alone.
+ * Queue deleting a group's contacts from the portal (unable-to-verify or invalid only). Leads already in Instantly
+ * are left alone. The lead stays in the console as 'removed' so it still appears in the lists and exports.
  */
-export async function queueRemoval(clientId: number, outcome: "invalid" | "catch_all", deleteInGhl: boolean): Promise<number> {
-  if (outcome === "catch_all" && !deleteInGhl) return 0;
-  return (await run(
-    `UPDATE leads SET ghl_verification_tag = ? WHERE client_id = ? AND verification = ?
-     AND pushed_at IS NULL AND instantly_lead_id IS NULL AND (ghl_verification_tag IS NULL OR ghl_verification_tag = 'done')`,
-    deleteInGhl ? "queued_delete" : "queued_remove", clientId, outcome,
-  )).changes;
+export async function queueDeletion(clientId: number, outcome: "invalid" | "catch_all"): Promise<number> {
+  return (await run(`UPDATE leads SET ghl_verification_tag = 'queued_delete' WHERE client_id = ? AND verification = ? AND ${DELETABLE}`, clientId, outcome)).changes;
 }
 
 export async function runVerificationActions() {
   await withLock("verify_actions", 10 * 60_000, actAll);
 }
 
-type Pick = { id: number; client_id: number; email: string; verification: Outcome; ghl_contact_id: string | null; ghl_verification_tag: string };
+type Job = { id: number; client_id: number; email: string; verification: Outcome; ghl_contact_id: string | null; ghl_verification_tag: string };
 
 async function actAll() {
   const deadline = Date.now() + BUDGET_MS;
   const stopped = new Set<number>();
-  const tally = new Map<number, { tagged: number; removed: number; deleted: number }>();
+  const tally = new Map<number, { tagged: Record<Outcome, number>; deleted: number }>();
   const creds = new Map<number, NonNullable<ReturnType<typeof ghlCreds>> | null>();
   const credsFor = async (clientId: number) => {
     if (!creds.has(clientId)) creds.set(clientId, ghlCreds(await requireClient(clientId)));
@@ -215,7 +249,7 @@ async function actAll() {
 
   while (Date.now() < deadline) {
     const skip = stopped.size ? `AND client_id NOT IN (${[...stopped].join(",")})` : "";
-    const batch = await all<Pick>(
+    const batch = await all<Job>(
       `SELECT id, client_id, email, verification, ghl_contact_id, ghl_verification_tag FROM leads WHERE ghl_verification_tag LIKE 'queued%' ${skip} ORDER BY id LIMIT ?`,
       CONCURRENCY,
     );
@@ -224,56 +258,65 @@ async function actAll() {
     const results = await Promise.allSettled(batch.map(async (l) => actOnLead(l, await credsFor(l.client_id))));
     for (const [i, r] of results.entries()) {
       const lead = batch[i];
-      const t = tally.get(lead.client_id) ?? { tagged: 0, removed: 0, deleted: 0 };
+      const t = tally.get(lead.client_id) ?? { tagged: { verified: 0, catch_all: 0, invalid: 0 }, deleted: 0 };
       tally.set(lead.client_id, t);
       if (r.status === "fulfilled") {
-        t[r.value]++;
+        if (r.value === "tagged") t.tagged[lead.verification]++;
+        else t.deleted++;
         continue;
       }
       const e = r.reason as Error;
       const status = e instanceof GhlError ? e.status : 0;
-      if (status === 401 || status === 403) {
+      if (status === 404 && lead.ghl_verification_tag === "queued_delete") {
+        await markDeleted(lead); // already gone from the portal
+        t.deleted++;
+      } else if (status === 401 || status === 403) {
         if (stopped.has(lead.client_id)) continue;
         stopped.add(lead.client_id);
         await run("UPDATE leads SET ghl_verification_tag = NULL WHERE client_id = ? AND ghl_verification_tag LIKE 'queued%'", lead.client_id);
-        await setSetting(`verify_actions_error_${lead.client_id}`, `GHL refused (${e.message}). Check the GHL token in Settings, then try again.`);
-        await logActivity(lead.client_id, "error", `GHL tagging stopped: ${e.message}`);
+        await setSetting(`verify_actions_error_${lead.client_id}`, `The ${PORTAL} refused the change (${e.message}). Check the portal token in Settings, then try again.`);
+        await logActivity(lead.client_id, "error", `${PORTAL} updates stopped: ${e.message}`);
       } else {
         await run("UPDATE leads SET ghl_verification_tag = NULL WHERE id = ?", lead.id);
-        await logActivity(lead.client_id, "error", `Couldn't update ${lead.email} in GHL: ${e.message}`);
+        await logActivity(lead.client_id, "error", `Couldn't update ${lead.email} in the ${PORTAL}: ${e.message}`);
       }
     }
     if (results.every((r) => r.status === "rejected")) break;
   }
 
   for (const [clientId, t] of tally) {
-    if (!t.tagged && !t.removed && !t.deleted) continue;
-    await run("DELETE FROM settings WHERE key = ?", `verify_actions_error_${clientId}`);
     const parts = [
-      t.tagged ? `tagged ${t.tagged} contacts in GHL` : "",
-      t.removed ? `removed ${t.removed} invalid leads (tagged "${GHL_TAGS.invalid}" in GHL)` : "",
-      t.deleted ? `removed ${t.deleted} invalid leads and deleted their GHL contacts` : "",
+      ...OUTCOMES.filter((o) => t.tagged[o]).map((o) => `tagged ${t.tagged[o]} contacts "${GHL_TAGS[o]}"`),
+      t.deleted ? `deleted ${t.deleted} contacts` : "",
     ].filter(Boolean);
-    await logActivity(clientId, "verify", `Email verification follow-up: ${parts.join(", ")}`);
+    if (!parts.length) continue;
+    await run("DELETE FROM settings WHERE key = ?", `verify_actions_error_${clientId}`);
+    await logActivity(clientId, "verify", `${PORTAL}: ${parts.join(", ")}`);
   }
 }
 
-async function actOnLead(l: Pick, creds: NonNullable<ReturnType<typeof ghlCreds>> | null): Promise<"tagged" | "removed" | "deleted"> {
-  if (l.ghl_verification_tag === "queued_tag") {
-    if (creds && l.ghl_contact_id) await addContactTags(creds, l.ghl_contact_id, [GHL_TAGS[l.verification]]);
-    await run("UPDATE leads SET ghl_verification_tag = 'done' WHERE id = ?", l.id);
-    return "tagged";
+async function markDeleted(l: Job) {
+  await tx(async () => {
+    if (l.ghl_contact_id) await run("DELETE FROM ghl_contacts WHERE client_id = ? AND contact_id = ?", l.client_id, l.ghl_contact_id);
+    await run(
+      `UPDATE leads SET stage = 'removed', stage_message = ?, ghl_contact_id = NULL, ghl_verification_tag = 'deleted' WHERE id = ?`,
+      `Deleted from the ${PORTAL} (email ${OUTCOME_LABEL[l.verification].toLowerCase()})`, l.id,
+    );
+    await run("UPDATE drafts SET status = 'rejected', reviewed_at = datetime('now') WHERE lead_id = ? AND status IN ('pending', 'approved')", l.id);
+  });
+}
+
+async function actOnLead(l: Job, creds: NonNullable<ReturnType<typeof ghlCreds>> | null): Promise<"tagged" | "deleted"> {
+  if (!creds || !l.ghl_contact_id) {
+    await run("UPDATE leads SET ghl_verification_tag = NULL WHERE id = ?", l.id);
+    throw new Error(`not linked to a ${PORTAL} contact`);
   }
   if (l.ghl_verification_tag === "queued_delete") {
-    if (creds && l.ghl_contact_id) {
-      await deleteContact(creds, l.ghl_contact_id);
-      await run("DELETE FROM ghl_contacts WHERE client_id = ? AND contact_id = ?", l.client_id, l.ghl_contact_id);
-    }
-    await run("DELETE FROM leads WHERE id = ?", l.id); // drafts go with it (ON DELETE CASCADE)
+    await deleteContact(creds, l.ghl_contact_id);
+    await markDeleted(l);
     return "deleted";
   }
-  // queued_remove
-  if (creds && l.ghl_contact_id) await addContactTags(creds, l.ghl_contact_id, [GHL_TAGS.invalid]);
-  await run("DELETE FROM leads WHERE id = ?", l.id);
-  return "removed";
+  await addContactTags(creds, l.ghl_contact_id, [GHL_TAGS[l.verification]]);
+  await run("UPDATE leads SET ghl_verification_tag = 'done' WHERE id = ?", l.id);
+  return "tagged";
 }

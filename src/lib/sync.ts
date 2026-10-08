@@ -345,6 +345,6 @@ async function syncEveryClient() {
     await setSetting("last_sync_all", new Date().toISOString());
     await runWriter(); // pick up any drafting left over from a restart
     await runVerifier(); // and any email checks still queued or pending
-    await runVerificationActions(); // and GHL tagging / removals queued from the Verification page
+    await runVerificationActions(); // and Nexus Portal tagging / deletions queued from the Verification page
   }
 }

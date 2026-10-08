@@ -36,7 +36,7 @@ export async function pushApproved(campaignId: number): Promise<{ pushed: number
       try {
         lead.ghl_contact_id = await linkLead(client, lead);
       } catch (e) {
-        await run("UPDATE leads SET stage_message = ? WHERE id = ?", `Not sent: couldn't add to GHL (${(e as Error).message})`, lead.id);
+        await run("UPDATE leads SET stage_message = ? WHERE id = ?", `Not sent: couldn't add to Nexus Portal (${(e as Error).message})`, lead.id);
         continue;
       }
     }

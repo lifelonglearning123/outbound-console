@@ -9,7 +9,7 @@ export function Funnel({ data }: { data: FunnelData }) {
     { label: "Opened", value: data.opened, hint: "unique opens" },
     { label: "Replied", value: data.replied, hint: "unique replies" },
     { label: "Interested", value: data.interested, hint: "tagged interested" },
-    { label: "In GHL", value: data.inGhl, hint: "sent to the client's CRM" },
+    { label: "In Nexus Portal", value: data.inGhl, hint: "sent to the client's CRM" },
   ];
   const max = Math.max(1, ...stages.map((s) => s.value));
 

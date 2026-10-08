@@ -76,7 +76,7 @@ export default async function InboxPage({ searchParams }: PageProps<"/inbox">) {
     <div className="flex flex-col gap-4">
       <header>
         <h1 className="text-2xl font-semibold tracking-tight">Inbox</h1>
-        <p className="text-sm text-muted">Replies from every client, tagged by AI. Interested replies go to the client&apos;s GHL automatically.</p>
+        <p className="text-sm text-muted">Replies from every client, tagged by AI. Interested replies go to the client&apos;s Nexus Portal automatically.</p>
       </header>
       <div className="flex flex-wrap items-center gap-1.5">
         {FILTERS.map((f) => (
@@ -107,7 +107,7 @@ export default async function InboxPage({ searchParams }: PageProps<"/inbox">) {
                   <div className="truncate text-xs text-muted">{m.client_name}{m.company ? ` · ${m.company}` : ""}</div>
                   <div className="mt-0.5 flex items-center gap-2">
                     {m.interest && <span className={`rounded px-1.5 text-[11px] ${TAG_STYLE[m.interest] ?? ""}`}>{INTEREST_LABELS[m.interest]}</span>}
-                    {m.ghl_pushed_at && <span className="text-[11px] text-go">in GHL</span>}
+                    {m.ghl_pushed_at && <span className="text-[11px] text-go">in Nexus Portal</span>}
                     <span className="truncate text-xs text-muted">{m.body_text?.slice(0, 80)}</span>
                   </div>
                 </Link>

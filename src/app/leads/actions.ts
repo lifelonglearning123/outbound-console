@@ -12,7 +12,7 @@ import { runWriter, rewriteStep } from "@/lib/writer";
 import { pushApproved } from "@/lib/push";
 import { linkPendingLeads } from "@/lib/ghlsync";
 import { queueVerification, runVerifier } from "@/lib/verify";
-import { queueGhlTagging, queueRemoval, runVerificationActions, writeVerificationSummary, GHL_TAGS } from "@/lib/verifyReport";
+import { queueTagging, queueDeletion, runVerificationActions, writeVerificationSummary, GHL_TAGS, OUTCOME_LABEL, PORTAL, type Outcome } from "@/lib/verifyReport";
 
 /** Add one lead typed in by hand, optionally sending it straight to the AI writer. */
 export async function addManualLead(
@@ -25,7 +25,7 @@ export async function addManualLead(
   if ((await clientOfCampaign(campaignId)) !== clientId) throw new Error("Campaign not found");
   const c = await requireCampaign(campaignId);
   const r = await importLeads(clientId, campaignId, "manual", "typed in", [lead]);
-  after(async () => linkPendingLeads(await requireClient(clientId))); // GHL is the source of truth: add the contact there
+  after(async () => linkPendingLeads(await requireClient(clientId))); // Nexus Portal is the source of truth: add the contact there
   if (writeNow && (r.added || r.updated)) {
     await run("UPDATE leads SET stage = 'drafting' WHERE client_id = ? AND email = ? AND stage = 'new'", clientId, lead.email.trim().toLowerCase());
     await logActivity(clientId, "write", `Writing emails for ${lead.email} in "${c.name}"`);
@@ -40,7 +40,7 @@ export async function importCsvLeads(clientId: number, campaignId: number, fileN
   if ((await clientOfCampaign(campaignId)) !== clientId) throw new Error("Campaign not found");
   await requireCampaign(campaignId);
   const r = await importLeads(clientId, campaignId, "csv", fileName, leads);
-  after(async () => linkPendingLeads(await requireClient(clientId))); // GHL is the source of truth: add the contacts there
+  after(async () => linkPendingLeads(await requireClient(clientId))); // Nexus Portal is the source of truth: add the contacts there
   revalidatePath("/", "layout");
   return r;
 }
@@ -48,7 +48,7 @@ export async function importCsvLeads(clientId: number, campaignId: number, fileN
 export async function ghlTags(clientId: number): Promise<{ tags: string[]; error?: string }> {
   await requireClientAccess(clientId);
   const c = await requireClient(clientId);
-  if (!c.ghl_location_id || !c.ghl_token) return { tags: [], error: "Add GHL location ID and token in Settings first." };
+  if (!c.ghl_location_id || !c.ghl_token) return { tags: [], error: "Add Nexus Portal location ID and token in Settings first." };
   try {
     return { tags: await listTags({ locationId: c.ghl_location_id, token: c.ghl_token }) };
   } catch (e) {
@@ -61,7 +61,7 @@ export async function importGhlLeads(clientId: number, campaignId: number, tag: 
   if ((await clientOfCampaign(campaignId)) !== clientId) throw new Error("Campaign not found");
   const c = await requireClient(clientId);
   await requireCampaign(campaignId);
-  if (!c.ghl_location_id || !c.ghl_token) return { added: 0, updated: 0, skippedInvalid: 0, skippedExisting: 0, error: "GHL not set up" };
+  if (!c.ghl_location_id || !c.ghl_token) return { added: 0, updated: 0, skippedInvalid: 0, skippedExisting: 0, error: "Nexus Portal not set up" };
   try {
     const contacts = await contactsWithTag({ locationId: c.ghl_location_id, token: c.ghl_token }, tag);
     const leads: LeadFields[] = contacts.map((ct) => ({
@@ -98,27 +98,23 @@ export async function verifyLeads(campaignId: number) {
   revalidatePath("/", "layout");
 }
 
-/** Tag every verified or catch-all lead's GHL contact. Runs after the response. */
-export async function tagVerificationInGhl(clientId: number, outcome: "verified" | "catch_all") {
+/** Tag every contact in one verification group in the Nexus Portal. Runs after the response. */
+export async function tagVerificationGroup(clientId: number, outcome: Outcome) {
   await requireClientAccess(clientId);
-  const n = await queueGhlTagging(clientId, outcome);
+  const n = await queueTagging(clientId, outcome);
   if (n) {
-    await logActivity(clientId, "verify", `Tagging ${n} contacts "${GHL_TAGS[outcome]}" in GHL`);
+    await logActivity(clientId, "verify", `Tagging ${n} contacts "${GHL_TAGS[outcome]}" in the ${PORTAL}`);
     after(runVerificationActions);
   }
   revalidatePath("/", "layout");
 }
 
-/**
- * Remove a group's leads from the console. Invalid: tag them in GHL, or delete the GHL contacts as well.
- * Catch-all: delete the GHL contacts as well. Runs after the response.
- */
-export async function removeVerifiedGroup(clientId: number, outcome: "invalid" | "catch_all", deleteInGhl: boolean) {
+/** Delete every unable-to-verify or invalid contact from the Nexus Portal (not ones already in Instantly). Runs after the response. */
+export async function deleteVerificationGroup(clientId: number, outcome: "invalid" | "catch_all") {
   await requireClientAccess(clientId);
-  const n = await queueRemoval(clientId, outcome, deleteInGhl);
+  const n = await queueDeletion(clientId, outcome);
   if (n) {
-    const what = outcome === "invalid" ? "invalid" : "catch-all";
-    await logActivity(clientId, "verify", deleteInGhl ? `Removing ${n} ${what} leads and deleting their GHL contacts` : `Removing ${n} ${what} leads (tagging them "${GHL_TAGS.invalid}" in GHL)`);
+    await logActivity(clientId, "verify", `Deleting ${n} ${OUTCOME_LABEL[outcome].toLowerCase()} contacts from the ${PORTAL}`);
     after(runVerificationActions);
   }
   revalidatePath("/", "layout");

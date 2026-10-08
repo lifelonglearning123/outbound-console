@@ -56,7 +56,7 @@ export async function pushToGhl(emailId: string): Promise<string> {
   );
   if (!e) throw new Error("Email not found");
   const client = await requireClient(e.client_id);
-  if (!client.ghl_location_id || !client.ghl_token) throw new Error("GHL not set up for this client");
+  if (!client.ghl_location_id || !client.ghl_token) throw new Error("Nexus Portal not set up for this client");
   const creds = { locationId: client.ghl_location_id, token: client.ghl_token };
   const lead = e.lead_id
     ? await get<{ first_name: string | null; last_name: string | null; company: string | null; phone: string | null; ghl_contact_id: string | null }>(
@@ -138,9 +138,9 @@ export async function applyInterest(emailId: string, interest: string, reason: s
       const lead = e.lead_id ? await get<{ ghl_contact_id: string | null }>("SELECT ghl_contact_id FROM leads WHERE id = ?", e.lead_id) : undefined;
       const contactId = lead?.ghl_contact_id ?? (await upsertContact(creds, { email: e.lead_email }));
       await setEmailDnd(creds, contactId, "Asked to be removed (reply to a cold email)");
-      await logActivity(e.client_id, "unsubscribe", `${e.lead_email}: email Do-Not-Disturb set in GHL`);
+      await logActivity(e.client_id, "unsubscribe", `${e.lead_email}: email Do-Not-Disturb set in Nexus Portal`);
     } catch (err) {
-      await logActivity(e.client_id, "error", `Couldn't set Do-Not-Disturb in GHL for ${e.lead_email}: ${(err as Error).message}`);
+      await logActivity(e.client_id, "error", `Couldn't set Do-Not-Disturb in Nexus Portal for ${e.lead_email}: ${(err as Error).message}`);
     }
   }
   // The first sync imports the workspace's whole history; only replies that arrive after the client
@@ -150,8 +150,8 @@ export async function applyInterest(emailId: string, interest: string, reason: s
     try {
       await pushToGhl(emailId);
     } catch (err) {
-      await run("UPDATE emails SET ghl_message = ? WHERE id = ?", `GHL failed: ${(err as Error).message}`, emailId);
-      await logActivity(e.client_id, "error", `GHL push failed for ${e.lead_email}: ${(err as Error).message}`);
+      await run("UPDATE emails SET ghl_message = ? WHERE id = ?", `Nexus Portal failed: ${(err as Error).message}`, emailId);
+      await logActivity(e.client_id, "error", `Nexus Portal push failed for ${e.lead_email}: ${(err as Error).message}`);
     }
   }
   if (source === "manual") await logActivity(e.client_id, "tag", `${e.lead_email} tagged ${INTEREST_LABELS[interest] ?? interest}`);

@@ -21,13 +21,13 @@ import { instantly, InstantlyError, type EmailVerification } from "./instantly";
 const CONCURRENCY = 5;
 const BUDGET_MS = 240_000; // under the 300s function limit, leaving room for the response
 const POLL_AFTER_MS = 15_000; // how long to leave a pending check before asking Instantly again
-const CATCH_ALL_FLAG = "Catch-all domain: Instantly couldn't confirm this address exists";
+const CATCH_ALL_FLAG = "Unable to verify: the company accepts every address, so Instantly couldn't confirm this one exists";
 
 export const VERIFICATION_LABEL: Record<string, string> = {
   queued: "Checking…",
   pending: "Checking…",
   verified: "Verified",
-  catch_all: "Catch-all",
+  catch_all: "Unable to verify",
   invalid: "Invalid",
 };
 
@@ -131,7 +131,7 @@ async function verifyAll() {
     await logActivity(
       clientId,
       "verify",
-      `Checked ${t.verified + t.catch_all + t.invalid} email addresses: ${t.verified} verified, ${t.catch_all} catch-all, ${t.invalid} invalid (rejected)`,
+      `Checked ${t.verified + t.catch_all + t.invalid} email addresses: ${t.verified} verified, ${t.catch_all} unable to verify, ${t.invalid} invalid (rejected)`,
     );
   }
 }

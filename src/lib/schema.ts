@@ -21,7 +21,7 @@ CREATE TABLE IF NOT EXISTS clients (
   ghl_stage_id TEXT,
   ghl_meeting_calendars TEXT,           -- JSON array of calendar ids; empty = every calendar
   ghl_meeting_stage TEXT,               -- "pipelineId:stageId" that counts as a booked meeting
-  ghl_log_since TEXT,                   -- emails from this time on are copied into GHL conversations
+  ghl_log_since TEXT,                   -- emails from this time on are copied into Nexus Portal conversations
   brief TEXT NOT NULL DEFAULT '{}',
   archived INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL DEFAULT ${NOW_TEXT}
@@ -81,7 +81,7 @@ CREATE TABLE IF NOT EXISTS leads (
 -- Instantly email verification: queued | pending | verified | catch_all | invalid (null = never checked).
 ALTER TABLE leads ADD COLUMN IF NOT EXISTS verification TEXT;
 ALTER TABLE leads ADD COLUMN IF NOT EXISTS verified_at TEXT;
--- GHL follow-up to verification: queued_tag | queued_remove | queued_delete | done (null = nothing done yet).
+-- Nexus Portal (GHL) follow-up to verification: queued_tag | queued_delete | done | deleted (null = nothing done yet).
 ALTER TABLE leads ADD COLUMN IF NOT EXISTS ghl_verification_tag TEXT;
 
 CREATE TABLE IF NOT EXISTS drafts (

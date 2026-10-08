@@ -25,7 +25,7 @@ type Props = {
   /** Steps already live in Instantly with leads in them; the hold can then only move via "Release hold". */
   lockedLive: number;
   ghlTag: string | null;
-  ghlTags: string[] | null; // null = client has no GHL connection
+  ghlTags: string[] | null; // null = client has no Nexus Portal connection
 };
 
 export function CampaignForm(p: Props) {
@@ -167,17 +167,17 @@ export function CampaignForm(p: Props) {
       {p.managed && (
         <section className="card flex flex-col gap-3 p-5">
           <div>
-            <h2 className="font-semibold">Contacts from GHL</h2>
+            <h2 className="font-semibold">Contacts from Nexus Portal</h2>
             <p className="text-sm text-muted">
-              Link this campaign to a GHL tag. Every 30 minutes (or when you click Sync now), contacts who have the tag (and aren&apos;t on Do-Not-Disturb) join the
+              Link this campaign to a Nexus Portal tag. Every 30 minutes (or when you click Sync now), contacts who have the tag (and aren&apos;t on Do-Not-Disturb) join the
               campaign, their emails are written, and they wait in Approvals.
             </p>
           </div>
           {p.ghlTags === null ? (
-            <p className="text-sm text-muted">Connect this client&apos;s GHL in Settings first.</p>
+            <p className="text-sm text-muted">Connect this client&apos;s Nexus Portal in Settings first.</p>
           ) : (
             <div>
-              <label className="label" htmlFor="ghl_tag">GHL tag</label>
+              <label className="label" htmlFor="ghl_tag">Nexus Portal tag</label>
               <input id="ghl_tag" name="ghl_tag" list="ghl-tags" defaultValue={p.ghlTag ?? ""} className="field" placeholder="e.g. cold-email-q4 (leave blank to add leads by hand)" />
               <datalist id="ghl-tags">{p.ghlTags.map((t) => <option key={t} value={t} />)}</datalist>
             </div>

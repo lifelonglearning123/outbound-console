@@ -1,9 +1,12 @@
 import { requireClientAccess } from "@/lib/auth";
 import Link from "next/link";
 import { after } from "next/server";
-import { verificationReport, plainReading, runVerificationActions, GHL_TAGS } from "@/lib/verifyReport";
+import {
+  verificationReport, plainReading, runVerificationActions, groupLeads, portalStatus,
+  GHL_TAGS, OUTCOME_LABEL, PORTAL, type Outcome, type GroupLead,
+} from "@/lib/verifyReport";
 import { runVerifier } from "@/lib/verify";
-import { removeVerifiedGroup, summariseVerification, tagVerificationInGhl } from "@/app/leads/actions";
+import { deleteVerificationGroup, summariseVerification, tagVerificationGroup } from "@/app/leads/actions";
 import { AutoRefresh } from "@/components/AutoRefresh";
 import { ConfirmButton } from "@/components/ConfirmButton";
 import { ago } from "@/lib/format";
@@ -21,20 +24,32 @@ function Section({ title, note, children, className = "" }: { title: string; not
 }
 
 const n = (v: number) => v.toLocaleString("en-GB");
+const TONE: Record<Outcome, string> = { verified: "text-go", catch_all: "text-wait", invalid: "text-bad" };
+const MEANING: Record<Outcome, string> = {
+  verified: "The mailbox exists. Safe to approve and send.",
+  catch_all:
+    "The company's mail server accepts every address, so no checker can confirm this person still works there. Their first email carries a reviewer flag, so “approve all unflagged” leaves them out; approve them in small daily batches after the verified group.",
+  invalid: "The mailbox doesn't exist and would bounce. These leads are already rejected and won't be emailed.",
+};
 
 export default async function VerificationPage({ params }: PageProps<"/clients/[id]/verification">) {
   const clientId = Number((await params).id);
   await requireClientAccess(clientId); // only admins and this client's own logins
   const r = await verificationReport(clientId);
-  const busy = r.checking > 0 || r.ghl.queued > 0;
+  const busy = r.checking > 0 || r.portal.queued > 0;
   if (r.checking > 0) after(runVerifier);
-  if (r.ghl.queued > 0) after(runVerificationActions);
+  if (r.portal.queued > 0) after(runVerificationActions);
   const share = (v: number) => (r.checked ? `${Math.round((v / r.checked) * 100)}% of checked` : "");
+  const lists = {
+    verified: await groupLeads(clientId, "verified"),
+    catch_all: await groupLeads(clientId, "catch_all"),
+    invalid: await groupLeads(clientId, "invalid"),
+  };
 
   const tiles = [
-    { label: "Verified", value: r.counts.verified, sub: share(r.counts.verified), tone: "text-go" },
-    { label: "Catch-all", value: r.counts.catch_all, sub: share(r.counts.catch_all), tone: "text-wait" },
-    { label: "Invalid", value: r.counts.invalid, sub: share(r.counts.invalid), tone: "text-bad" },
+    { label: "Verified", value: r.counts.verified, sub: share(r.counts.verified), tone: TONE.verified },
+    { label: "Unable to verify", value: r.counts.catch_all, sub: share(r.counts.catch_all), tone: TONE.catch_all },
+    { label: "Invalid", value: r.counts.invalid, sub: share(r.counts.invalid), tone: TONE.invalid },
     { label: "Not checked", value: r.unchecked, sub: r.pushedUnchecked ? `+ ${n(r.pushedUnchecked)} already in Instantly` : "", tone: "text-muted" },
   ];
 
@@ -65,7 +80,7 @@ export default async function VerificationPage({ params }: PageProps<"/clients/[
             {plainReading(r).map((p, i) => <p key={i}>{p}</p>)}
           </div>
         </Section>
-        <Section title="AI summary" note={r.summary ? `Written ${ago(r.summary.at)}` : "A short read of the results and the order to act in, written by the model from the numbers on this page."}>
+        <Section title="AI summary" note={r.summary ? `Written ${ago(r.summary.at)}` : "A short read of the results and the order to act in, written by the AI from the numbers on this page."}>
           {r.summary ? (
             <div className="flex flex-col gap-2 text-sm">{r.summary.text.split(/\n{2,}/).map((p, i) => <p key={i}>{p.trim()}</p>)}</div>
           ) : (
@@ -80,70 +95,29 @@ export default async function VerificationPage({ params }: PageProps<"/clients/[
         </Section>
       </div>
 
-      <Section title="What to do with each group" note={r.ghl.connected ? "Each action updates the contact in GHL, the source of truth, so the result is visible there too." : "GHL isn't connected for this client, so only the console is updated."}>
-        {r.ghl.error && <p className="text-sm text-bad">{r.ghl.error}</p>}
-        {r.ghl.queued > 0 && <p className="text-sm text-info">Updating {n(r.ghl.queued)} contacts in GHL…</p>}
+      <Section
+        title={`Tags in the ${PORTAL}`}
+        note={
+          r.portal.connected
+            ? `Each group gets one tag on its contact in the ${PORTAL}, so you can filter, build lists or run workflows on it there. Tagging never removes anything.`
+            : `The ${PORTAL} isn't connected for this client, so contacts can't be tagged yet.`
+        }
+      >
+        {r.portal.error && <p className="text-sm text-bad">{r.portal.error}</p>}
+        {r.portal.queued > 0 && <p className="text-sm text-info">Updating {n(r.portal.queued)} contacts in the {PORTAL}… this page updates on its own.</p>}
         <div className="grid grid-cols-3 gap-4">
-          <div className="flex flex-col gap-2 rounded-md border border-line p-4">
-            <div className="font-medium text-go">Verified · {n(r.counts.verified)}</div>
-            <p className="text-sm text-muted">Safe to send. Tag them in GHL as &ldquo;{GHL_TAGS.verified}&rdquo; so the clean list can be reused for any future campaign.</p>
-            <p className="text-xs text-muted">Tagged so far: <span className="num">{n(r.ghl.tagged.verified)}</span></p>
-            {r.ghl.todo.verified > 0 && (
-              <form action={tagVerificationInGhl.bind(null, clientId, "verified")}>
-                <button className="btn-go">Tag {n(r.ghl.todo.verified)} in GHL</button>
-              </form>
-            )}
-          </div>
-          <div className="flex flex-col gap-2 rounded-md border border-line p-4">
-            <div className="font-medium text-wait">Catch-all · {n(r.counts.catch_all)}</div>
-            <p className="text-sm text-muted">
-              Can&rsquo;t be confirmed. Their first email carries a reviewer flag, so &ldquo;approve all unflagged&rdquo; leaves them out; approve them in small daily batches after the verified group. Tag them &ldquo;{GHL_TAGS.catch_all}&rdquo; in GHL.
-            </p>
-            <p className="text-xs text-muted">Tagged so far: <span className="num">{n(r.ghl.tagged.catch_all)}</span></p>
-            {r.ghl.todo.catch_all > 0 && (
-              <form action={tagVerificationInGhl.bind(null, clientId, "catch_all")}>
-                <button className="btn">Tag {n(r.ghl.todo.catch_all)} in GHL</button>
-              </form>
-            )}
-            {r.catchAllDomains.length > 0 && (
-              <div className="text-xs text-muted">
-                Most common: {r.catchAllDomains.slice(0, 8).map((d) => `${d.domain} (${d.n})`).join(", ")}
-              </div>
-            )}
-            {r.ghl.connected && r.ghl.catchAllRemovable > 0 && (
-              <form action={removeVerifiedGroup.bind(null, clientId, "catch_all", true)}>
-                <ConfirmButton
-                  className="btn text-bad"
-                  message={`Delete ${n(r.ghl.catchAllRemovable)} catch-all contacts from GHL and remove them from the console? This can't be undone.`}
-                >
-                  Remove {n(r.ghl.catchAllRemovable)} and delete from GHL
-                </ConfirmButton>
-              </form>
-            )}
-          </div>
-          <div className="flex flex-col gap-2 rounded-md border border-line p-4">
-            <div className="font-medium text-bad">Invalid · {n(r.counts.invalid)}</div>
-            <p className="text-sm text-muted">Would bounce. They&rsquo;re already rejected here. Remove them from the console and mark the GHL contact &ldquo;{GHL_TAGS.invalid}&rdquo;, or delete the contact from GHL as well.</p>
-            {r.ghl.todo.invalid > 0 ? (
-              <div className="flex flex-col gap-2">
-                <form action={removeVerifiedGroup.bind(null, clientId, "invalid", false)}>
-                  <button className="btn">Remove {n(r.ghl.todo.invalid)} and tag in GHL</button>
-                </form>
-                {r.ghl.connected && (
-                  <form action={removeVerifiedGroup.bind(null, clientId, "invalid", true)}>
-                    <ConfirmButton
-                      className="btn text-bad"
-                      message={`Delete ${n(r.ghl.todo.invalid)} contacts from GHL as well as the console? This can't be undone.`}
-                    >
-                      Remove {n(r.ghl.todo.invalid)} and delete from GHL
-                    </ConfirmButton>
-                  </form>
-                )}
-              </div>
-            ) : (
-              <p className="text-xs text-muted">{r.counts.invalid ? "Nothing left to remove." : ""}</p>
-            )}
-          </div>
+          {(["verified", "catch_all", "invalid"] as const).map((o) => (
+            <GroupCard
+              key={o}
+              clientId={clientId}
+              outcome={o}
+              count={r.counts[o]}
+              status={r.portal.groups[o]}
+              connected={r.portal.connected}
+              leads={lists[o]}
+              extra={o === "catch_all" && r.catchAllDomains.length > 0 ? `Most common companies: ${r.catchAllDomains.slice(0, 6).map((d) => `${d.domain} (${d.n})`).join(", ")}` : undefined}
+            />
+          ))}
         </div>
       </Section>
 
@@ -154,7 +128,7 @@ export default async function VerificationPage({ params }: PageProps<"/clients/[
               <tr>
                 <th className="py-1 pr-3 font-medium">Campaign</th>
                 <th className="py-1 pr-3 font-medium">Verified</th>
-                <th className="py-1 pr-3 font-medium">Catch-all</th>
+                <th className="py-1 pr-3 font-medium">Unable to verify</th>
                 <th className="py-1 pr-3 font-medium">Invalid</th>
                 <th className="py-1 pr-3 font-medium">Not checked</th>
               </tr>
@@ -175,6 +149,91 @@ export default async function VerificationPage({ params }: PageProps<"/clients/[
       )}
 
       {r.credits && <p className="text-xs text-muted">Instantly verification credits left: <span className="num">{Number(r.credits).toLocaleString("en-GB")}</span></p>}
+    </div>
+  );
+}
+
+function GroupCard({
+  clientId, outcome, count, status, connected, leads, extra,
+}: {
+  clientId: number;
+  outcome: Outcome;
+  count: number;
+  status: { tagged: number; deleted: number; tagTodo: number; deletable: number };
+  connected: boolean;
+  leads: GroupLead[];
+  extra?: string;
+}) {
+  const tag = GHL_TAGS[outcome];
+  const canDelete = outcome !== "verified";
+  return (
+    <div className="flex flex-col gap-3 rounded-md border border-line p-4">
+      <div>
+        <div className={`font-medium ${TONE[outcome]}`}>{OUTCOME_LABEL[outcome]} · <span className="num">{n(count)}</span></div>
+        <div className="mt-1 inline-flex items-center gap-1.5 rounded border border-line bg-paper px-2 py-0.5 text-xs">
+          <span className="text-muted">{PORTAL} tag</span>
+          <span className="font-medium">{tag}</span>
+        </div>
+      </div>
+      <p className="text-sm text-muted">{MEANING[outcome]}</p>
+      {extra && <p className="text-xs text-muted">{extra}</p>}
+
+      <p className="text-xs text-muted">
+        Tagged <span className="num">{n(status.tagged)}</span>
+        {canDelete && <> · deleted from the {PORTAL} <span className="num">{n(status.deleted)}</span></>}
+      </p>
+
+      {connected && (status.tagTodo > 0 || (canDelete && status.deletable > 0)) && (
+        <div className="flex flex-col gap-2">
+          {status.tagTodo > 0 && (
+            <form action={tagVerificationGroup.bind(null, clientId, outcome)}>
+              <button className={outcome === "verified" ? "btn-go" : "btn"}>Tag {n(status.tagTodo)} as &ldquo;{tag}&rdquo;</button>
+            </form>
+          )}
+          {canDelete && status.deletable > 0 && (
+            <form action={deleteVerificationGroup.bind(null, clientId, outcome)}>
+              <ConfirmButton
+                className="btn text-bad"
+                message={`Delete ${n(status.deletable)} ${OUTCOME_LABEL[outcome].toLowerCase()} contacts from the ${PORTAL}? This can't be undone. They stay listed here for your records.`}
+              >
+                Delete {n(status.deletable)} from the {PORTAL}
+              </ConfirmButton>
+            </form>
+          )}
+        </div>
+      )}
+
+      {leads.length > 0 && (
+        <details>
+          <summary className="cursor-pointer text-sm font-medium">Show the {n(leads.length)} emails</summary>
+          <div className="mt-2 flex flex-col gap-2">
+            <a href={`/clients/${clientId}/verification/export?group=${outcome}`} className="btn self-start text-xs">Export as CSV</a>
+            <div className="max-h-80 overflow-y-auto rounded border border-line">
+              <table className="w-full text-xs">
+                <thead className="sticky top-0 bg-paper text-left text-muted">
+                  <tr>
+                    <th className="px-2 py-1 font-medium">Email</th>
+                    <th className="px-2 py-1 font-medium">{PORTAL}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {leads.map((l) => (
+                    <tr key={l.email} className="border-t border-line">
+                      <td className="px-2 py-1">
+                        <div className="break-all">{l.email}</div>
+                        {(l.company || l.first_name) && (
+                          <div className="text-muted">{[[l.first_name, l.last_name].filter(Boolean).join(" "), l.company].filter(Boolean).join(" · ")}</div>
+                        )}
+                      </td>
+                      <td className="px-2 py-1 text-muted">{portalStatus(l, outcome)}{l.in_instantly ? " · in Instantly" : ""}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </details>
+      )}
     </div>
   );
 }
