@@ -4,7 +4,7 @@
 import { readFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 
-const KEYS = ["DATABASE_URL", "SECRETS_KEY", "AUTH_SECRET", "CRON_SECRET", "SETUP_TOKEN", "ADMIN_EMAIL", "OPENAI_API_KEY", "OPENAI_MODEL"];
+const KEYS = ["DATABASE_URL", "SECRETS_KEY", "AUTH_SECRET", "CRON_SECRET", "SETUP_TOKEN", "ADMIN_EMAIL", "KIMI_API_KEY", "KIMI_MODEL", "OPENAI_API_KEY", "OPENAI_MODEL"];
 const env = Object.fromEntries(
   readFileSync(".env.local", "utf8")
     .split(/\r?\n/)
@@ -13,7 +13,9 @@ const env = Object.fromEntries(
 );
 
 // DATABASE_URL may live only in Vercel (Neon integration); everything else must be in .env.local.
-const missing = KEYS.filter((k) => !env[k] && k !== "DATABASE_URL");
+// One AI provider is enough: Kimi (KIMI_API_KEY) or OpenAI (OPENAI_API_KEY); the model names are optional.
+const optional = new Set(["DATABASE_URL", "KIMI_MODEL", "OPENAI_MODEL", env.KIMI_API_KEY ? "OPENAI_API_KEY" : "KIMI_API_KEY"]);
+const missing = KEYS.filter((k) => !env[k] && !optional.has(k));
 if (missing.length) {
   console.error(`Add these to .env.local first: ${missing.join(", ")}`);
   process.exit(1);

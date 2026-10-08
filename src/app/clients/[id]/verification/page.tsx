@@ -3,7 +3,7 @@ import Link from "next/link";
 import { after } from "next/server";
 import { verificationReport, plainReading, runVerificationActions, GHL_TAGS } from "@/lib/verifyReport";
 import { runVerifier } from "@/lib/verify";
-import { removeInvalidLeads, summariseVerification, tagVerificationInGhl } from "@/app/leads/actions";
+import { removeVerifiedGroup, summariseVerification, tagVerificationInGhl } from "@/app/leads/actions";
 import { AutoRefresh } from "@/components/AutoRefresh";
 import { ConfirmButton } from "@/components/ConfirmButton";
 import { ago } from "@/lib/format";
@@ -110,17 +110,27 @@ export default async function VerificationPage({ params }: PageProps<"/clients/[
                 Most common: {r.catchAllDomains.slice(0, 8).map((d) => `${d.domain} (${d.n})`).join(", ")}
               </div>
             )}
+            {r.ghl.connected && r.ghl.catchAllRemovable > 0 && (
+              <form action={removeVerifiedGroup.bind(null, clientId, "catch_all", true)}>
+                <ConfirmButton
+                  className="btn text-bad"
+                  message={`Delete ${n(r.ghl.catchAllRemovable)} catch-all contacts from GHL and remove them from the console? This can't be undone.`}
+                >
+                  Remove {n(r.ghl.catchAllRemovable)} and delete from GHL
+                </ConfirmButton>
+              </form>
+            )}
           </div>
           <div className="flex flex-col gap-2 rounded-md border border-line p-4">
             <div className="font-medium text-bad">Invalid · {n(r.counts.invalid)}</div>
             <p className="text-sm text-muted">Would bounce. They&rsquo;re already rejected here. Remove them from the console and mark the GHL contact &ldquo;{GHL_TAGS.invalid}&rdquo;, or delete the contact from GHL as well.</p>
             {r.ghl.todo.invalid > 0 ? (
               <div className="flex flex-col gap-2">
-                <form action={removeInvalidLeads.bind(null, clientId, false)}>
+                <form action={removeVerifiedGroup.bind(null, clientId, "invalid", false)}>
                   <button className="btn">Remove {n(r.ghl.todo.invalid)} and tag in GHL</button>
                 </form>
                 {r.ghl.connected && (
-                  <form action={removeInvalidLeads.bind(null, clientId, true)}>
+                  <form action={removeVerifiedGroup.bind(null, clientId, "invalid", true)}>
                     <ConfirmButton
                       className="btn text-bad"
                       message={`Delete ${n(r.ghl.todo.invalid)} contacts from GHL as well as the console? This can't be undone.`}

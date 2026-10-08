@@ -18,7 +18,7 @@ Fruitful is the first client.
 | Hosting | Local only: Next.js + SQLite (`node:sqlite`) on 127.0.0.1:3480. |
 | Sync | Background worker that starts with Windows and polls Instantly (no webhooks). |
 | Scale | 1-5 clients, under 500 emails/day. |
-| AI | OpenAI gpt-5.5. |
+| AI | Kimi (kimi-k2.6) via `KIMI_API_KEY`; OpenAI gpt-5.5 if only `OPENAI_API_KEY` is set. Switched 2026-10-08. |
 
 ## How approval works with Instantly
 

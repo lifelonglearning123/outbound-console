@@ -1,22 +1,14 @@
 import "server-only";
-import OpenAI from "openai";
 import { all, get, run, tx, logActivity, withLock } from "./db";
 import { requireClient, type Brief } from "./clients";
 import { requireCampaign, writeTarget, type Step } from "./campaigns";
 import type { LeadRow } from "./leads";
 import { htmlToText, renderMerge } from "./merge";
 import { refreshFromGhl } from "./ghlsync";
+import { llmJson } from "./llm";
 import { CATCH_ALL_FLAG } from "./verify";
 
-const MODEL = process.env.OPENAI_MODEL || "gpt-5.5";
 const CONCURRENCY = 4;
-
-let openai: OpenAI | null = null;
-function ai(): OpenAI {
-  if (!process.env.OPENAI_API_KEY) throw new Error("OPENAI_API_KEY is not set in .env.local");
-  openai ??= new OpenAI();
-  return openai;
-}
 
 const SCHEMA = {
   type: "object",
@@ -163,16 +155,15 @@ async function writeForLead(leadId: number) {
 
   let out: { emails: { step: number; subject: string; body: string }[]; flags: string[] } = { emails: [], flags: [] };
   if (aiSteps.length) {
-    const res = await ai().responses.create({
-      model: MODEL,
-      reasoning: { effort: "low" },
-      instructions: systemPrompt(client.brief),
-      input:
+    out = await llmJson({
+      system: systemPrompt(client.brief),
+      user:
         `Sequence (${steps.length} emails). Write ONLY step(s) ${aiSteps.join(", ")}.\n${stepsPrompt(steps, known)}` +
         `\n\nLead record:\n${leadRecord(lead)}`,
-      text: { format: { type: "json_schema", name: "cold_sequence", schema: SCHEMA, strict: true } },
+      name: "cold_sequence",
+      schema: SCHEMA,
+      effort: "low",
     });
-    out = JSON.parse(res.output_text);
   }
 
   const sig = signOff(client.brief);
@@ -237,19 +228,18 @@ export async function rewriteStep(draftId: number, guidance: string) {
   const campaign = await requireCampaign(lead.campaign_id!);
   const others = await all<{ step: number; subject: string; body: string }>("SELECT step, subject, body FROM drafts WHERE lead_id = ? AND step != ? ORDER BY step", d.lead_id, d.step);
 
-  const res = await ai().responses.create({
-    model: MODEL,
-    reasoning: { effort: "low" },
-    instructions: systemPrompt(client.brief),
-    input:
+  const out = await llmJson<{ emails: { step: number; subject: string; body: string }[] }>({
+    system: systemPrompt(client.brief),
+    user:
       `Rewrite step ${d.step} only. Step instructions: ${campaign.steps[d.step - 1]?.instructions ?? ""}\n\n` +
       `Reviewer's guidance: ${guidance || "make it better"}\n\n` +
       `Current version:\nSubject: ${d.subject}\n${d.body}\n\nThe other emails in the sequence (for context, do not repeat them):\n` +
       others.map((o) => `Step ${o.step}: ${o.body}`).join("\n---\n") +
       `\n\nLead record:\n${leadRecord(lead)}\n\nReturn emails with exactly one item for step ${d.step}. The body should not include the sign-off.`,
-    text: { format: { type: "json_schema", name: "cold_sequence", schema: SCHEMA, strict: true } },
+    name: "cold_sequence",
+    schema: SCHEMA,
+    effort: "low",
   });
-  const out = JSON.parse(res.output_text) as { emails: { step: number; subject: string; body: string }[] };
   const e = out.emails[0];
   if (!e) throw new Error("Writer returned nothing");
   const sig = signOff(client.brief);

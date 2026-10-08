@@ -1,10 +1,10 @@
 import "server-only";
-import OpenAI from "openai";
 import { all, get, run, logActivity } from "./db";
 import { requireClient } from "./clients";
 import { instantly } from "./instantly";
 import { addNote, createOpportunity, setEmailDnd, upsertContact } from "./ghl";
 import { toDate } from "./format";
+import { llmJson, llmReady } from "./llm";
 
 export const INTEREST_LABELS: Record<string, string> = {
   interested: "Interested",
@@ -35,18 +35,17 @@ const SCHEMA = {
 } as const;
 
 async function classify(subject: string, body: string): Promise<{ interest: string; reason: string }> {
-  if (!process.env.OPENAI_API_KEY) return { interest: "other", reason: "No OpenAI key; not classified" };
-  const res = await new OpenAI().responses.create({
-    model: process.env.OPENAI_MODEL || "gpt-5.5",
-    reasoning: { effort: "low" },
-    instructions:
+  if (!llmReady()) return { interest: "other", reason: "No AI key; not classified" };
+  return llmJson({
+    system:
       "Classify a reply to a cold sales email. interested = wants to talk, asks for info/pricing, suggests a time, or refers to a colleague who should be contacted. " +
       "not_now = open but timing is wrong. not_interested = a no. wrong_person = says they aren't the right contact without pointing to someone. " +
       "unsubscribe = asks to be removed or threatens to report spam. ooo = automatic out-of-office or auto-reply. other = anything else.",
-    input: `Subject: ${subject}\n\n${body.slice(0, 4000)}`,
-    text: { format: { type: "json_schema", name: "reply_interest", schema: SCHEMA, strict: true } },
+    user: `Subject: ${subject}\n\n${body.slice(0, 4000)}`,
+    name: "reply_interest",
+    schema: SCHEMA,
+    effort: "low",
   });
-  return JSON.parse(res.output_text);
 }
 
 /** Send an interested reply to the client's GHL: contact, opportunity (if a stage is set), and a note with the reply. */

@@ -1,9 +1,9 @@
 import "server-only";
-import OpenAI from "openai";
 import { all, get, run, logActivity, getSetting, setSetting, withLock } from "./db";
 import { requireClient } from "./clients";
 import { ghlCreds } from "./ghlsync";
 import { addContactTags, deleteContact, GhlError } from "./ghl";
+import { llmKeyHint, llmLabel, llmReady, llmText } from "./llm";
 
 /**
  * What came out of email verification (verify.ts), what it means, and what to do with each group in GHL:
@@ -35,6 +35,7 @@ export type VerificationReport = {
     tagged: Record<Outcome, number>; // done
     queued: number; // GHL work still to do
     todo: Record<Outcome, number>; // leads the buttons would act on
+    catchAllRemovable: number; // catch-all leads not yet in Instantly, which "delete from GHL" would remove
     error: string | null;
   };
   credits: string | null;
@@ -78,13 +79,14 @@ export async function verificationReport(clientId: number): Promise<Verification
     clientId,
   );
   const tag = (v: Outcome) => tagRows.find((r) => r.v === v);
-  // Invalid leads are removed from the console as part of the action, so "todo" is simply the ones still here.
-  const invalidTodo =
+  const removable = async (v: Outcome) =>
     (await get<{ n: number }>(
-      `SELECT COUNT(*) n FROM leads WHERE client_id = ? AND verification = 'invalid' AND pushed_at IS NULL AND instantly_lead_id IS NULL
+      `SELECT COUNT(*) n FROM leads WHERE client_id = ? AND verification = ? AND pushed_at IS NULL AND instantly_lead_id IS NULL
        AND (ghl_verification_tag IS NULL OR ghl_verification_tag = 'done')`,
-      clientId,
+      clientId, v,
     ))?.n ?? 0;
+  const invalidTodo = await removable("invalid");
+  const catchAllRemovable = await removable("catch_all");
 
   let summary: VerificationReport["summary"] = null;
   try {
@@ -106,6 +108,7 @@ export async function verificationReport(clientId: number): Promise<Verification
       tagged: { verified: tag("verified")?.done ?? 0, catch_all: tag("catch_all")?.done ?? 0, invalid: tag("invalid")?.done ?? 0 },
       queued: tagRows.reduce((a, r) => a + r.queued, 0),
       todo: { verified: tag("verified")?.todo ?? 0, catch_all: tag("catch_all")?.todo ?? 0, invalid: invalidTodo },
+      catchAllRemovable,
       error: (await getSetting(`verify_actions_error_${clientId}`, "")) || null,
     },
     credits: (await getSetting(`verify_credits_${clientId}`, "")) || null,
@@ -136,15 +139,13 @@ export function plainReading(r: VerificationReport): string[] {
 
 // ---------- AI summary ----------
 
-const MODEL = process.env.OPENAI_MODEL || "gpt-5.5";
-
 /** Ask the model for a short account-manager style summary of the verification results. Stored per client. */
 export async function writeVerificationSummary(clientId: number): Promise<void> {
   const client = await requireClient(clientId);
   const r = await verificationReport(clientId);
   await run("DELETE FROM settings WHERE key = ?", `verify_summary_error_${clientId}`);
   try {
-    if (!process.env.OPENAI_API_KEY) throw new Error("OPENAI_API_KEY is not set");
+    if (!llmReady()) throw new Error(`No AI key: set ${llmKeyHint()} in Vercel`);
     const facts = [
       `Client: ${client.name}.`,
       `Leads in the console: ${r.total}. Checked: ${r.checked}. Verified: ${r.counts.verified}. Catch-all: ${r.counts.catch_all}. Invalid: ${r.counts.invalid}.`,
@@ -154,22 +155,22 @@ export async function writeVerificationSummary(clientId: number): Promise<void> 
       `GHL: ${r.ghl.connected ? "connected" : "not connected"}. Tagged so far: ${r.ghl.tagged.verified} verified, ${r.ghl.tagged.catch_all} catch-all, ${r.ghl.tagged.invalid} invalid.`,
       `Available actions in the console: tag verified contacts in GHL "email verified"; tag catch-all contacts "email catch-all"; remove invalid leads from the console and tag the GHL contact "email invalid", or also delete those contacts from GHL.`,
     ].join("\n");
-    const res = await new OpenAI().responses.create({
-      model: MODEL,
-      reasoning: { effort: "low" },
-      instructions:
+    const text = await llmText({
+      system:
         "You are a cold-email deliverability lead writing for the account owner of a small B2B outreach client. British English, plain text, no headings, no bullet lists, no markdown. " +
         "Write three short paragraphs, under 180 words in total: (1) what the check found and what it says about the list quality, with the key percentages; " +
         "(2) what each group means for deliverability (verified = safe; catch-all = unconfirmed, send in small batches after the verified group; invalid = would bounce, already rejected); " +
         "(3) the recommended next actions in order, using only the actions listed. Use only the facts given; never invent numbers.",
-      input: facts,
+      user: facts,
+      effort: "low",
     });
-    const text = res.output_text.trim();
-    if (!text) throw new Error("The model returned nothing");
-    await setSetting(`verify_summary_${clientId}`, JSON.stringify({ text, at: new Date().toISOString() }));
+    await setSetting(`verify_summary_${clientId}`, JSON.stringify({ text, at: new Date().toISOString(), model: llmLabel() }));
   } catch (e) {
     const msg = (e as Error).message;
-    await setSetting(`verify_summary_error_${clientId}`, /401|Incorrect API key/i.test(msg) ? "OpenAI rejected the API key. Fix OPENAI_API_KEY in Vercel, then try again." : msg);
+    await setSetting(
+      `verify_summary_error_${clientId}`,
+      /401|Incorrect API key|invalid.*key|authentication/i.test(msg) ? `${llmLabel()} rejected the API key. Fix ${llmKeyHint()} in Vercel, then try again.` : msg,
+    );
   }
 }
 
@@ -183,12 +184,16 @@ export async function queueGhlTagging(clientId: number, outcome: "verified" | "c
   )).changes;
 }
 
-/** Queue removal of invalid leads: tag the GHL contact "email invalid" (or delete it) and drop the lead from the console. */
-export async function queueInvalidRemoval(clientId: number, deleteInGhl: boolean): Promise<number> {
+/**
+ * Queue removal of a group's leads from the console. Invalid: tag the GHL contact "email invalid", or delete it.
+ * Catch-all: only the delete option exists (keeping them is what the tag is for). Leads already in Instantly are left alone.
+ */
+export async function queueRemoval(clientId: number, outcome: "invalid" | "catch_all", deleteInGhl: boolean): Promise<number> {
+  if (outcome === "catch_all" && !deleteInGhl) return 0;
   return (await run(
-    `UPDATE leads SET ghl_verification_tag = ? WHERE client_id = ? AND verification = 'invalid'
+    `UPDATE leads SET ghl_verification_tag = ? WHERE client_id = ? AND verification = ?
      AND pushed_at IS NULL AND instantly_lead_id IS NULL AND (ghl_verification_tag IS NULL OR ghl_verification_tag = 'done')`,
-    deleteInGhl ? "queued_delete" : "queued_remove", clientId,
+    deleteInGhl ? "queued_delete" : "queued_remove", clientId, outcome,
   )).changes;
 }
 
