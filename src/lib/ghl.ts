@@ -247,6 +247,16 @@ export async function logEmail(
 }
 
 /** Turn on email Do-Not-Disturb, so no GHL automation emails this contact either. */
+/** Add tags to a contact (existing tags are kept). */
+export async function addContactTags(creds: GhlCreds, contactId: string, tags: string[]) {
+  await ghl(creds, `/contacts/${contactId}/tags`, { method: "POST", body: JSON.stringify({ tags }) });
+}
+
+/** Delete a contact from the location. Irreversible. */
+export async function deleteContact(creds: GhlCreds, contactId: string) {
+  await ghl(creds, `/contacts/${contactId}`, { method: "DELETE" });
+}
+
 export async function setEmailDnd(creds: GhlCreds, contactId: string, reason: string) {
   await ghl(creds, `/contacts/${contactId}`, {
     method: "PUT",

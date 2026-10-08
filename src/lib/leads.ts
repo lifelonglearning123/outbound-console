@@ -36,6 +36,7 @@ export type LeadRow = {
   pushed_at: string | null;
   verification: string | null; // see schema.ts
   verified_at: string | null;
+  ghl_verification_tag: string | null;
   created_at: string;
 };
 

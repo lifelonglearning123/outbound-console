@@ -35,6 +35,7 @@ export default async function ClientLayout({ children, params }: LayoutProps<"/c
             { href: "", label: "Overview" },
             { href: "/stats", label: "Stats" },
             { href: "/leads", label: "Leads" },
+            { href: "/verification", label: "Verification" },
             { href: "/approvals", label: "Approvals", count: pending },
             { href: "/campaigns", label: "Campaigns" },
             // Settings hold the API keys, so only admins see them.

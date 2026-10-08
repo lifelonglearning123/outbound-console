@@ -99,10 +99,13 @@ export default async function LeadsPage({ params, searchParams }: PageProps<"/cl
           {checking > 0 && <p className="text-sm text-info">Checking {checking.toLocaleString("en-GB")} addresses…</p>}
           {verifyError && !checking && <p className="text-sm text-bad">{verifyError}</p>}
           {(checks.verified || checks.catch_all || checks.invalid) ? (
-            <p className="text-xs text-muted">
-              So far: <span className="num text-go">{checks.verified ?? 0}</span> verified · <span className="num text-wait">{checks.catch_all ?? 0}</span> catch-all ·{" "}
-              <span className="num text-bad">{checks.invalid ?? 0}</span> invalid
-            </p>
+            <>
+              <p className="text-xs text-muted">
+                So far: <span className="num text-go">{checks.verified ?? 0}</span> verified · <span className="num text-wait">{checks.catch_all ?? 0}</span> catch-all ·{" "}
+                <span className="num text-bad">{checks.invalid ?? 0}</span> invalid
+              </p>
+              <Link href={`/clients/${id}/verification`} className="text-sm underline">What this means and what to do next →</Link>
+            </>
           ) : null}
         </div>
         <div className="card flex flex-col gap-3 p-5">

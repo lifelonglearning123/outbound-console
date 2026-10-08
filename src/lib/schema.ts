@@ -81,6 +81,8 @@ CREATE TABLE IF NOT EXISTS leads (
 -- Instantly email verification: queued | pending | verified | catch_all | invalid (null = never checked).
 ALTER TABLE leads ADD COLUMN IF NOT EXISTS verification TEXT;
 ALTER TABLE leads ADD COLUMN IF NOT EXISTS verified_at TEXT;
+-- GHL follow-up to verification: queued_tag | queued_remove | queued_delete | done (null = nothing done yet).
+ALTER TABLE leads ADD COLUMN IF NOT EXISTS ghl_verification_tag TEXT;
 
 CREATE TABLE IF NOT EXISTS drafts (
   id SERIAL PRIMARY KEY,

@@ -12,6 +12,7 @@ import { runWriter, rewriteStep } from "@/lib/writer";
 import { pushApproved } from "@/lib/push";
 import { linkPendingLeads } from "@/lib/ghlsync";
 import { queueVerification, runVerifier } from "@/lib/verify";
+import { queueGhlTagging, queueInvalidRemoval, runVerificationActions, writeVerificationSummary, GHL_TAGS } from "@/lib/verifyReport";
 
 /** Add one lead typed in by hand, optionally sending it straight to the AI writer. */
 export async function addManualLead(
@@ -94,6 +95,34 @@ export async function verifyLeads(campaignId: number) {
     await logActivity(c.client_id, "verify", `Checking ${n} email addresses in "${c.name}"`);
     after(runVerifier);
   }
+  revalidatePath("/", "layout");
+}
+
+/** Tag every verified or catch-all lead's GHL contact. Runs after the response. */
+export async function tagVerificationInGhl(clientId: number, outcome: "verified" | "catch_all") {
+  await requireClientAccess(clientId);
+  const n = await queueGhlTagging(clientId, outcome);
+  if (n) {
+    await logActivity(clientId, "verify", `Tagging ${n} contacts "${GHL_TAGS[outcome]}" in GHL`);
+    after(runVerificationActions);
+  }
+  revalidatePath("/", "layout");
+}
+
+/** Remove invalid leads from the console and tag them in GHL, or delete the GHL contacts as well. Runs after the response. */
+export async function removeInvalidLeads(clientId: number, deleteInGhl: boolean) {
+  await requireClientAccess(clientId);
+  const n = await queueInvalidRemoval(clientId, deleteInGhl);
+  if (n) {
+    await logActivity(clientId, "verify", deleteInGhl ? `Removing ${n} invalid leads and deleting their GHL contacts` : `Removing ${n} invalid leads (tagging them "${GHL_TAGS.invalid}" in GHL)`);
+    after(runVerificationActions);
+  }
+  revalidatePath("/", "layout");
+}
+
+export async function summariseVerification(clientId: number) {
+  await requireClientAccess(clientId);
+  await writeVerificationSummary(clientId);
   revalidatePath("/", "layout");
 }
 
