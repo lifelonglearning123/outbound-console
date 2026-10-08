@@ -2,7 +2,7 @@
 
 import { Fragment, useCallback, useEffect, useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { approveLead, approveAllUnflagged, rejectLead, rewriteDraft, redraftLead, pushAllApproved } from "@/app/leads/actions";
+import { approveLead, approveAllUnflagged, rejectLead, rewriteDraft, redraftLead, pushAllApproved, pushCampaign } from "@/app/leads/actions";
 import { htmlToText } from "@/lib/merge";
 import type { QueueDraft, QueueLead } from "@/lib/approvals";
 
@@ -11,12 +11,14 @@ type Edits = Record<number, { subject: string; body: string; baseSubject: string
 export function ApprovalQueue({
   leads,
   clientId,
+  campaignId = null,
   approvedCount,
   draftingCount,
   showClient,
 }: {
   leads: QueueLead[];
   clientId: number | null;
+  campaignId?: number | null; // when set, bulk actions only touch this campaign
   approvedCount: number;
   draftingCount: number;
   showClient: boolean;
@@ -124,10 +126,10 @@ export function ApprovalQueue({
   const push = () => {
     setBusy("push");
     start(async () => {
-      const r = await pushAllApproved(clientId);
+      const r = campaignId ? { ...(await pushCampaign(campaignId)), errors: [] as string[] } : await pushAllApproved(clientId);
       setMessage(
-        `Sent ${r.pushed} leads to Instantly.` +
-          (r.skipped ? ` ${r.skipped} were skipped by Instantly (see Leads → Error).` : "") +
+        `${r.pushed} contacts are now being sent to.` +
+          (r.skipped ? ` ${r.skipped} couldn't be added (see their row on the Contacts tab).` : "") +
           (r.errors.length ? ` Problems: ${r.errors.join("; ")}` : ""),
       );
       setBusy("");
@@ -139,10 +141,10 @@ export function ApprovalQueue({
     <div className="flex flex-col gap-4">
       <div className="flex items-center justify-between gap-4">
         <div className="flex items-center gap-4 text-sm">
-          <span><span className="num font-semibold text-wait">{queue.length}</span> to review</span>
-          {draftingCount > 0 && <span className="text-info">AI writing {draftingCount} more…</span>}
-          <span className="text-muted">
-            Keys: <kbd>j</kbd>/<kbd>k</kbd> move · <kbd>a</kbd> approve · <kbd>r</kbd> reject · <kbd>Ctrl+Enter</kbd> approve while editing
+          <span><span className="num font-semibold text-wait">{queue.length}</span> waiting for approval</span>
+          {draftingCount > 0 && <span className="text-info">preparing {draftingCount} more…</span>}
+          <span className="text-xs text-muted">
+            <kbd>j</kbd>/<kbd>k</kbd> next/previous · <kbd>a</kbd> approve · <kbd>r</kbd> reject
           </span>
         </div>
         <div className="flex gap-2">
@@ -150,7 +152,7 @@ export function ApprovalQueue({
           <button
             className="btn"
             disabled={busy === "bulk"}
-            title="Approves every lead in the list that has no ⚑ flag. Flagged leads stay for you to check."
+            title="Approves everyone in the list without a note. Contacts with a note stay for you to check."
             onClick={() => {
               setBusy("bulk");
               // Take them off the list now, so the keyboard can't land on an already-approved lead.
@@ -158,28 +160,29 @@ export function ApprovalQueue({
               setDone((prev) => new Set([...prev, ...bulkIds]));
               setSelectedId(queue.find((l) => !bulkIds.includes(l.id))?.id ?? null);
               start(async () => {
-                const n = await approveAllUnflagged(clientId);
-                setMessage(`Approved ${n} leads. Flagged leads are still here for you to check.`);
+                const n = await approveAllUnflagged(clientId, campaignId);
+                setMessage(`Approved ${n} contacts. The ones with a note are still here for you to check.`);
                 setBusy("");
                 router.refresh();
               });
             }}
           >
-            {busy === "bulk" ? "Approving…" : `Approve all ${unflagged} without flags`}
+            {busy === "bulk" ? "Approving…" : `Approve all ${unflagged} without a note`}
           </button>
         )}
         <button className="btn-go" disabled={approvedCount === 0 || busy === "push"} onClick={push}>
-          {busy === "push" ? "Sending…" : `Send ${approvedCount} approved to Instantly`}
+          {busy === "push" ? "Sending…" : `Send to ${approvedCount} approved`}
         </button>
         </div>
       </div>
       {message && <div className="rounded-md border border-line bg-card px-3 py-2 text-sm">{message}</div>}
 
       {!selected ? (
-        <div className="card p-8 text-center text-sm text-muted">Nothing waiting for review.</div>
+        <div className="card p-8 text-center text-sm text-muted">Nothing waiting for approval.</div>
       ) : (
         <div className="grid grid-cols-[280px_1fr] gap-4">
           <ul className="card max-h-[calc(100vh-220px)] overflow-y-auto">
+            <li className="border-b border-line bg-paper px-3 py-1.5 text-xs font-medium uppercase tracking-wide text-muted">Waiting for approval</li>
             {queue.map((l) => (
               <li key={l.id}>
                 <button
@@ -191,8 +194,8 @@ export function ApprovalQueue({
                   <div className="truncate text-xs text-muted">
                     {showClient ? `${l.client_name} · ` : ""}{l.company ?? l.email}
                   </div>
-                  {l.extending && <div className="text-xs text-info">next emails after hold</div>}
-                  {l.drafts[0]?.flags && <div className="truncate text-xs text-wait">⚑ {l.drafts[0].flags}</div>}
+                  {l.extending && <div className="text-xs text-info">follow-ups after the hold</div>}
+                  {l.drafts[0]?.flags && <div className="truncate text-xs text-wait">Note: {l.drafts[0].flags}</div>}
                 </button>
               </li>
             ))}
@@ -222,15 +225,15 @@ export function ApprovalQueue({
                 )}
                 {selected.extending && (
                   <div className="mt-2 rounded bg-info-soft px-2 py-1 text-xs text-info">
-                    Already in Instantly. These are the next emails after the hold; approve to send them, or reject to take this lead out of
-                    the campaign when the hold is released.
+                    This contact is already being sent to. These are the follow-ups after the hold; approve to send them, or reject to take
+                    this contact out of the campaign when the hold is released.
                   </div>
                 )}
-                {selected.drafts[0]?.flags && <div className="mt-2 rounded bg-wait-soft px-2 py-1 text-xs text-wait">⚑ {selected.drafts[0].flags}</div>}
+                {selected.drafts[0]?.flags && <div className="mt-2 rounded bg-wait-soft px-2 py-1 text-xs text-wait">Note: {selected.drafts[0].flags}</div>}
               </div>
               <div className="flex shrink-0 gap-2">
                 <button className="btn-bad" onClick={reject}>Reject</button>
-                <button className="btn-go" onClick={approve}>{selected.extending ? "Approve next emails" : "Approve all steps"}</button>
+                <button className="btn-go" onClick={approve}>{selected.extending ? "Approve follow-ups" : selected.drafts.length > 1 ? "Approve all emails" : "Approve"}</button>
               </div>
             </div>
 
@@ -242,7 +245,7 @@ export function ApprovalQueue({
                 <div key={d.id} className="card flex flex-col gap-2 p-4">
                   <div className="flex items-center justify-between text-xs text-muted">
                     <span className="font-medium uppercase tracking-wide">
-                      Step {d.step}{d.step > 1 ? " · reply in same thread" : ""}{isHtml ? " · your email" : " · AI"}{d.edited ? " · edited" : ""}
+                      {d.step === 1 ? "Email 1" : `Follow-up ${d.step}, sent as a reply in the same thread`}{isHtml ? " · your own email" : " · written by AI"}{d.edited ? " · edited" : ""}
                     </span>
                     <span className="num">{words} words</span>
                   </div>
@@ -263,7 +266,7 @@ export function ApprovalQueue({
                         className="h-96 w-full rounded-md border border-line bg-white"
                       />
                       <details className="text-xs">
-                        <summary className="cursor-pointer text-muted">Edit this lead&apos;s HTML</summary>
+                        <summary className="cursor-pointer text-muted">Edit this contact&apos;s copy of the email (HTML)</summary>
                         <textarea
                           className="field mt-2 h-60 font-mono text-xs"
                           value={e.body}
@@ -305,7 +308,7 @@ export function ApprovalQueue({
                 start(async () => { await redraftLead(id); router.refresh(); });
               }}
             >
-              Throw these away and write the whole sequence again
+              Throw these away and prepare the whole sequence again
             </button>
           </div>
         </div>

@@ -122,7 +122,8 @@ export async function saveCampaign(clientId: number, campaignId: number | null, 
   }
 
   revalidatePath("/", "layout");
-  redirect(`/clients/${clientId}/campaigns/${id}`);
+  // A new campaign has no contacts yet, so that's the next step; an edited one goes back to its email.
+  redirect(`/clients/${clientId}/campaigns/${id}${campaignId ? "/email" : "/contacts"}`);
 }
 
 // ---------- Hold release ----------

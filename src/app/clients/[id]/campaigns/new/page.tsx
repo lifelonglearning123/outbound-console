@@ -27,7 +27,7 @@ export default async function NewCampaignPage({ params }: PageProps<"/clients/[i
       stopOnReply
       mailboxes={mailboxes.map((m) => ({ email: m.email, healthy: m.status === 1 }))}
       managed
-      submitLabel="Create campaign in Instantly (as draft)"
+      submitLabel="Create campaign"
       holdAfter={null}
       lockedLive={0}
       ghlTag={null}

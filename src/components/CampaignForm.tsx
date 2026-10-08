@@ -49,7 +49,7 @@ export function CampaignForm(p: Props) {
           <div>
             <h2 className="font-semibold">Sequence</h2>
             <p className="text-sm text-muted">
-              Each step is either your own email, sent exactly as designed, or written by the AI for each lead. Follow-ups are sent as replies in the same
+              Each email is either your own, sent exactly as designed, or written by the AI for each contact. Follow-ups are sent as replies in the same
               thread. Every email waits for your approval.
             </p>
           </div>
@@ -57,7 +57,7 @@ export function CampaignForm(p: Props) {
             <div key={s.uid} className="flex flex-col gap-2 rounded-md border border-line p-3">
               <div className="flex items-center justify-between gap-3">
                 <span className="text-sm font-medium">
-                  Step {i + 1}{i === 0 ? " — opener" : " — follow-up"}
+                  {i === 0 ? "Email 1" : `Follow-up ${i + 1}`}
                   {effectiveHold > 0 && i >= effectiveHold && (
                     <span className="ml-2 rounded bg-wait-soft px-1.5 py-0.5 text-xs font-medium text-wait">on hold</span>
                   )}
@@ -121,7 +121,7 @@ export function CampaignForm(p: Props) {
                     onChange={(e) => update(i, { delay_days: Number(e.target.value) })}
                     className="field w-20"
                   />
-                  days, then send step {i + 2}
+                  days, then send follow-up {i + 2}
                 </label>
               ) : (
                 <input type="hidden" name={`step_${i + 1}_delay`} value={0} />
@@ -138,9 +138,9 @@ export function CampaignForm(p: Props) {
             {p.lockedLive ? (
               <p className="text-sm">
                 {steps.length > p.lockedLive ? (
-                  <>Steps 1–{p.lockedLive} are live in Instantly. Steps {p.lockedLive + 1}–{steps.length} are <strong>on hold</strong> until you release them from the campaign page.</>
+                  <>Emails 1-{p.lockedLive} are already being sent. Emails {p.lockedLive + 1}-{steps.length} are <strong>on hold</strong> until you release them from the campaign page.</>
                 ) : (
-                  <>All {p.lockedLive} steps are live in Instantly. Add a step here and it&apos;s held until you release it from the campaign page.</>
+                  <>All {p.lockedLive} emails are already being sent. Add one here and it&apos;s held until you release it from the campaign page.</>
                 )}
               </p>
             ) : (
@@ -149,7 +149,7 @@ export function CampaignForm(p: Props) {
                 <select className="field" style={{ width: "auto" }} value={effectiveHold} onChange={(e) => setHold(Number(e.target.value))}>
                   <option value={0}>No hold: send every step automatically</option>
                   {steps.slice(0, -1).map((_, i) => (
-                    <option key={i} value={i + 1}>After step {i + 1}: wait for my next emails</option>
+                    <option key={i} value={i + 1}>After email {i + 1}: wait for my next emails</option>
                   ))}
                 </select>
               </label>
@@ -160,7 +160,7 @@ export function CampaignForm(p: Props) {
               lead still in play, you approve them, and they&apos;re added to Instantly.
             </p>
           </div>
-          <p className="text-xs text-muted">Changing the steps later only affects emails written after the change.</p>
+          <p className="text-xs text-muted">Changing the sequence later only affects emails prepared after the change.</p>
         </section>
       )}
 
@@ -170,7 +170,7 @@ export function CampaignForm(p: Props) {
             <h2 className="font-semibold">Contacts from Nexus Portal</h2>
             <p className="text-sm text-muted">
               Link this campaign to a Nexus Portal tag. Every 30 minutes (or when you click Sync now), contacts who have the tag (and aren&apos;t on Do-Not-Disturb) join the
-              campaign, their emails are written, and they wait in Approvals.
+              campaign, their emails are prepared, and they wait on the Approve tab.
             </p>
           </div>
           {p.ghlTags === null ? (
@@ -229,7 +229,7 @@ export function CampaignForm(p: Props) {
         <div>
           <span className="label">Send from</span>
           {p.mailboxes.length === 0 ? (
-            <p className="text-sm text-muted">No mailboxes synced yet. Use &quot;Check&quot; at the top to pull them from Instantly.</p>
+            <p className="text-sm text-muted">No mailboxes yet. Use &quot;Check&quot; in Settings to pull them from Instantly.</p>
           ) : (
             <div className="grid grid-cols-2 gap-1">
               {p.mailboxes.map((m) => (

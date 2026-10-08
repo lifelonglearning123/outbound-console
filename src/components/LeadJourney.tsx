@@ -30,7 +30,7 @@ export async function LeadJourney({ campaignId, stepCount, live, delays }: { cam
   );
 
   if (rows.length === 0) {
-    return <div className="card p-4 text-sm text-muted">No leads in Instantly for this campaign yet. Approve some in the approval queue.</div>;
+    return <div className="card p-4 text-sm text-muted">Nobody is being sent to yet. Approve contacts on the Approve tab.</div>;
   }
 
   return (
@@ -38,7 +38,7 @@ export async function LeadJourney({ campaignId, stepCount, live, delays }: { cam
       <table className="w-full text-sm">
         <thead className="bg-paper text-left text-xs uppercase tracking-wide text-muted">
           <tr>
-            <th className="px-3 py-2 font-medium">Lead</th>
+            <th className="px-3 py-2 font-medium">Contact</th>
             <th className="px-3 py-2 font-medium">Sequence</th>
             <th className="px-3 py-2 font-medium">Next</th>
             <th className="px-3 py-2 font-medium">Status</th>
@@ -70,7 +70,7 @@ export async function LeadJourney({ campaignId, stepCount, live, delays }: { cam
                     {Array.from({ length: stepCount }, (_, i) => i + 1).map((s) => (
                       <span
                         key={s}
-                        title={`Step ${s}: ${sent.has(s) ? "sent" : s === nextStep ? "next" : s > live ? "on hold" : "waiting"}`}
+                        title={`${s === 1 ? "Email 1" : `Follow-up ${s}`}: ${sent.has(s) ? "sent" : s === nextStep ? "next" : s > live ? "on hold" : "waiting"}`}
                         className={`flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-medium ${
                           sent.has(s)
                             ? "bg-go text-white"
@@ -87,7 +87,7 @@ export async function LeadJourney({ campaignId, stepCount, live, delays }: { cam
                     {r.replied_at && <span className="ml-1 rounded bg-wait-soft px-1.5 text-xs text-wait">replied</span>}
                   </div>
                 </td>
-                <td className="px-3 py-2 text-xs text-muted">{onHold ? <span className="text-wait">On hold after step {live}</span> : nextStep ? `Step ${nextStep} ${nextAt}` : r.replied_at ? `Replied ${dateTime(r.replied_at)}` : "–"}</td>
+                <td className="px-3 py-2 text-xs text-muted">{onHold ? <span className="text-wait">On hold after email {live}</span> : nextStep ? `${nextStep === 1 ? "Email 1" : `Follow-up ${nextStep}`} ${nextAt}` : r.replied_at ? `Replied ${dateTime(r.replied_at)}` : "–"}</td>
                 <td className="px-3 py-2 text-xs">
                   {r.interest_status !== null
                     ? INTEREST_STATUS[r.interest_status] ?? r.interest_status

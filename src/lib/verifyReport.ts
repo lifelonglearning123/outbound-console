@@ -53,15 +53,24 @@ export type VerificationReport = {
 const CHECKABLE = `pushed_at IS NULL AND instantly_lead_id IS NULL AND stage NOT IN ('rejected', 'removed')`;
 const DELETABLE = `pushed_at IS NULL AND instantly_lead_id IS NULL AND ghl_contact_id IS NOT NULL AND (ghl_verification_tag IS NULL OR ghl_verification_tag = 'done')`;
 
-export async function verificationReport(clientId: number): Promise<VerificationReport> {
+/** `WHERE` fragment and params for one client, optionally one campaign. */
+function scope(clientId: number, campaignId: number | null, alias = ""): { where: string; params: number[] } {
+  const a = alias ? `${alias}.` : "";
+  return campaignId
+    ? { where: `${a}client_id = ? AND ${a}campaign_id = ?`, params: [clientId, campaignId] }
+    : { where: `${a}client_id = ?`, params: [clientId] };
+}
+
+export async function verificationReport(clientId: number, campaignId: number | null = null): Promise<VerificationReport> {
   const client = await requireClient(clientId);
-  const rows = await all<{ v: string | null; n: number }>("SELECT verification v, COUNT(*) n FROM leads WHERE client_id = ? GROUP BY verification", clientId);
+  const sc = scope(clientId, campaignId);
+  const rows = await all<{ v: string | null; n: number }>(`SELECT verification v, COUNT(*) n FROM leads WHERE ${sc.where} GROUP BY verification`, ...sc.params);
   const by = (v: string | null) => rows.find((r) => r.v === v)?.n ?? 0;
   const counts = { verified: by("verified"), catch_all: by("catch_all"), invalid: by("invalid") };
   const total = rows.reduce((a, r) => a + r.n, 0);
-  const unchecked = (await get<{ n: number }>(`SELECT COUNT(*) n FROM leads WHERE client_id = ? AND verification IS NULL AND ${CHECKABLE}`, clientId))?.n ?? 0;
+  const unchecked = (await get<{ n: number }>(`SELECT COUNT(*) n FROM leads WHERE ${sc.where} AND verification IS NULL AND ${CHECKABLE}`, ...sc.params))?.n ?? 0;
   const pushedUnchecked =
-    (await get<{ n: number }>("SELECT COUNT(*) n FROM leads WHERE client_id = ? AND verification IS NULL AND (pushed_at IS NOT NULL OR instantly_lead_id IS NOT NULL)", clientId))?.n ?? 0;
+    (await get<{ n: number }>(`SELECT COUNT(*) n FROM leads WHERE ${sc.where} AND verification IS NULL AND (pushed_at IS NOT NULL OR instantly_lead_id IS NOT NULL)`, ...sc.params))?.n ?? 0;
 
   const campaigns = await all<VerificationReport["campaigns"][number]>(
     `SELECT c.id, c.name,
@@ -70,12 +79,12 @@ export async function verificationReport(clientId: number): Promise<Verification
        COUNT(*) FILTER (WHERE l.verification = 'invalid') invalid,
        COUNT(*) FILTER (WHERE l.verification IS NULL AND l.pushed_at IS NULL AND l.instantly_lead_id IS NULL AND l.stage NOT IN ('rejected', 'removed')) unchecked
      FROM campaigns c JOIN leads l ON l.campaign_id = c.id
-     WHERE c.client_id = ? GROUP BY c.id, c.name HAVING COUNT(*) FILTER (WHERE l.verification IS NOT NULL) > 0 ORDER BY c.created_at DESC`,
-    clientId,
+     WHERE c.client_id = ? ${campaignId ? "AND c.id = ?" : ""} GROUP BY c.id, c.name HAVING COUNT(*) FILTER (WHERE l.verification IS NOT NULL) > 0 ORDER BY c.created_at DESC`,
+    ...sc.params,
   );
   const catchAllDomains = await all<{ domain: string; n: number }>(
-    "SELECT split_part(email, '@', 2) domain, COUNT(*) n FROM leads WHERE client_id = ? AND verification = 'catch_all' GROUP BY 1 ORDER BY 2 DESC, 1 LIMIT 12",
-    clientId,
+    `SELECT split_part(email, '@', 2) domain, COUNT(*) n FROM leads WHERE ${sc.where} AND verification = 'catch_all' GROUP BY 1 ORDER BY 2 DESC, 1 LIMIT 12`,
+    ...sc.params,
   );
 
   const groupRows = await all<{ v: Outcome } & GroupStatus & { queued: number }>(
@@ -85,17 +94,18 @@ export async function verificationReport(clientId: number): Promise<Verification
        COUNT(*) FILTER (WHERE ghl_verification_tag LIKE 'queued%') queued,
        COUNT(*) FILTER (WHERE ghl_verification_tag IS NULL AND ghl_contact_id IS NOT NULL) "tagTodo",
        COUNT(*) FILTER (WHERE ${DELETABLE}) deletable
-     FROM leads WHERE client_id = ? AND verification IN ('verified', 'catch_all', 'invalid') GROUP BY verification`,
-    clientId,
+     FROM leads WHERE ${sc.where} AND verification IN ('verified', 'catch_all', 'invalid') GROUP BY verification`,
+    ...sc.params,
   );
   const group = (v: Outcome): GroupStatus => {
     const g = groupRows.find((r) => r.v === v);
     return { tagged: g?.tagged ?? 0, deleted: g?.deleted ?? 0, tagTodo: g?.tagTodo ?? 0, deletable: g?.deletable ?? 0 };
   };
 
+  const key = summaryKey(clientId, campaignId);
   let summary: VerificationReport["summary"] = null;
   try {
-    const raw = await getSetting(`verify_summary_${clientId}`, "");
+    const raw = await getSetting(`verify_summary_${key}`, "");
     if (raw) summary = JSON.parse(raw);
   } catch {}
 
@@ -116,9 +126,11 @@ export async function verificationReport(clientId: number): Promise<Verification
     },
     credits: (await getSetting(`verify_credits_${clientId}`, "")) || null,
     summary,
-    summaryError: (await getSetting(`verify_summary_error_${clientId}`, "")) || null,
+    summaryError: (await getSetting(`verify_summary_error_${key}`, "")) || null,
   };
 }
+
+const summaryKey = (clientId: number, campaignId: number | null) => (campaignId ? `${clientId}_c${campaignId}` : `${clientId}`);
 
 export type GroupLead = {
   email: string;
@@ -133,13 +145,14 @@ export type GroupLead = {
 };
 
 /** Every lead in one verification group, for the folded list and the CSV export. */
-export async function groupLeads(clientId: number, outcome: Outcome): Promise<GroupLead[]> {
+export async function groupLeads(clientId: number, outcome: Outcome, campaignId: number | null = null): Promise<GroupLead[]> {
+  const sc = scope(clientId, campaignId, "l");
   return all<GroupLead>(
     `SELECT l.email, l.first_name, l.last_name, l.company, c.name campaign, l.verified_at, l.ghl_verification_tag,
        l.ghl_contact_id IS NOT NULL in_portal, (l.pushed_at IS NOT NULL OR l.instantly_lead_id IS NOT NULL) in_instantly
      FROM leads l LEFT JOIN campaigns c ON c.id = l.campaign_id
-     WHERE l.client_id = ? AND l.verification = ? ORDER BY l.company NULLS LAST, l.email`,
-    clientId, outcome,
+     WHERE ${sc.where} AND l.verification = ? ORDER BY l.company NULLS LAST, l.email`,
+    ...sc.params, outcome,
   );
 }
 
@@ -177,11 +190,12 @@ export function plainReading(r: VerificationReport): string[] {
 // ---------- AI summary ----------
 
 /** Ask the model for a short account-manager style summary of the verification results. Stored per client. */
-export async function writeVerificationSummary(clientId: number): Promise<void> {
+export async function writeVerificationSummary(clientId: number, campaignId: number | null = null): Promise<void> {
   const client = await requireClient(clientId);
-  const r = await verificationReport(clientId);
+  const r = await verificationReport(clientId, campaignId);
   const g = r.portal.groups;
-  await run("DELETE FROM settings WHERE key = ?", `verify_summary_error_${clientId}`);
+  const key = summaryKey(clientId, campaignId);
+  await run("DELETE FROM settings WHERE key = ?", `verify_summary_error_${key}`);
   try {
     if (!llmReady()) throw new Error(`No AI key: set ${llmKeyHint()} in Vercel`);
     const facts = [
@@ -203,11 +217,11 @@ export async function writeVerificationSummary(clientId: number): Promise<void> 
       user: facts,
       effort: "low",
     });
-    await setSetting(`verify_summary_${clientId}`, JSON.stringify({ text, at: new Date().toISOString(), model: llmLabel() }));
+    await setSetting(`verify_summary_${key}`, JSON.stringify({ text, at: new Date().toISOString(), model: llmLabel() }));
   } catch (e) {
     const msg = (e as Error).message;
     await setSetting(
-      `verify_summary_error_${clientId}`,
+      `verify_summary_error_${key}`,
       /401|Incorrect API key|invalid.*key|authentication/i.test(msg) ? `${llmLabel()} rejected the API key. Fix ${llmKeyHint()} in Vercel, then try again.` : msg,
     );
   }
@@ -216,10 +230,11 @@ export async function writeVerificationSummary(clientId: number): Promise<void> 
 // ---------- Portal actions ----------
 
 /** Queue tagging in the portal for every lead of a group that's in the portal and not tagged yet. Returns how many. */
-export async function queueTagging(clientId: number, outcome: Outcome): Promise<number> {
+export async function queueTagging(clientId: number, outcome: Outcome, campaignId: number | null = null): Promise<number> {
+  const sc = scope(clientId, campaignId);
   return (await run(
-    "UPDATE leads SET ghl_verification_tag = 'queued_tag' WHERE client_id = ? AND verification = ? AND ghl_contact_id IS NOT NULL AND ghl_verification_tag IS NULL",
-    clientId, outcome,
+    `UPDATE leads SET ghl_verification_tag = 'queued_tag' WHERE ${sc.where} AND verification = ? AND ghl_contact_id IS NOT NULL AND ghl_verification_tag IS NULL`,
+    ...sc.params, outcome,
   )).changes;
 }
 
@@ -227,8 +242,9 @@ export async function queueTagging(clientId: number, outcome: Outcome): Promise<
  * Queue deleting a group's contacts from the portal (unable-to-verify or invalid only). Leads already in Instantly
  * are left alone. The lead stays in the console as 'removed' so it still appears in the lists and exports.
  */
-export async function queueDeletion(clientId: number, outcome: "invalid" | "catch_all"): Promise<number> {
-  return (await run(`UPDATE leads SET ghl_verification_tag = 'queued_delete' WHERE client_id = ? AND verification = ? AND ${DELETABLE}`, clientId, outcome)).changes;
+export async function queueDeletion(clientId: number, outcome: "invalid" | "catch_all", campaignId: number | null = null): Promise<number> {
+  const sc = scope(clientId, campaignId);
+  return (await run(`UPDATE leads SET ghl_verification_tag = 'queued_delete' WHERE ${sc.where} AND verification = ? AND ${DELETABLE}`, ...sc.params, outcome)).changes;
 }
 
 export async function runVerificationActions() {

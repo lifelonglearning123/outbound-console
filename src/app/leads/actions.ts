@@ -13,6 +13,7 @@ import { pushApproved } from "@/lib/push";
 import { linkPendingLeads } from "@/lib/ghlsync";
 import { queueVerification, runVerifier } from "@/lib/verify";
 import { queueTagging, queueDeletion, runVerificationActions, writeVerificationSummary, GHL_TAGS, OUTCOME_LABEL, PORTAL, type Outcome } from "@/lib/verifyReport";
+import { approveAndSend, type BatchGroup } from "@/lib/progress";
 
 /** Add one lead typed in by hand, optionally sending it straight to the AI writer. */
 export async function addManualLead(
@@ -28,7 +29,7 @@ export async function addManualLead(
   after(async () => linkPendingLeads(await requireClient(clientId))); // Nexus Portal is the source of truth: add the contact there
   if (writeNow && (r.added || r.updated)) {
     await run("UPDATE leads SET stage = 'drafting' WHERE client_id = ? AND email = ? AND stage = 'new'", clientId, lead.email.trim().toLowerCase());
-    await logActivity(clientId, "write", `Writing emails for ${lead.email} in "${c.name}"`);
+    await logActivity(clientId, "write", `Preparing emails for ${lead.email} in "${c.name}"`);
     after(runWriter);
   }
   revalidatePath("/", "layout");
@@ -99,9 +100,10 @@ export async function verifyLeads(campaignId: number) {
 }
 
 /** Tag every contact in one verification group in the Nexus Portal. Runs after the response. */
-export async function tagVerificationGroup(clientId: number, outcome: Outcome) {
+export async function tagVerificationGroup(clientId: number, outcome: Outcome, campaignId: number | null = null) {
   await requireClientAccess(clientId);
-  const n = await queueTagging(clientId, outcome);
+  if (campaignId && (await clientOfCampaign(campaignId)) !== clientId) throw new Error("Campaign not found");
+  const n = await queueTagging(clientId, outcome, campaignId);
   if (n) {
     await logActivity(clientId, "verify", `Tagging ${n} contacts "${GHL_TAGS[outcome]}" in the ${PORTAL}`);
     after(runVerificationActions);
@@ -110,9 +112,10 @@ export async function tagVerificationGroup(clientId: number, outcome: Outcome) {
 }
 
 /** Delete every unable-to-verify or invalid contact from the Nexus Portal (not ones already in Instantly). Runs after the response. */
-export async function deleteVerificationGroup(clientId: number, outcome: "invalid" | "catch_all") {
+export async function deleteVerificationGroup(clientId: number, outcome: "invalid" | "catch_all", campaignId: number | null = null) {
   await requireClientAccess(clientId);
-  const n = await queueDeletion(clientId, outcome);
+  if (campaignId && (await clientOfCampaign(campaignId)) !== clientId) throw new Error("Campaign not found");
+  const n = await queueDeletion(clientId, outcome, campaignId);
   if (n) {
     await logActivity(clientId, "verify", `Deleting ${n} ${OUTCOME_LABEL[outcome].toLowerCase()} contacts from the ${PORTAL}`);
     after(runVerificationActions);
@@ -120,9 +123,19 @@ export async function deleteVerificationGroup(clientId: number, outcome: "invali
   revalidatePath("/", "layout");
 }
 
-export async function summariseVerification(clientId: number) {
+export async function summariseVerification(clientId: number, campaignId: number | null = null) {
   await requireClientAccess(clientId);
-  await writeVerificationSummary(clientId);
+  if (campaignId && (await clientOfCampaign(campaignId)) !== clientId) throw new Error("Campaign not found");
+  await writeVerificationSummary(clientId, campaignId);
+  revalidatePath("/", "layout");
+}
+
+/** One-click approval for a fixed-email campaign: approve a whole group of waiting contacts and start sending to them. */
+export async function approveGroupAndSend(campaignId: number, group: BatchGroup, form: FormData) {
+  await requireClientAccess(await clientOfCampaign(campaignId));
+  const limit = Number(form.get("limit")) || null;
+  await approveAndSend(campaignId, group, limit);
+  after(runWriter); // leads missing newly released steps were sent back to the writer
   revalidatePath("/", "layout");
 }
 
@@ -134,7 +147,7 @@ export async function writeEmails(campaignId: number, includeErrors = false) {
     `UPDATE leads SET stage = 'drafting', stage_message = NULL WHERE campaign_id = ? AND (stage = 'new' ${includeErrors ? "OR (stage = 'error' AND pushed_at IS NULL AND instantly_lead_id IS NULL)" : ""})`,
     campaignId,
   )).changes;
-  await logActivity(c.client_id, "write", `Writing emails for ${n} leads in "${c.name}"`);
+  await logActivity(c.client_id, "write", `Preparing emails for ${n} contacts in "${c.name}"`);
   after(runWriter);
   revalidatePath("/", "layout");
 }
@@ -228,6 +241,11 @@ export async function pushCampaign(campaignId: number) {
   return r;
 }
 
+/** Form-action version of pushCampaign for the campaign's Approve tab. */
+export async function sendApproved(campaignId: number) {
+  await pushCampaign(campaignId);
+}
+
 /** Push approved leads for every campaign that has some. Used by the approvals page button. */
 export async function pushAllApproved(clientId: number | null) {
   if (clientId) await requireClientAccess(clientId);
@@ -258,15 +276,16 @@ export async function pushAllApproved(clientId: number | null) {
  * Approve every lead waiting for review that has no reviewer flags (e.g. no missing merge fields).
  * Meant for campaigns sending your own email, where every lead gets the same text.
  */
-export async function approveAllUnflagged(clientId: number | null): Promise<number> {
+export async function approveAllUnflagged(clientId: number | null, campaignId: number | null = null): Promise<number> {
   if (clientId) await requireClientAccess(clientId);
   else await requireAdmin();
+  if (campaignId && clientId && (await clientOfCampaign(campaignId)) !== clientId) throw new Error("Campaign not found");
   const ids = (await all<{ id: number }>(
     `SELECT l.id FROM leads l JOIN campaigns c ON c.id = l.campaign_id
-     WHERE l.stage IN ('review', 'extend_review') ${clientId ? "AND l.client_id = ?" : ""}
+     WHERE l.stage IN ('review', 'extend_review') ${clientId ? "AND l.client_id = ?" : ""} ${campaignId ? "AND l.campaign_id = ?" : ""}
        AND NOT EXISTS (SELECT 1 FROM drafts d WHERE d.lead_id = l.id AND d.flags IS NOT NULL
                        AND (l.stage = 'review' OR d.step > COALESCE(c.hold_after, 0)))`,
-    ...(clientId ? [clientId] : []),
+    ...(clientId ? [clientId] : []), ...(campaignId ? [campaignId] : []),
   )).map((r) => r.id);
   await tx(async () => {
     for (const id of ids) {
@@ -274,7 +293,7 @@ export async function approveAllUnflagged(clientId: number | null): Promise<numb
       await refreshLeadStage(id);
     }
   });
-  if (ids.length) await logActivity(clientId, "approve", `Approved ${ids.length} leads in one go (none had flags)`);
+  if (ids.length) await logActivity(clientId, "approve", `Approved ${ids.length} contacts in one go (none had notes)`);
   revalidatePath("/", "layout");
   return ids.length;
 }

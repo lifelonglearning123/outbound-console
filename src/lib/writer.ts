@@ -210,7 +210,7 @@ async function writeAll() {
           // A lead already in Instantly keeps that fact; it just can't move on until its new steps are written.
           const failed = batch[i].stage === "extending" ? "extend_error" : "error";
           await run("UPDATE leads SET stage = ?, stage_message = ? WHERE id = ?", failed, `Writer: ${msg}`, batch[i].id);
-          await logActivity(batch[i].client_id, "error", `Couldn't write emails for lead ${batch[i].id}: ${msg}`);
+          await logActivity(batch[i].client_id, "error", `Couldn't prepare emails for contact ${batch[i].id}: ${msg}`);
         }
       }
       // If the key is missing every lead would fail; stop rather than churn.

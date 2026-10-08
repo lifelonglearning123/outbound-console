@@ -37,11 +37,19 @@ function guess(headers: string[]): Partial<Record<Col, string>> {
   return out;
 }
 
-export function LeadImporter({ clientId, campaigns, hasGhl }: { clientId: number; campaigns: { id: number; name: string }[]; hasGhl: boolean }) {
+export function LeadImporter({
+  clientId, campaigns, hasGhl, campaignId: fixedCampaignId,
+}: {
+  clientId: number;
+  campaigns: { id: number; name: string }[];
+  hasGhl: boolean;
+  /** When given, contacts always go into this campaign and the campaign picker is hidden. */
+  campaignId?: number;
+}) {
   const [mode, setMode] = useState<"manual" | "csv" | "ghl">("manual");
   const [manual, setManual] = useState({ email: "", first_name: "", last_name: "", company: "", title: "", website: "" });
   const [writeNow, setWriteNow] = useState(true);
-  const [campaignId, setCampaignId] = useState<number>(campaigns[0]?.id ?? 0);
+  const [campaignId, setCampaignId] = useState<number>(fixedCampaignId ?? campaigns[0]?.id ?? 0);
   const [file, setFile] = useState<{ name: string; headers: string[]; rows: Record<string, string>[] } | null>(null);
   const [map, setMap] = useState<Partial<Record<Col, string>>>({});
   const [tags, setTags] = useState<string[] | null>(null);
@@ -50,7 +58,7 @@ export function LeadImporter({ clientId, campaigns, hasGhl }: { clientId: number
   const [pending, start] = useTransition();
 
   if (campaigns.length === 0) {
-    return <div className="card p-4 text-sm text-muted">Create a campaign first; leads are imported into a campaign.</div>;
+    return <div className="card p-4 text-sm text-muted">Create a campaign first; contacts are added to a campaign.</div>;
   }
 
   const onFile = (f: File) => {
@@ -107,7 +115,7 @@ export function LeadImporter({ clientId, campaigns, hasGhl }: { clientId: number
   return (
     <div className="card flex flex-col gap-4 p-5">
       <div className="flex items-center justify-between">
-        <h2 className="font-semibold">Import leads</h2>
+        <h2 className="font-semibold">Add contacts</h2>
         <div className="flex rounded-md border border-line p-0.5 text-sm">
           {(["manual", "csv", "ghl"] as const).map((m) => (
             <button
@@ -122,12 +130,14 @@ export function LeadImporter({ clientId, campaigns, hasGhl }: { clientId: number
         </div>
       </div>
 
-      <div>
-        <label className="label" htmlFor="imp-campaign">Into campaign</label>
-        <select id="imp-campaign" className="field" value={campaignId} onChange={(e) => setCampaignId(Number(e.target.value))}>
-          {campaigns.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-        </select>
-      </div>
+      {!fixedCampaignId && (
+        <div>
+          <label className="label" htmlFor="imp-campaign">Into campaign</label>
+          <select id="imp-campaign" className="field" value={campaignId} onChange={(e) => setCampaignId(Number(e.target.value))}>
+            {campaigns.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+          </select>
+        </div>
+      )}
 
       {mode === "manual" ? (
         <form
@@ -169,10 +179,10 @@ export function LeadImporter({ clientId, campaigns, hasGhl }: { clientId: number
           </div>
           <label className="flex items-center gap-2 text-sm">
             <input type="checkbox" checked={writeNow} onChange={(e) => setWriteNow(e.target.checked)} />
-            Write this lead&apos;s emails straight away
+            Prepare this contact&apos;s email straight away
           </label>
           <button className="btn-go self-start" disabled={pending || !manual.email}>
-            {pending ? "Adding…" : "Add lead"}
+            {pending ? "Adding…" : "Add contact"}
           </button>
         </form>
       ) : mode === "csv" ? (
@@ -199,7 +209,7 @@ export function LeadImporter({ clientId, campaigns, hasGhl }: { clientId: number
                 ))}
               </div>
               <button type="button" className="btn-go self-start" disabled={!map.email || pending} onClick={importCsv}>
-                {pending ? "Importing…" : `Import ${file.rows.length} leads`}
+                {pending ? "Importing…" : `Add ${file.rows.length} contacts`}
               </button>
             </div>
           )}

@@ -115,7 +115,7 @@ export async function pullTaggedContacts(client: Client): Promise<number> {
       client.id, c.id,
     );
     total += r.added;
-    if (r.added) await logActivity(client.id, "ghl", `${r.added} new contacts tagged "${c.ghl_tag}" in Nexus Portal joined "${c.name}"; writing their emails`);
+    if (r.added) await logActivity(client.id, "ghl", `${r.added} new contacts tagged "${c.ghl_tag}" in Nexus Portal joined "${c.name}"; preparing their emails`);
   }
   return total;
 }

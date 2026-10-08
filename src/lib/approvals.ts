@@ -19,14 +19,14 @@ export type QueueLead = {
   extending: boolean; // already in Instantly; these are its next emails after a hold
 };
 
-export async function reviewQueue(clientId: number | null, limit = 200): Promise<QueueLead[]> {
+export async function reviewQueue(clientId: number | null, limit = 200, campaignId: number | null = null): Promise<QueueLead[]> {
   const leads = await all<Omit<QueueLead, "drafts" | "fields" | "extending"> & { fields: string; stage: string; hold_after: number | null }>(
     `SELECT l.id, l.client_id, cl.name client_name, l.campaign_id, c.name campaign_name, l.email, l.first_name, l.last_name,
             l.company, l.title, l.website, l.fields, l.stage, c.hold_after
      FROM leads l JOIN campaigns c ON c.id = l.campaign_id JOIN clients cl ON cl.id = l.client_id
-     WHERE l.stage IN ('review', 'extend_review') ${clientId ? "AND l.client_id = ?" : ""}
+     WHERE l.stage IN ('review', 'extend_review') ${clientId ? "AND l.client_id = ?" : ""} ${campaignId ? "AND l.campaign_id = ?" : ""}
      ORDER BY l.id LIMIT ?`,
-    ...(clientId ? [clientId, limit] : [limit]),
+    ...(clientId ? [clientId] : []), ...(campaignId ? [campaignId] : []), limit,
   );
   if (leads.length === 0) return [];
   const drafts = await all<QueueDraft & { lead_id: number }>(
@@ -45,12 +45,12 @@ export async function reviewQueue(clientId: number | null, limit = 200): Promise
   });
 }
 
-export async function approvalCounts(clientId: number | null) {
+export async function approvalCounts(clientId: number | null, campaignId: number | null = null) {
   return (
     await get<{ review: number; approved: number; drafting: number }>(
       `SELECT COUNT(*) FILTER (WHERE stage IN ('review','extend_review')) review, COUNT(*) FILTER (WHERE stage = 'approved') approved,
               COUNT(*) FILTER (WHERE stage IN ('drafting','extending')) drafting
-       FROM leads ${clientId ? "WHERE client_id = ?" : ""}`,
+       FROM leads WHERE 1 = 1 ${clientId ? "AND client_id = ?" : ""} ${campaignId ? "AND campaign_id = ?" : ""}`,
       ...(clientId ? [clientId] : []),
     ) ?? { review: 0, approved: 0, drafting: 0 }
   );
