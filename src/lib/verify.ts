@@ -106,9 +106,16 @@ async function verifyAll() {
       const status = e instanceof InstantlyError ? e.status : 0;
       if (status === 402 || status === 401 || status === 403) {
         // No credits, no paid plan, or a key without the verification scope: stop this client, leave its leads unchecked.
+        if (stopped.has(lead.client_id)) continue;
         stopped.add(lead.client_id);
+        const why = /credit/i.test(e.message)
+          ? "Instantly has no verification credits left. Buy a credit pack in Instantly (Settings → Billing), then click Check again."
+          : /scope/i.test(e.message) || status === 403
+            ? `Instantly refused (${e.message}). The API key needs the email verification scope.`
+            : `Instantly refused (${e.message}).`;
         await run("UPDATE leads SET verification = NULL WHERE client_id = ? AND verification = 'queued'", lead.client_id);
-        await logActivity(lead.client_id, "error", `Email verification stopped: ${e.message}`);
+        await setSetting(`verify_error_${lead.client_id}`, why);
+        await logActivity(lead.client_id, "error", `Email verification stopped: ${why}`);
       } else if (status === 404 && lead.verification === "pending") {
         await run("UPDATE leads SET verification = 'queued', verified_at = NULL WHERE id = ?", lead.id); // Instantly lost the job; ask again
       } else {
@@ -133,6 +140,7 @@ async function verifyAll() {
 async function applyResult(lead: Pick, v: EmailVerification): Promise<keyof Tally | null> {
   const now = new Date().toISOString();
   if (v.credits !== null && v.credits !== undefined) await setSetting(`verify_credits_${lead.client_id}`, String(v.credits));
+  await run("DELETE FROM settings WHERE key = ?", `verify_error_${lead.client_id}`); // it's working again
 
   if (v.verification_status === "pending") {
     await run("UPDATE leads SET verification = 'pending', verified_at = ? WHERE id = ?", now, lead.id);

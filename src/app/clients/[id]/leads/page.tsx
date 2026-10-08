@@ -60,6 +60,7 @@ export default async function LeadsPage({ params, searchParams }: PageProps<"/cl
   );
   const checking = (checks.queued ?? 0) + (checks.pending ?? 0);
   const credits = await getSetting(`verify_credits_${id}`, "");
+  const verifyError = await getSetting(`verify_error_${id}`, "");
   if (checking > 0) after(runVerifier); // keep the job going while someone is watching the page
   const rows = await all<Row>(
     `SELECT l.*, c.name campaign_name FROM leads l LEFT JOIN campaigns c ON c.id = l.campaign_id
@@ -96,6 +97,7 @@ export default async function LeadsPage({ params, searchParams }: PageProps<"/cl
             ))
           )}
           {checking > 0 && <p className="text-sm text-info">Checking {checking.toLocaleString("en-GB")} addresses…</p>}
+          {verifyError && !checking && <p className="text-sm text-bad">{verifyError}</p>}
           {(checks.verified || checks.catch_all || checks.invalid) ? (
             <p className="text-xs text-muted">
               So far: <span className="num text-go">{checks.verified ?? 0}</span> verified · <span className="num text-wait">{checks.catch_all ?? 0}</span> catch-all ·{" "}
