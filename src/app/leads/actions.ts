@@ -11,6 +11,7 @@ import { contactsWithTag, listTags } from "@/lib/ghl";
 import { runWriter, rewriteStep } from "@/lib/writer";
 import { pushApproved } from "@/lib/push";
 import { linkPendingLeads } from "@/lib/ghlsync";
+import { queueVerification, runVerifier } from "@/lib/verify";
 
 /** Add one lead typed in by hand, optionally sending it straight to the AI writer. */
 export async function addManualLead(
@@ -82,6 +83,18 @@ export async function importGhlLeads(clientId: number, campaignId: number, tag: 
   } catch (e) {
     return { added: 0, updated: 0, skippedInvalid: 0, skippedExisting: 0, error: (e as Error).message };
   }
+}
+
+/** Check every unchecked, not-yet-pushed lead of a campaign against Instantly's email verification. Runs after the response. */
+export async function verifyLeads(campaignId: number) {
+  await requireClientAccess(await clientOfCampaign(campaignId));
+  const c = await requireCampaign(campaignId);
+  const n = await queueVerification(campaignId);
+  if (n) {
+    await logActivity(c.client_id, "verify", `Checking ${n} email addresses in "${c.name}"`);
+    after(runVerifier);
+  }
+  revalidatePath("/", "layout");
 }
 
 /** Queue AI writing for all 'new' (and optionally 'error') leads in a campaign. Runs after the response. */

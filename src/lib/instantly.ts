@@ -265,6 +265,15 @@ export type AddLeadsResult = {
   remaining_in_plan?: number;
 };
 
+/** POST/GET /email-verification. `catch_all` is true/false, or "pending" while Instantly is still checking. */
+export type EmailVerification = {
+  email: string;
+  verification_status: "pending" | "verified" | "invalid";
+  catch_all?: boolean | "pending" | null;
+  credits?: number | null; // verification credits left in the workspace
+  credits_used?: number | null;
+};
+
 // ---------- Client ----------
 
 export function instantly(key: string) {
@@ -347,6 +356,9 @@ export function instantly(key: string) {
       (await call<Page<Email>>(key, "GET", "/emails", {
         query: { limit: 100, scheduled_only: true, sort_order: "asc", eaccount: eaccounts?.join(",") },
       })).items ?? [],
+    /** Start verifying one address; answers within ~10s or comes back "pending" (then poll `verification`). Costs credits. */
+    verifyEmail: (email: string) => call<EmailVerification>(key, "POST", "/email-verification", { body: { email } }),
+    verification: (email: string) => call<EmailVerification>(key, "GET", `/email-verification/${encodeURIComponent(email)}`),
     blockEmail: (email: string) => call(key, "POST", "/block-lists-entries", { body: { bl_value: email } }),
     reply: (body: { eaccount: string; reply_to_uuid: string; subject: string; body: { html?: string; text?: string } }) =>
       call<Email>(key, "POST", "/emails/reply", { body }),

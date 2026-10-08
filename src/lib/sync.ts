@@ -6,6 +6,7 @@ import { pruneForeignEmails, upsertCampaigns, upsertMailboxes } from "./connecti
 import { ensureTag, scopedMailboxes, sharingProblem } from "./scope";
 import { triageNewReplies } from "./triage";
 import { runWriter } from "./writer";
+import { runVerifier } from "./verify";
 import { syncMeetings } from "./meetings";
 import { linkPendingLeads, logEmailsToGhl, pullTaggedContacts } from "./ghlsync";
 
@@ -342,5 +343,6 @@ async function syncEveryClient() {
     }
     await setSetting("last_sync_all", new Date().toISOString());
     await runWriter(); // pick up any drafting left over from a restart
+    await runVerifier(); // and any email checks still queued or pending
   }
 }

@@ -34,6 +34,8 @@ export type LeadRow = {
   instantly_status: number | null;
   interest_status: number | null;
   pushed_at: string | null;
+  verification: string | null; // see schema.ts
+  verified_at: string | null;
   created_at: string;
 };
 

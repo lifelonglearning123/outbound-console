@@ -17,6 +17,7 @@ const tags = [{ id: "tag-signal", label: "Signal" }, { id: "tag-fruitful", label
 const tagged = new Map([["tag-signal", new Set([accounts[0].email, accounts[1].email])], ["tag-fruitful", new Set([accounts[2].email])]]);
 const hasTag = (q, id) => { const t = q.get("tag_ids"); return !t || t.split(",").some((x) => tagged.get(x)?.has(id)); };
 const leads = new Map(); // id -> lead
+const verifications = new Map(); // email -> verification result
 const emails = [];
 const sentCount = new Map();
 
@@ -132,6 +133,18 @@ const routes = [
   ["POST", /^\/campaigns\/([\w-]+)\/activate$/, (m) => Object.assign(campaigns.get(m[1]), { status: 1 })],
   ["POST", /^\/campaigns\/([\w-]+)\/pause$/, (m) => Object.assign(campaigns.get(m[1]), { status: 2 })],
   ["POST", /^\/campaigns\/([\w-]+)\/variables$/, (m) => campaigns.get(m[1])],
+  // Email verification: every 6th address is invalid, every 4th a catch-all, every 5th takes a second request to finish.
+  ["POST", /^\/email-verification$/, (m, q, body) => {
+    const n = [...body.email].reduce((a, ch) => a + ch.charCodeAt(0), 0);
+    const result = { email: body.email, verification_status: n % 6 === 0 ? "invalid" : "verified", catch_all: n % 4 === 0, credits: 1000 - verifications.size, credits_used: 1 };
+    verifications.set(body.email, result);
+    return n % 5 === 0 ? { email: body.email, verification_status: "pending", catch_all: "pending", credits: result.credits, credits_used: 1 } : result;
+  }],
+  ["GET", /^\/email-verification\/(.+)$/, (m) => {
+    const r = verifications.get(decodeURIComponent(m[1]));
+    if (!r) throw Object.assign(new Error("Resource not found"), { code: 404 });
+    return r;
+  }],
   ["POST", /^\/leads\/add$/, (m, q, body) => {
     const created = [];
     body.leads.forEach((l, index) => {

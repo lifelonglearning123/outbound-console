@@ -6,6 +6,7 @@ import { requireCampaign, writeTarget, type Step } from "./campaigns";
 import type { LeadRow } from "./leads";
 import { htmlToText, renderMerge } from "./merge";
 import { refreshFromGhl } from "./ghlsync";
+import { CATCH_ALL_FLAG } from "./verify";
 
 const MODEL = process.env.OPENAI_MODEL || "gpt-5.5";
 const CONCURRENCY = 4;
@@ -176,7 +177,11 @@ async function writeForLead(leadId: number) {
 
   const sig = signOff(client.brief);
   const byStep = new Map(out.emails.map((e) => [e.step, e]));
-  const flags = [...fixed.flatMap((f) => f?.notes ?? []), ...out.flags];
+  const flags = [
+    ...fixed.flatMap((f) => f?.notes ?? []),
+    ...out.flags,
+    ...(lead.verification === "catch_all" ? [CATCH_ALL_FLAG] : []),
+  ];
   await tx(async () => {
     for (const [k, n] of needed.entries()) {
       const i = n - 1;

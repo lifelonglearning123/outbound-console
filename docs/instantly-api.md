@@ -206,6 +206,14 @@ Response is an **array** of:
 
 ---
 
+## 3b. Email verification (costs credits; 402 when the workspace has no paid plan or credits)
+
+**POST `/api/v2/email-verification`** — scope `email_verifications:create`. Body: `email*`, `webhook_url` (optional; called only if the check takes over 10s).
+**GET `/api/v2/email-verification/{email}`** — scope `email_verifications:read`. Poll this when the POST answered `pending`.
+Both return: `email`, `verification_status` (`pending` | `verified` | `invalid`), `catch_all` (`true` | `false` | `"pending"`),
+`credits` (left after this check), `credits_used`, and `status` (`success` | `error`; the docs say not to read the outcome from it).
+There is no bulk endpoint. Rate limit is the workspace-wide 100/s, 6,000/min. One lead verification costs 0.25 Instantly credits (third-party figure; check billing).
+
 ## 4. Leads
 
 ### Lead object (returned by create/get/patch, and in leads/list `items[]`)

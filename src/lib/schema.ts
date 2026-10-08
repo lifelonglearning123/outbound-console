@@ -78,6 +78,9 @@ CREATE TABLE IF NOT EXISTS leads (
   created_at TEXT NOT NULL DEFAULT ${NOW_TEXT},
   UNIQUE (client_id, email)
 );
+-- Instantly email verification: queued | pending | verified | catch_all | invalid (null = never checked).
+ALTER TABLE leads ADD COLUMN IF NOT EXISTS verification TEXT;
+ALTER TABLE leads ADD COLUMN IF NOT EXISTS verified_at TEXT;
 
 CREATE TABLE IF NOT EXISTS drafts (
   id SERIAL PRIMARY KEY,
