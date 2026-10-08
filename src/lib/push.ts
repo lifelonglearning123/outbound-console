@@ -5,7 +5,7 @@ import { requireCampaign, subjectVar, bodyVar, liveSteps } from "./campaigns";
 import { instantly, type LeadInput } from "./instantly";
 import type { LeadRow } from "./leads";
 
-import { toHtml } from "./merge";
+import { stripCodeFence, toHtml } from "./merge";
 import { ghlCreds, linkLead } from "./ghlsync";
 
 export { toHtml };
@@ -104,7 +104,7 @@ export async function pushApproved(campaignId: number): Promise<{ pushed: number
  * whitespace (a space when rendered), but as <br>s between table rows browsers hoist them above the
  * table, leaving a big empty band at the top. Newlines become spaces, so the email looks exactly as designed.
  */
-export const flattenHtml = (html: string) => html.replace(/\s*\r?\n\s*/g, " ").trim();
+export const flattenHtml = (html: string) => stripCodeFence(html).replace(/<!doctype[^>]*>/gi, "").replace(/\s*\r?\n\s*/g, " ").trim();
 
 type DraftCopy = { step: number; subject: string; body: string; format: string };
 

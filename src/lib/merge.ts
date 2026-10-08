@@ -84,8 +84,17 @@ export function fieldsUsed(text: string): string[] {
  * Clean pasted email HTML without changing how it looks: drop scripts, event handlers, document
  * wrappers and comments; keep inline styles, <style> blocks, tables, links and images.
  */
+/**
+ * Drop a Markdown code fence wrapped around pasted HTML (```html … ```). Copying an email out of an AI chat
+ * brings the fence along, and it then shows as literal text at the top of every send (seen live 2026-10-07).
+ */
+export function stripCodeFence(html: string): string {
+  return html.replace(/^\s*```[a-z]*\s*/i, "").replace(/\s*```\s*$/, "");
+}
+
 export function sanitizeEmailHtml(html: string): string {
-  return html
+  return stripCodeFence(html)
+    .replace(/<!doctype[^>]*>/gi, "")
     .replace(/<!--[\s\S]*?-->/g, "")
     .replace(/<script[\s\S]*?<\/script>/gi, "")
     .replace(/<(meta|link|title)[^>]*>(?:[\s\S]*?<\/title>)?/gi, "")

@@ -3,7 +3,7 @@ import { all, get, run, tx, logActivity, withLock } from "./db";
 import { requireClient, type Brief } from "./clients";
 import { requireCampaign, writeTarget, type Step } from "./campaigns";
 import type { LeadRow } from "./leads";
-import { htmlToText, renderMerge } from "./merge";
+import { htmlToText, renderMerge, stripCodeFence } from "./merge";
 import { refreshFromGhl } from "./ghlsync";
 import { llmJson } from "./llm";
 import { CATCH_ALL_FLAG } from "./verify";
@@ -104,7 +104,7 @@ function renderFixed(step: Step, lead: LeadRow): Rendered & { notes: string[] } 
   const mergeLead = { ...lead, fields };
   const s = renderMerge(step.subject ?? "", mergeLead);
   // The client's email is HTML, sent exactly as designed; only the merge fields change.
-  const b = renderMerge(step.body ?? "", mergeLead, true);
+  const b = renderMerge(stripCodeFence(step.body ?? ""), mergeLead, true);
   const missing = [...new Set([...s.missing, ...b.missing])];
   const fallback = [...new Set([...s.usedFallback, ...b.usedFallback])];
   const placeholder = b.text.match(/\[[^\]<]*(required|placeholder|insert|tbc|todo|xxx)[^\]<]*\]/i);
