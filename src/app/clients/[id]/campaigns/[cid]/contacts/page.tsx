@@ -62,7 +62,15 @@ export default async function CampaignContactsPage({ params, searchParams }: Pag
     <div className="flex flex-col gap-6">
       <AutoRefresh active={report.checking > 0 || report.portal.queued > 0} />
 
-      {/* 1. Add */}
+      {/* 1. Results: what to do with each group */}
+      {report.checked > 0 && (
+        <section className="flex flex-col gap-3">
+          <h2 className="font-semibold">Address check results: tag or clean up each group</h2>
+          <VerificationGroups clientId={clientId} campaignId={c.id} report={report} lists={lists} />
+        </section>
+      )}
+
+      {/* 2. Add */}
       <section className="grid grid-cols-[1fr_320px] gap-6">
         <LeadImporter clientId={clientId} campaigns={[{ id: c.id, name: c.name }]} campaignId={c.id} hasGhl={Boolean(client.ghl_location_id && client.ghl_token)} />
         <div className="card flex flex-col gap-3 p-5">
@@ -92,14 +100,6 @@ export default async function CampaignContactsPage({ params, searchParams }: Pag
           )}
         </div>
       </section>
-
-      {/* 2. Results */}
-      {report.checked > 0 && (
-        <section className="flex flex-col gap-3">
-          <h2 className="font-semibold">Address check results</h2>
-          <VerificationGroups clientId={clientId} campaignId={c.id} report={report} lists={lists} />
-        </section>
-      )}
 
       {/* 3. Everyone */}
       <section className="flex flex-col gap-2">

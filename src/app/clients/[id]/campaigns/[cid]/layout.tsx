@@ -24,14 +24,15 @@ export default async function CampaignLayout({ children, params }: LayoutProps<"
   const p = await campaignProgress(c.id);
   const base = `/clients/${clientId}/campaigns/${c.id}`;
 
+  // Each tile opens the place where that number can be acted on.
   const strip = [
-    { label: "Contacts", value: p.contacts, sub: p.checking ? `${n(p.checking)} being checked` : p.contacts ? "all checked" : "none added yet", tone: "" },
-    { label: "Verified", value: p.verified, sub: "address confirmed", tone: "text-go" },
-    { label: "Unable to verify", value: p.catchAll, sub: "catch-all company", tone: "text-wait" },
-    { label: "Invalid", value: p.invalid, sub: "set aside", tone: "text-bad" },
-    { label: "Ready to send", value: p.ready, sub: p.unconfirmed ? `+ ${n(p.unconfirmed)} unconfirmed` : p.preparing ? `preparing ${n(p.preparing)}` : "", tone: p.ready ? "text-go" : "" },
-    { label: "Sending", value: p.sending, sub: p.sent ? `${n(p.sent)} emails sent` : p.approved - p.sending > 0 ? `${n(p.approved - p.sending)} approved, not handed over` : "", tone: "" },
-    { label: "Replies", value: p.replies, sub: "", tone: "" },
+    { label: "Contacts", value: p.contacts, sub: p.checking ? `${n(p.checking)} being checked` : p.contacts ? "all checked" : "none added yet", tone: "", href: `${base}/contacts` },
+    { label: "Verified", value: p.verified, sub: p.verified ? "tag in the portal →" : "address confirmed", tone: "text-go", href: `${base}/contacts#check-verified` },
+    { label: "Unable to verify", value: p.catchAll, sub: p.catchAll ? "tag or delete →" : "catch-all company", tone: "text-wait", href: `${base}/contacts#check-catch_all` },
+    { label: "Invalid", value: p.invalid, sub: p.invalid ? "tag or delete →" : "set aside", tone: "text-bad", href: `${base}/contacts#check-invalid` },
+    { label: "Ready to send", value: p.ready, sub: p.unconfirmed ? `+ ${n(p.unconfirmed)} unconfirmed` : p.preparing ? `preparing ${n(p.preparing)}` : "", tone: p.ready ? "text-go" : "", href: `${base}/approve` },
+    { label: "Sending", value: p.sending, sub: p.sent ? `${n(p.sent)} emails sent` : p.approved - p.sending > 0 ? `${n(p.approved - p.sending)} approved, not handed over` : "", tone: "", href: base },
+    { label: "Replies", value: p.replies, sub: "", tone: "", href: `/inbox?client=${clientId}` },
   ];
 
   return (
@@ -68,11 +69,11 @@ export default async function CampaignLayout({ children, params }: LayoutProps<"
 
       <div className="grid grid-cols-7 gap-3">
         {strip.map((k) => (
-          <div key={k.label} className="card p-3">
+          <Link key={k.label} href={k.href} className="card p-3 transition-colors hover:border-ink">
             <div className="text-xs text-muted">{k.label}</div>
             <div className={`num text-xl font-semibold ${k.tone}`}>{n(k.value)}</div>
             <div className="text-xs text-muted">{k.sub || " "}</div>
-          </div>
+          </Link>
         ))}
       </div>
 

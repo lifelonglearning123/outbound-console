@@ -106,7 +106,7 @@ function GroupCard({
   const tag = GHL_TAGS[outcome];
   const canDelete = outcome !== "verified";
   return (
-    <div className="flex flex-col gap-3 rounded-md border border-line p-4">
+    <div id={`check-${outcome}`} className="flex scroll-mt-24 flex-col gap-3 rounded-md border border-line p-4 target:border-ink target:shadow-[0_0_0_3px_var(--go-soft)]">
       <div>
         <div className={`font-medium ${TONE[outcome]}`}>{OUTCOME_LABEL[outcome]} · <span className="num">{n(count)}</span></div>
         <div className="mt-1 inline-flex items-center gap-1.5 rounded border border-line bg-paper px-2 py-0.5 text-xs">
@@ -120,25 +120,29 @@ function GroupCard({
         Tagged <span className="num">{n(status.tagged)}</span>
         {canDelete && <> · deleted from the {PORTAL} <span className="num">{n(status.deleted)}</span></>}
       </p>
-      {connected && (status.tagTodo > 0 || (canDelete && status.deletable > 0)) && (
-        <div className="flex flex-col gap-2">
+      {connected && (status.tagTodo > 0 || (canDelete && status.deletable > 0)) ? (
+        <div className="flex flex-col gap-2 rounded-md bg-paper p-3">
+          <div className="text-xs font-medium uppercase tracking-wide text-muted">What you can do</div>
           {status.tagTodo > 0 && (
             <form action={tagVerificationGroup.bind(null, clientId, outcome, campaignId)}>
-              <SubmitButton className={outcome === "verified" ? "btn-go" : "btn"} pendingLabel="Starting…">Tag {n(status.tagTodo)} as &ldquo;{tag}&rdquo;</SubmitButton>
+              <SubmitButton className={outcome === "invalid" ? "btn" : "btn-go"} pendingLabel="Starting…">Tag {n(status.tagTodo)} as &ldquo;{tag}&rdquo;</SubmitButton>
             </form>
           )}
           {canDelete && status.deletable > 0 && (
             <form action={deleteVerificationGroup.bind(null, clientId, outcome as "invalid" | "catch_all", campaignId)}>
               <ConfirmButton
-                className="btn text-bad"
+                className={outcome === "invalid" ? "btn-bad" : "btn text-bad"}
                 message={`Delete ${n(status.deletable)} ${OUTCOME_LABEL[outcome].toLowerCase()} contacts from the ${PORTAL}? This can't be undone. They stay listed here for your records.`}
               >
                 Delete {n(status.deletable)} from the {PORTAL}
               </ConfirmButton>
             </form>
           )}
+          {outcome === "invalid" && status.deletable > 0 && <p className="text-xs text-muted">Deleting keeps the database clean; tagging keeps the contact but marks it.</p>}
         </div>
-      )}
+      ) : connected && count > 0 ? (
+        <p className="text-xs text-muted">Done: nothing left to tag or delete in this group.</p>
+      ) : null}
       {leads.length > 0 && (
         <details>
           <summary className="cursor-pointer text-sm font-medium">Show the {n(leads.length)} emails</summary>
