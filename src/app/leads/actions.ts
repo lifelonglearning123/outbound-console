@@ -11,7 +11,7 @@ import { contactsWithTag, listTags } from "@/lib/ghl";
 import { runWriter, rewriteStep } from "@/lib/writer";
 import { pushApproved } from "@/lib/push";
 import { linkPendingLeads } from "@/lib/ghlsync";
-import { queueVerification, runVerifier } from "@/lib/verify";
+import { queueVerification, runVerifier, PASSED } from "@/lib/verify";
 import { queueTagging, queueDeletion, runVerificationActions, writeVerificationSummary, GHL_TAGS, OUTCOME_LABEL, PORTAL, type Outcome } from "@/lib/verifyReport";
 import { approveAndSend, type BatchGroup } from "@/lib/progress";
 
@@ -27,10 +27,11 @@ export async function addManualLead(
   const c = await requireCampaign(campaignId);
   const r = await importLeads(clientId, campaignId, "manual", "typed in", [lead]);
   after(async () => linkPendingLeads(await requireClient(clientId))); // Nexus Portal is the source of truth: add the contact there
-  if (writeNow && (r.added || r.updated)) {
-    await run("UPDATE leads SET stage = 'drafting' WHERE client_id = ? AND email = ? AND stage = 'new'", clientId, lead.email.trim().toLowerCase());
-    await logActivity(clientId, "write", `Preparing emails for ${lead.email} in "${c.name}"`);
-    after(runWriter);
+  // The address check runs first; a contact that passes has its email prepared by the checker (writeNow is implied).
+  void writeNow;
+  if (r.added || r.updated) {
+    await logActivity(clientId, "verify", `Checking ${lead.email}'s address for "${c.name}"`);
+    after(runVerifier);
   }
   revalidatePath("/", "layout");
   return r;
@@ -42,6 +43,7 @@ export async function importCsvLeads(clientId: number, campaignId: number, fileN
   await requireCampaign(campaignId);
   const r = await importLeads(clientId, campaignId, "csv", fileName, leads);
   after(async () => linkPendingLeads(await requireClient(clientId))); // Nexus Portal is the source of truth: add the contacts there
+  if (r.added || r.updated) after(runVerifier); // every new contact is checked before anything else
   revalidatePath("/", "layout");
   return r;
 }
@@ -80,6 +82,7 @@ export async function importGhlLeads(clientId: number, campaignId: number, tag: 
       ),
     }));
     const r = await importLeads(clientId, campaignId, "ghl", `tag: ${tag}`, leads);
+    if (r.added || r.updated) after(runVerifier); // every new contact is checked before anything else
     revalidatePath("/", "layout");
     return r;
   } catch (e) {
@@ -144,7 +147,8 @@ export async function writeEmails(campaignId: number, includeErrors = false) {
   await requireClientAccess(await clientOfCampaign(campaignId));
   const c = await requireCampaign(campaignId);
   const n = (await run(
-    `UPDATE leads SET stage = 'drafting', stage_message = NULL WHERE campaign_id = ? AND (stage = 'new' ${includeErrors ? "OR (stage = 'error' AND pushed_at IS NULL AND instantly_lead_id IS NULL)" : ""})`,
+    `UPDATE leads SET stage = 'drafting', stage_message = NULL WHERE campaign_id = ? AND ${PASSED}
+       AND (stage = 'new' ${includeErrors ? "OR (stage = 'error' AND pushed_at IS NULL AND instantly_lead_id IS NULL)" : ""})`,
     campaignId,
   )).changes;
   await logActivity(c.client_id, "write", `Preparing emails for ${n} contacts in "${c.name}"`);
@@ -196,6 +200,7 @@ export async function saveDraft(draftId: number, subject: string, body: string) 
 /** Approve every step of a lead (after saving any edits the reviewer made). */
 export async function approveLead(leadId: number, edits: { id: number; subject: string; body: string }[] = []) {
   await requireClientAccess(await clientOfLead(leadId));
+  if (!(await get(`SELECT 1 FROM leads WHERE id = ? AND ${PASSED}`, leadId))) throw new Error("This contact's address hasn't been checked yet, so it can't be approved.");
   await tx(async () => {
     for (const e of edits) {
       const d = await get<{ subject: string; body: string }>("SELECT subject, body FROM drafts WHERE id = ? AND lead_id = ?", e.id, leadId);
@@ -283,6 +288,7 @@ export async function approveAllUnflagged(clientId: number | null, campaignId: n
   const ids = (await all<{ id: number }>(
     `SELECT l.id FROM leads l JOIN campaigns c ON c.id = l.campaign_id
      WHERE l.stage IN ('review', 'extend_review') ${clientId ? "AND l.client_id = ?" : ""} ${campaignId ? "AND l.campaign_id = ?" : ""}
+       AND l.${PASSED}
        AND NOT EXISTS (SELECT 1 FROM drafts d WHERE d.lead_id = l.id AND d.flags IS NOT NULL
                        AND (l.stage = 'review' OR d.step > COALESCE(c.hold_after, 0)))`,
     ...(clientId ? [clientId] : []), ...(campaignId ? [campaignId] : []),

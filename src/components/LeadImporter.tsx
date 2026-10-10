@@ -48,7 +48,7 @@ export function LeadImporter({
 }) {
   const [mode, setMode] = useState<"manual" | "csv" | "ghl">("manual");
   const [manual, setManual] = useState({ email: "", first_name: "", last_name: "", company: "", title: "", website: "" });
-  const [writeNow, setWriteNow] = useState(true);
+  const writeNow = true; // the address check decides; a contact that passes is prepared automatically
   const [campaignId, setCampaignId] = useState<number>(fixedCampaignId ?? campaigns[0]?.id ?? 0);
   const [file, setFile] = useState<{ name: string; headers: string[]; rows: Record<string, string>[] } | null>(null);
   const [map, setMap] = useState<Partial<Record<Col, string>>>({});
@@ -177,10 +177,7 @@ export function LeadImporter({
               </div>
             ))}
           </div>
-          <label className="flex items-center gap-2 text-sm">
-            <input type="checkbox" checked={writeNow} onChange={(e) => setWriteNow(e.target.checked)} />
-            Prepare this contact&apos;s email straight away
-          </label>
+          <p className="text-xs text-muted">The address is checked first; if it passes, the email is prepared and the contact appears as ready to send.</p>
           <button className="btn-go self-start" disabled={pending || !manual.email}>
             {pending ? "Adding…" : "Add contact"}
           </button>

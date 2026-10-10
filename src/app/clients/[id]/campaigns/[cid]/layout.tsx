@@ -25,11 +25,13 @@ export default async function CampaignLayout({ children, params }: LayoutProps<"
   const base = `/clients/${clientId}/campaigns/${c.id}`;
 
   const strip = [
-    { label: "Contacts", value: p.contacts, sub: p.contacts ? `${n(p.checked)} checked` : "none added yet" },
-    { label: "Waiting for approval", value: p.waiting, sub: p.preparing ? `preparing ${n(p.preparing)} more` : p.waiting ? "" : "nothing waiting" },
-    { label: "Approved", value: p.approved, sub: p.approved - p.sending > 0 ? `${n(p.approved - p.sending)} not handed over yet` : p.sending ? `${n(p.sending)} being sent to` : "" },
-    { label: "Emails sent", value: p.sent, sub: "" },
-    { label: "Replies", value: p.replies, sub: "" },
+    { label: "Contacts", value: p.contacts, sub: p.checking ? `${n(p.checking)} being checked` : p.contacts ? "all checked" : "none added yet", tone: "" },
+    { label: "Verified", value: p.verified, sub: "address confirmed", tone: "text-go" },
+    { label: "Unable to verify", value: p.catchAll, sub: "catch-all company", tone: "text-wait" },
+    { label: "Invalid", value: p.invalid, sub: "set aside", tone: "text-bad" },
+    { label: "Ready to send", value: p.ready, sub: p.unconfirmed ? `+ ${n(p.unconfirmed)} unconfirmed` : p.preparing ? `preparing ${n(p.preparing)}` : "", tone: p.ready ? "text-go" : "" },
+    { label: "Sending", value: p.sending, sub: p.sent ? `${n(p.sent)} emails sent` : p.approved - p.sending > 0 ? `${n(p.approved - p.sending)} approved, not handed over` : "", tone: "" },
+    { label: "Replies", value: p.replies, sub: "", tone: "" },
   ];
 
   return (
@@ -64,11 +66,11 @@ export default async function CampaignLayout({ children, params }: LayoutProps<"
         ]}
       />
 
-      <div className="grid grid-cols-5 gap-3">
+      <div className="grid grid-cols-7 gap-3">
         {strip.map((k) => (
           <div key={k.label} className="card p-3">
             <div className="text-xs text-muted">{k.label}</div>
-            <div className="num text-xl font-semibold">{n(k.value)}</div>
+            <div className={`num text-xl font-semibold ${k.tone}`}>{n(k.value)}</div>
             <div className="text-xs text-muted">{k.sub || " "}</div>
           </div>
         ))}
@@ -79,7 +81,7 @@ export default async function CampaignLayout({ children, params }: LayoutProps<"
         tabs={[
           { href: "/contacts", label: "Contacts" },
           { href: "/email", label: c.managed ? "Email" : "Settings" },
-          { href: "/approve", label: "Approve", count: p.waiting },
+          { href: "/approve", label: "Approve", count: p.ready },
           { href: "", label: "Sending" },
         ]}
       />

@@ -47,6 +47,7 @@ export type ImportResult = { added: number; updated: number; skippedInvalid: num
 /**
  * Insert leads for a client and attach them to a campaign. A lead already in the client
  * (same email) is left alone if it has moved past 'new'; otherwise its fields are refreshed.
+ * Every new lead starts queued for an address check (verify.ts); nothing is prepared or approved before the result.
  */
 export async function importLeads(
   clientId: number,
@@ -78,16 +79,17 @@ export async function importLeads(
       if (!existing) {
         await run(
           `INSERT INTO leads (client_id, campaign_id, email, first_name, last_name, company, title, phone, website, fields,
-             source, source_ref, ghl_contact_id)
+             source, source_ref, ghl_contact_id, verification)
            VALUES (@clientId, @campaignId, @email, @first_name, @last_name, @company, @title, @phone, @website, @fields,
-             @source, @sourceRef, @ghl)`,
+             @source, @sourceRef, @ghl, 'queued')`,
           values,
         );
         r.added++;
       } else if (existing.stage === "new") {
         await run(
           `UPDATE leads SET campaign_id = @campaignId, first_name = @first_name, last_name = @last_name, company = @company,
-             title = @title, phone = @phone, website = @website, fields = @fields, ghl_contact_id = COALESCE(@ghl, ghl_contact_id)
+             title = @title, phone = @phone, website = @website, fields = @fields, ghl_contact_id = COALESCE(@ghl, ghl_contact_id),
+             verification = COALESCE(verification, 'queued')
            WHERE id = @id`,
           { ...values, id: existing.id },
         );

@@ -2,6 +2,7 @@ import "server-only";
 import { all, get, run, tx, logActivity, setSetting, withLock } from "./db";
 import { requireClient } from "./clients";
 import { instantly, InstantlyError, type EmailVerification } from "./instantly";
+import { runWriter } from "./writer";
 
 /**
  * Email verification through Instantly, before a lead can be approved and pushed.
@@ -16,6 +17,8 @@ import { instantly, InstantlyError, type EmailVerification } from "./instantly";
  *   catch_all  the domain accepts anything, so the address can't be confirmed (a reviewer flag is added)
  *   invalid    the address doesn't exist; the lead is rejected unless it's already in Instantly
  *   pending    Instantly is still checking
+ * The check is the gate: a contact that passes (verified or catch_all) has its email prepared straight away, and
+ * nothing unchecked can be approved. If Instantly has no credits, contacts stay queued until it does.
  */
 
 const CONCURRENCY = 5;
@@ -24,12 +27,14 @@ const POLL_AFTER_MS = 15_000; // how long to leave a pending check before asking
 const CATCH_ALL_FLAG = "Unable to verify: the company accepts every address, so Instantly couldn't confirm this one exists";
 
 export const VERIFICATION_LABEL: Record<string, string> = {
-  queued: "Checking…",
-  pending: "Checking…",
+  queued: "Checking",
+  pending: "Checking",
   verified: "Verified",
   catch_all: "Unable to verify",
   invalid: "Invalid",
 };
+/** Results a contact can be approved with. */
+export const PASSED = `verification IN ('verified', 'catch_all')`;
 
 /** Leads that can still be checked: not yet in Instantly, not rejected, never checked. */
 const CHECKABLE = `pushed_at IS NULL AND instantly_lead_id IS NULL AND stage NOT IN ('rejected', 'removed') AND verification IS NULL`;
@@ -54,6 +59,7 @@ type Tally = { verified: number; catch_all: number; invalid: number };
 async function verifyAll() {
   const deadline = Date.now() + BUDGET_MS;
   const tallies = new Map<number, Tally>();
+  let advanced = 0; // contacts that passed and now need their email prepared
   const stopped = new Set<number>(); // clients whose key or plan can't verify right now
   const apis = new Map<number, ReturnType<typeof instantly>>();
   const api = async (clientId: number) => {
@@ -99,6 +105,10 @@ async function verifyAll() {
           const t = tallies.get(lead.client_id) ?? { verified: 0, catch_all: 0, invalid: 0 };
           t[outcome]++;
           tallies.set(lead.client_id, t);
+          if (outcome !== "invalid") {
+            // Passed: prepare the email now, so the contact turns up as ready to send without another click.
+            advanced += (await run("UPDATE leads SET stage = 'drafting', stage_message = NULL WHERE id = ? AND stage = 'new'", lead.id)).changes;
+          }
         }
         continue;
       }
@@ -109,11 +119,11 @@ async function verifyAll() {
         if (stopped.has(lead.client_id)) continue;
         stopped.add(lead.client_id);
         const why = /credit/i.test(e.message)
-          ? "Instantly has no verification credits left. Buy a credit pack in Instantly (Settings → Billing), then click Check again."
+          ? "Instantly has no verification credits left, so new contacts are waiting to be checked. Buy a credit pack in Instantly (Settings → Billing); checking carries on by itself."
           : /scope/i.test(e.message) || status === 403
-            ? `Instantly refused (${e.message}). The API key needs the email verification scope.`
-            : `Instantly refused (${e.message}).`;
-        await run("UPDATE leads SET verification = NULL WHERE client_id = ? AND verification = 'queued'", lead.client_id);
+            ? `Instantly refused (${e.message}). The API key needs the email verification scope. Contacts wait until it's fixed.`
+            : `Instantly refused (${e.message}). Contacts wait until it's fixed.`;
+        // Contacts stay queued: the next run tries again, so buying credits is enough to get going.
         await setSetting(`verify_error_${lead.client_id}`, why);
         await logActivity(lead.client_id, "error", `Email verification stopped: ${why}`);
       } else if (status === 404 && lead.verification === "pending") {
@@ -131,9 +141,10 @@ async function verifyAll() {
     await logActivity(
       clientId,
       "verify",
-      `Checked ${t.verified + t.catch_all + t.invalid} email addresses: ${t.verified} verified, ${t.catch_all} unable to verify, ${t.invalid} invalid (rejected)`,
+      `Checked ${t.verified + t.catch_all + t.invalid} email addresses: ${t.verified} verified, ${t.catch_all} unable to verify, ${t.invalid} invalid (set aside)`,
     );
   }
+  if (advanced) await runWriter();
 }
 
 /** Record one verification answer on its lead. Returns the final outcome, or null while still pending. */

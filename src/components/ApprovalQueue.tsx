@@ -141,7 +141,7 @@ export function ApprovalQueue({
     <div className="flex flex-col gap-4">
       <div className="flex items-center justify-between gap-4">
         <div className="flex items-center gap-4 text-sm">
-          <span><span className="num font-semibold text-wait">{queue.length}</span> waiting for approval</span>
+          <span><span className="num font-semibold text-go">{queue.length}</span> ready to send</span>
           {draftingCount > 0 && <span className="text-info">preparing {draftingCount} more…</span>}
           <span className="text-xs text-muted">
             <kbd>j</kbd>/<kbd>k</kbd> next/previous · <kbd>a</kbd> approve · <kbd>r</kbd> reject
@@ -178,11 +178,11 @@ export function ApprovalQueue({
       {message && <div className="rounded-md border border-line bg-card px-3 py-2 text-sm">{message}</div>}
 
       {!selected ? (
-        <div className="card p-8 text-center text-sm text-muted">Nothing waiting for approval.</div>
+        <div className="card p-8 text-center text-sm text-muted">Nothing ready to send.</div>
       ) : (
         <div className="grid grid-cols-[280px_1fr] gap-4">
           <ul className="card max-h-[calc(100vh-220px)] overflow-y-auto">
-            <li className="border-b border-line bg-paper px-3 py-1.5 text-xs font-medium uppercase tracking-wide text-muted">Waiting for approval</li>
+            <li className="border-b border-line bg-paper px-3 py-1.5 text-xs font-medium uppercase tracking-wide text-muted">Ready to send</li>
             {queue.map((l) => (
               <li key={l.id}>
                 <button

@@ -40,11 +40,13 @@ export default async function CampaignSendingPage({ params }: PageProps<"/client
   const next =
     p.contacts === 0
       ? { href: `${base}/contacts`, text: "Add contacts to this campaign." }
-      : p.waiting > 0 || p.approved - p.sending > 0
-        ? { href: `${base}/approve`, text: `${n(p.waiting + (p.approved - p.sending))} contacts are ready for you to approve and send.` }
-        : p.checked < p.contacts
-          ? { href: `${base}/contacts`, text: "Check the contacts' addresses before sending." }
-          : null;
+      : p.ready > 0 || p.approved - p.sending > 0
+        ? { href: `${base}/approve`, text: `${n(p.ready + (p.approved - p.sending))} contacts are ready to send.` }
+        : p.checking > 0
+          ? { href: `${base}/contacts`, text: `${n(p.checking)} addresses are still being checked.` }
+          : p.unconfirmed > 0
+            ? { href: `${base}/approve`, text: `${n(p.unconfirmed)} unconfirmed contacts could be sent in small batches.` }
+            : null;
 
   return (
     <div className="flex flex-col gap-6">

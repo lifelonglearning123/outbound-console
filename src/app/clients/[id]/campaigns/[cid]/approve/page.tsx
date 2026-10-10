@@ -27,7 +27,7 @@ export default async function CampaignApprovePage({ params, searchParams }: Page
   const b = await batchInfo(c.id);
   const counts = await approvalCounts(clientId, c.id);
   const base = `/clients/${clientId}/campaigns/${c.id}`;
-  const waiting = b.groups.verified + b.groups.catch_all + b.groups.unchecked;
+  const waiting = b.groups.verified + b.groups.catch_all;
 
   if (!b.fixed || eachOne) {
     const leads = await reviewQueue(clientId, 200, c.id);
@@ -57,7 +57,11 @@ export default async function CampaignApprovePage({ params, searchParams }: Page
 
       {waiting === 0 ? (
         <div className="card p-8 text-center text-sm text-muted">
-          {counts.drafting > 0 ? `Preparing ${n(counts.drafting)} emails…` : <>Nothing waiting for approval. <Link href={`${base}/contacts`} className="underline">Add contacts</Link> to get started.</>}
+          {counts.drafting > 0
+            ? `Preparing ${n(counts.drafting)} emails…`
+            : b.checking > 0
+              ? `${n(b.checking)} addresses are still being checked. Contacts appear here once they pass.`
+              : <>Nothing ready to send. <Link href={`${base}/contacts`} className="underline">Add contacts</Link> to get started.</>}
         </div>
       ) : (
         <div className="grid grid-cols-[1fr_380px] gap-6">
@@ -83,30 +87,24 @@ export default async function CampaignApprovePage({ params, searchParams }: Page
             <Group
               campaignId={c.id}
               group="verified"
-              title="Verified addresses"
+              title="Ready to send"
               count={b.groups.verified}
               tone="text-go"
-              note="Confirmed mailboxes. Safe to send to all of them."
+              note="Verified addresses with their email prepared. Safe to send to all of them."
               primary
             />
             <Group
               campaignId={c.id}
               group="catch_all"
-              title="Unable to verify"
+              title="Unconfirmed, your call"
               count={b.groups.catch_all}
               tone="text-wait"
               note="Their company accepts every address, so some may bounce. Send a few at a time and watch the bounce figure on the Sending tab."
               batch
             />
-            <Group
-              campaignId={c.id}
-              group="unchecked"
-              title="Not checked yet"
-              count={b.groups.unchecked}
-              tone="text-muted"
-              note="Sending unchecked addresses risks bounces."
-              checkHref={`${base}/contacts`}
-            />
+            {b.checking > 0 && (
+              <p className="text-xs text-muted">{n(b.checking)} more contacts are still being checked and will appear here once they pass.</p>
+            )}
             {b.flagged > 0 && (
               <p className="text-xs text-muted">
                 {n(b.flagged)} of these have a note, such as a missing first name. Approving a group sends them as they are.{" "}
@@ -121,17 +119,16 @@ export default async function CampaignApprovePage({ params, searchParams }: Page
 }
 
 function Group({
-  campaignId, group, title, count, tone, note, primary, batch, checkHref,
+  campaignId, group, title, count, tone, note, primary, batch,
 }: {
   campaignId: number;
-  group: "verified" | "catch_all" | "unchecked";
+  group: "verified" | "catch_all";
   title: string;
   count: number;
   tone: string;
   note: string;
   primary?: boolean;
   batch?: boolean;
-  checkHref?: string;
 }) {
   if (count === 0) return null;
   const action = approveGroupAndSend.bind(null, campaignId, group);
@@ -139,7 +136,6 @@ function Group({
     <div className="card flex flex-col gap-2 p-4">
       <div className={`font-medium ${tone}`}>{title} · <span className="num">{n(count)}</span></div>
       <p className="text-sm text-muted">{note}</p>
-      {checkHref && <Link href={checkHref} className="text-sm underline">Check their addresses first</Link>}
       {batch ? (
         <form action={action} className="flex items-center gap-2">
           <SubmitButton pendingLabel="Approving…">Approve and send the next</SubmitButton>

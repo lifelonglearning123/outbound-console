@@ -93,7 +93,7 @@ export function HoldPanel({
         <li>
           2. Your review:{" "}
           {s.review ? (
-            <Link className="text-wait underline" href={`/clients/${clientId}/approvals`}>{s.review} waiting for approval</Link>
+            <Link className="text-wait underline" href={`/clients/${clientId}/campaigns/${campaignId}/approve`}>{s.review} ready to send</Link>
           ) : (
             <span className="text-go">done</span>
           )}
