@@ -1,15 +1,33 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useSearchParams } from "next/navigation";
 
-export function Tabs({ base, tabs }: { base: string; tabs: { href: string; label: string; count?: number }[] }) {
+export type Tab = {
+  /** Relative to `base`, or a full path when `absolute` is set (may carry a query string). */
+  href: string;
+  label: string;
+  count?: number;
+  absolute?: boolean;
+};
+
+export function Tabs({ base, tabs }: { base: string; tabs: Tab[] }) {
   const path = usePathname();
+  const query = useSearchParams();
+  const isActive = (t: Tab, href: string) => {
+    if (t.absolute) {
+      const [p, q] = href.split("?");
+      if (path !== p) return false;
+      if (!q) return true;
+      return [...new URLSearchParams(q).entries()].every(([k, v]) => query.get(k) === v);
+    }
+    return t.href === "" ? path === base : path.startsWith(href);
+  };
   return (
     <div className="flex gap-1 border-b border-line">
       {tabs.map((t) => {
-        const href = `${base}${t.href}`;
-        const active = t.href === "" ? path === base : path.startsWith(href);
+        const href = t.absolute ? t.href : `${base}${t.href}`;
+        const active = isActive(t, href);
         return (
           <Link
             key={t.href}

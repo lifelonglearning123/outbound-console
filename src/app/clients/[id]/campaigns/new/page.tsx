@@ -17,7 +17,13 @@ export default async function NewCampaignPage({ params }: PageProps<"/clients/[i
     ghlTags = await listTags({ locationId: ghlClient.ghl_location_id, token: ghlClient.ghl_token }).catch(() => []);
   }
   return (
+    <div className="flex flex-col gap-4">
+      <div>
+        <h2 className="text-xl font-semibold">New campaign</h2>
+        <p className="text-sm text-muted">Three short steps. You add contacts once it exists.</p>
+      </div>
     <CampaignForm
+      wizard
       action={saveCampaign.bind(null, id, null)}
       name=""
       steps={DEFAULT_STEPS}
@@ -33,5 +39,6 @@ export default async function NewCampaignPage({ params }: PageProps<"/clients/[i
       ghlTag={null}
       ghlTags={ghlTags}
     />
+    </div>
   );
 }

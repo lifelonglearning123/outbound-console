@@ -7,6 +7,7 @@ import { reviewQueue, approvalCounts } from "@/lib/approvals";
 import { approveGroupAndSend, sendApproved } from "@/app/leads/actions";
 import { ApprovalQueue } from "@/components/ApprovalQueue";
 import { AutoRefresh } from "@/components/AutoRefresh";
+import { SubmitButton } from "@/components/SubmitButton";
 import { htmlToText, toHtml } from "@/lib/merge";
 
 const n = (v: number) => v.toLocaleString("en-GB");
@@ -50,7 +51,7 @@ export default async function CampaignApprovePage({ params, searchParams }: Page
       {b.approvedNotSent > 0 && (
         <div className="card flex items-center justify-between gap-4 border-wait/40 bg-wait-soft/40 p-4 text-sm">
           <span>{n(b.approvedNotSent)} contacts are approved but haven&apos;t been handed over for sending yet.</span>
-          <form action={sendApproved.bind(null, c.id)}><button className="btn-go">Send {n(b.approvedNotSent)} now</button></form>
+          <form action={sendApproved.bind(null, c.id)}><SubmitButton className="btn-go" pendingLabel="Sending…">Send {n(b.approvedNotSent)} now</SubmitButton></form>
         </div>
       )}
 
@@ -141,12 +142,12 @@ function Group({
       {checkHref && <Link href={checkHref} className="text-sm underline">Check their addresses first</Link>}
       {batch ? (
         <form action={action} className="flex items-center gap-2">
-          <button className="btn">Approve and send the next</button>
+          <SubmitButton pendingLabel="Approving…">Approve and send the next</SubmitButton>
           <input name="limit" type="number" min={1} max={count} defaultValue={Math.min(30, count)} className="field w-20" aria-label="How many" />
         </form>
       ) : (
         <form action={action}>
-          <button className={primary ? "btn-go" : "btn"}>Approve and send all {n(count)}</button>
+          <SubmitButton className={primary ? "btn-go" : "btn"} pendingLabel="Approving…">Approve and send all {n(count)}</SubmitButton>
         </form>
       )}
     </div>

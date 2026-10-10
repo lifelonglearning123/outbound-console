@@ -5,7 +5,8 @@ import { usePathname } from "next/navigation";
 
 type NavClient = { id: number; name: string; keyStatus: string | null };
 
-const MAIN = [
+// Cross-client views. Admins only: a client login works inside its own client.
+const ALL_CLIENTS = [
   { href: "/", label: "Overview" },
   { href: "/approvals", label: "Approvals" },
   { href: "/inbox", label: "Inbox" },
@@ -24,22 +25,25 @@ export function Nav({ clients, user }: { clients: NavClient[]; user: { email: st
 
   return (
     <aside className="sticky top-0 flex h-screen w-56 print:hidden shrink-0 flex-col gap-6 border-r border-line bg-card px-3 py-5">
-      <Link href="/" className="px-2.5">
+      <Link href={user.isAdmin ? "/" : clients[0] ? `/clients/${clients[0].id}/campaigns` : "/account"} className="px-2.5">
         <div className="text-[15px] font-semibold tracking-tight">Outbound Console</div>
-        <div className="text-xs text-muted">Instantly control room</div>
+        <div className="text-xs text-muted">{user.isAdmin ? "Instantly control room" : "Cold email campaigns"}</div>
       </Link>
 
-      <nav className="flex flex-col gap-0.5">
-        {MAIN.map((m) => (
-          <Link key={m.href} href={m.href} className={item(m.href, isActive(m.href))}>
-            {m.label}
-          </Link>
-        ))}
-      </nav>
+      {user.isAdmin && (
+        <nav className="flex flex-col gap-0.5">
+          <div className="px-2.5 pb-1 text-xs font-medium uppercase tracking-wide text-muted">All clients</div>
+          {ALL_CLIENTS.map((m) => (
+            <Link key={m.href} href={m.href} className={item(m.href, isActive(m.href))}>
+              {m.label}
+            </Link>
+          ))}
+        </nav>
+      )}
 
-      <div className="flex min-h-0 flex-col gap-0.5">
+      <nav className="flex min-h-0 flex-col gap-0.5">
         <div className="flex items-center justify-between px-2.5 pb-1">
-          <span className="text-xs font-medium uppercase tracking-wide text-muted">Clients</span>
+          <span className="text-xs font-medium uppercase tracking-wide text-muted">{clients.length === 1 && !user.isAdmin ? "Your account" : "Clients"}</span>
           {user.isAdmin && (
             <Link href="/clients/new" className="text-xs text-muted hover:text-ink" title="Add client">
               + Add
@@ -52,19 +56,21 @@ export function Nav({ clients, user }: { clients: NavClient[]; user: { email: st
             const href = `/clients/${c.id}`;
             const active = path === href || path.startsWith(`${href}/`);
             return (
-              <Link key={c.id} href={href} className={item(href, active)}>
+              <Link key={c.id} href={user.isAdmin ? href : `${href}/campaigns`} className={item(href, active)}>
                 <span className="truncate">{c.name}</span>
-                <span
-                  className={`h-1.5 w-1.5 shrink-0 rounded-full ${
-                    c.keyStatus === "ok" ? "bg-go" : c.keyStatus === "error" ? "bg-bad" : "bg-line"
-                  }`}
-                  title={c.keyStatus === "ok" ? "Instantly connected" : c.keyStatus === "error" ? "Key problem" : "Key not checked"}
-                />
+                {user.isAdmin && (
+                  <span
+                    className={`h-1.5 w-1.5 shrink-0 rounded-full ${
+                      c.keyStatus === "ok" ? "bg-go" : c.keyStatus === "error" ? "bg-bad" : "bg-line"
+                    }`}
+                    title={c.keyStatus === "ok" ? "Instantly connected" : c.keyStatus === "error" ? "Key problem" : "Key not checked"}
+                  />
+                )}
               </Link>
             );
           })}
         </div>
-      </div>
+      </nav>
       <div className="mt-auto flex flex-col gap-0.5 border-t border-line pt-3">
         {user.isAdmin && (
           <Link href="/admin/users" className={item("/admin/users", path.startsWith("/admin/users"))}>Users</Link>

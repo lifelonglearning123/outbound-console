@@ -17,7 +17,7 @@ type ClientRow = {
 export default async function OverviewPage() {
   const u = await requireUser();
   // Client logins work inside their own client; this cross-client page is for admins.
-  if (u.role !== "admin") redirect(u.clientIds.length ? `/clients/${u.clientIds[0]}` : "/account");
+  if (u.role !== "admin") redirect(u.clientIds.length ? `/clients/${u.clientIds[0]}/campaigns` : "/account");
   const clients = await listClients();
   const today = new Date().toISOString().slice(0, 10);
   const week = new Date(nowMs() - 7 * 86400_000).toISOString();

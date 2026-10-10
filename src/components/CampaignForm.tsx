@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
+import { SubmitButton } from "./SubmitButton";
 import type { Schedule, Step } from "@/lib/campaigns";
 import { INSTANTLY_TIMEZONES } from "@/lib/timezones";
 import { EmailEditor } from "./EmailEditor";
@@ -26,7 +27,12 @@ type Props = {
   lockedLive: number;
   ghlTag: string | null;
   ghlTags: string[] | null; // null = client has no Nexus Portal connection
+  /** New campaign: show the sections three steps at a time, with a check before creating. */
+  wizard?: boolean;
 };
+
+const WIZARD_STEPS = ["Name and email", "Who it goes to and when", "Check and create"];
+const DAY_LABEL: Record<string, string> = { 1: "Mon", 2: "Tue", 3: "Wed", 4: "Thu", 5: "Fri", 6: "Sat", 0: "Sun" };
 
 export function CampaignForm(p: Props) {
   // uid keeps each step's editor attached to the right step when steps are removed.
@@ -35,12 +41,48 @@ export function CampaignForm(p: Props) {
   const effectiveHold = p.lockedLive ? (steps.length > p.lockedLive ? p.lockedLive : 0) : hold && hold < steps.length ? hold : 0;
   const update = (i: number, patch: Partial<Step>) => setSteps(steps.map((s, j) => (j === i ? { ...s, ...patch } : s)));
 
+  // Wizard (new campaign only): one group of sections at a time. Hidden sections still submit with the form.
+  const formRef = useRef<HTMLFormElement>(null);
+  const [stage, setStage] = useState(1);
+  const [summary, setSummary] = useState<{ name: string; days: string; from: string; to: string; cap: string; accounts: number; tag: string } | null>(null);
+  const show = (n: number) => !p.wizard || stage === n;
+  const next = () => {
+    const f = formRef.current;
+    if (!f || !f.reportValidity()) return;
+    if (stage === 2) {
+      const d = new FormData(f);
+      setSummary({
+        name: String(d.get("name") ?? ""),
+        days: d.getAll("days").map((v) => DAY_LABEL[String(v)] ?? String(v)).join(", ") || "no days chosen",
+        from: String(d.get("from") ?? ""),
+        to: String(d.get("to") ?? ""),
+        cap: String(d.get("daily_limit") ?? ""),
+        accounts: d.getAll("accounts").length,
+        tag: String(d.get("ghl_tag") ?? ""),
+      });
+    }
+    setStage(stage + 1);
+    window.scrollTo({ top: 0 });
+  };
+
   return (
-    <form action={p.action} className="flex max-w-3xl flex-col gap-6">
+    <form ref={formRef} action={p.action} className="flex max-w-3xl flex-col gap-6">
+      {p.wizard && (
+        <ol className="flex gap-6 text-sm">
+          {WIZARD_STEPS.map((label, i) => (
+            <li key={label} className={`flex items-center gap-2 ${stage === i + 1 ? "font-medium text-ink" : stage > i + 1 ? "text-go" : "text-muted"}`}>
+              <span className={`num flex h-5 w-5 items-center justify-center rounded-full border text-xs ${stage === i + 1 ? "border-ink" : stage > i + 1 ? "border-go bg-go text-white" : "border-line"}`}>{i + 1}</span>
+              {label}
+            </li>
+          ))}
+        </ol>
+      )}
+
+      <div hidden={!show(1)} className="flex flex-col gap-6">
       <section className="card flex flex-col gap-4 p-5">
         <div>
           <label className="label" htmlFor="name">Campaign name</label>
-          <input id="name" name="name" required defaultValue={p.name} readOnly={!p.managed} className="field" />
+          <input id="name" name="name" required defaultValue={p.name} readOnly={!p.managed} className="field" placeholder="e.g. HR leaders, autumn wellbeing series" />
         </div>
       </section>
 
@@ -163,7 +205,9 @@ export function CampaignForm(p: Props) {
           <p className="text-xs text-muted">Changing the sequence later only affects emails prepared after the change.</p>
         </section>
       )}
+      </div>
 
+      <div hidden={!show(2)} className="flex flex-col gap-6">
       {p.managed && (
         <section className="card flex flex-col gap-3 p-5">
           <div>
@@ -244,8 +288,30 @@ export function CampaignForm(p: Props) {
         </div>
       </section>
 
-      <div>
-        <button type="submit" className="btn-go">{p.submitLabel}</button>
+      </div>
+
+      {p.wizard && stage === 3 && summary && (
+        <section className="card flex flex-col gap-3 p-5">
+          <h2 className="font-semibold">Check and create</h2>
+          <dl className="grid grid-cols-[160px_1fr] gap-y-2 text-sm">
+            <dt className="text-muted">Name</dt><dd>{summary.name}</dd>
+            <dt className="text-muted">Sequence</dt>
+            <dd>{steps.length === 1 ? "One email" : `${steps.length} emails`}: {steps.map((s, i) => `${i === 0 ? "Email 1" : `Follow-up ${i + 1}`} (${s.mode === "fixed" ? "your own" : "AI-written"})`).join(", ")}</dd>
+            <dt className="text-muted">Contacts</dt><dd>{summary.tag ? `Everyone tagged "${summary.tag}" in the Nexus Portal, plus anyone you add` : "Added by you after creating (Nexus Portal tag, CSV or typed in)"}</dd>
+            <dt className="text-muted">Sends on</dt><dd>{summary.days}, {summary.from} to {summary.to}</dd>
+            <dt className="text-muted">Daily cap</dt><dd>{summary.cap} emails a day, from {summary.accounts} {summary.accounts === 1 ? "mailbox" : "mailboxes"}</dd>
+          </dl>
+          <p className="text-xs text-muted">Nothing is sent until you approve the email and press Start sending.</p>
+        </section>
+      )}
+
+      <div className="flex items-center gap-2">
+        {p.wizard && stage > 1 && <button type="button" className="btn" onClick={() => setStage(stage - 1)}>Back</button>}
+        {p.wizard && stage < 3 ? (
+          <button type="button" className="btn-go" onClick={next}>Next</button>
+        ) : (
+          <SubmitButton className="btn-go" pendingLabel={p.wizard ? "Creating…" : "Saving…"}>{p.submitLabel}</SubmitButton>
+        )}
       </div>
     </form>
   );

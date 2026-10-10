@@ -64,3 +64,26 @@ body {
 .card {
   @apply rounded-lg border border-line bg-card;
 }
+
+/* Loading shapes and the "working" dot. Both go still when the person prefers reduced motion. */
+.skeleton {
+  @apply rounded bg-line;
+  background-image: linear-gradient(90deg, var(--line) 0%, var(--paper) 50%, var(--line) 100%);
+  background-size: 200% 100%;
+  animation: shimmer 1.4s ease-in-out infinite;
+}
+.working-dot {
+  @apply inline-block h-2 w-2 shrink-0 rounded-full bg-info;
+  animation: pulse-dot 1.2s ease-in-out infinite;
+}
+@keyframes shimmer {
+  from { background-position: 200% 0; }
+  to { background-position: -200% 0; }
+}
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .skeleton, .working-dot { animation: none; }
+}

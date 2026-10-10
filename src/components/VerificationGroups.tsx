@@ -2,6 +2,7 @@ import Link from "next/link";
 import { plainReading, portalStatus, GHL_TAGS, OUTCOME_LABEL, PORTAL, type Outcome, type GroupLead, type VerificationReport } from "@/lib/verifyReport";
 import { deleteVerificationGroup, summariseVerification, tagVerificationGroup } from "@/app/leads/actions";
 import { ConfirmButton } from "@/components/ConfirmButton";
+import { SubmitButton } from "@/components/SubmitButton";
 import { ago } from "@/lib/format";
 
 const n = (v: number) => v.toLocaleString("en-GB");
@@ -48,7 +49,7 @@ export function VerificationGroups({
           )}
           {r.summaryError && <p className="text-sm text-bad">{r.summaryError}</p>}
           <form action={summariseVerification.bind(null, clientId, campaignId)}>
-            <button className="btn self-start">{r.summary ? "Write again" : "Write the summary"}</button>
+            <SubmitButton className="btn self-start" pendingLabel="Writing…">{r.summary ? "Write again" : "Write the summary"}</SubmitButton>
           </form>
         </div>
       </div>
@@ -63,7 +64,6 @@ export function VerificationGroups({
           </p>
         </div>
         {r.portal.error && <p className="text-sm text-bad">{r.portal.error}</p>}
-        {r.portal.queued > 0 && <p className="text-sm text-info">Updating {n(r.portal.queued)} contacts in the {PORTAL}… this page updates on its own.</p>}
         <div className="grid grid-cols-3 gap-4">
           {(["verified", "catch_all", "invalid"] as const).map((o) => (
             <GroupCard
@@ -124,7 +124,7 @@ function GroupCard({
         <div className="flex flex-col gap-2">
           {status.tagTodo > 0 && (
             <form action={tagVerificationGroup.bind(null, clientId, outcome, campaignId)}>
-              <button className={outcome === "verified" ? "btn-go" : "btn"}>Tag {n(status.tagTodo)} as &ldquo;{tag}&rdquo;</button>
+              <SubmitButton className={outcome === "verified" ? "btn-go" : "btn"} pendingLabel="Starting…">Tag {n(status.tagTodo)} as &ldquo;{tag}&rdquo;</SubmitButton>
             </form>
           )}
           {canDelete && status.deletable > 0 && (

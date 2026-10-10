@@ -29,7 +29,13 @@ export function StatusPill({ status }: { status: string }) {
 
 export function CampaignTable({ clientId, campaigns }: { clientId: number; campaigns: CampaignRow[] }) {
   if (campaigns.length === 0) {
-    return <div className="card p-4 text-sm text-muted">No campaigns yet.</div>;
+    return (
+      <div className="card flex flex-col items-center gap-2 p-10 text-center">
+        <div className="font-semibold">No campaigns yet</div>
+        <p className="max-w-sm text-sm text-muted">A campaign is one email sequence sent to a list of contacts. Create one, add contacts, approve the email, start sending.</p>
+        <Link href={`/clients/${clientId}/campaigns/new`} className="btn-go mt-1">Create your first campaign</Link>
+      </div>
+    );
   }
   return (
     <div className="card overflow-hidden">

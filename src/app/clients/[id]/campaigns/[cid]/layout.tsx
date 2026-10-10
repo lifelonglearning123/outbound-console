@@ -7,6 +7,10 @@ import { pauseCampaign, resumeCampaign } from "@/app/campaigns/actions";
 import { StatusPill } from "@/components/CampaignTable";
 import { Tabs } from "@/components/Tabs";
 import { ago } from "@/lib/format";
+import { Working } from "@/components/Working";
+import { SubmitButton } from "@/components/SubmitButton";
+import { AutoRefresh } from "@/components/AutoRefresh";
+import { PORTAL } from "@/lib/verifyReport";
 
 const n = (v: number) => v.toLocaleString("en-GB");
 
@@ -45,11 +49,20 @@ export default async function CampaignLayout({ children, params }: LayoutProps<"
           </p>
         </div>
         {c.instantly_campaign_id && (c.status === "active" ? (
-          <form action={pauseCampaign.bind(null, c.id)}><button className="btn">Pause sending</button></form>
+          <form action={pauseCampaign.bind(null, c.id)}><SubmitButton className="btn" pendingLabel="Pausing…">Pause sending</SubmitButton></form>
         ) : c.status === "paused" || c.status === "draft" ? (
-          <form action={resumeCampaign.bind(null, c.id)}><button className="btn-go">{c.status === "draft" ? "Start sending" : "Resume sending"}</button></form>
+          <form action={resumeCampaign.bind(null, c.id)}><SubmitButton className="btn-go" pendingLabel="Starting…">{c.status === "draft" ? "Start sending" : "Resume sending"}</SubmitButton></form>
         ) : null)}
       </header>
+
+      <AutoRefresh active={p.preparing + p.checking + p.updatingPortal > 0} />
+      <Working
+        items={[
+          p.preparing > 0 && `Preparing ${n(p.preparing)} emails`,
+          p.checking > 0 && `Checking ${n(p.checking)} addresses`,
+          p.updatingPortal > 0 && `Updating ${n(p.updatingPortal)} contacts in the ${PORTAL}`,
+        ]}
+      />
 
       <div className="grid grid-cols-5 gap-3">
         {strip.map((k) => (

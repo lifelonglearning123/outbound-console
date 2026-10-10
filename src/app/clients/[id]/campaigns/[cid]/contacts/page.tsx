@@ -11,6 +11,7 @@ import { verificationReport, groupLeads, runVerificationActions } from "@/lib/ve
 import { LeadImporter } from "@/components/LeadImporter";
 import { VerificationGroups } from "@/components/VerificationGroups";
 import { AutoRefresh } from "@/components/AutoRefresh";
+import { SubmitButton } from "@/components/SubmitButton";
 import { STAGES, stageLabel, stageTone } from "@/lib/stages";
 import { ago } from "@/lib/format";
 import { LEAD_STATUS, INTEREST_STATUS } from "@/lib/instantly";
@@ -76,15 +77,14 @@ export default async function CampaignContactsPage({ params, searchParams }: Pag
                 <p className="text-sm text-muted">Each new contact gets their copy of the email, filled in with their name and company, ready for approval.</p>
                 <div className="flex flex-wrap gap-2">
                   {newCount > 0 && (
-                    <form action={writeEmails.bind(null, c.id, false)}><button className="btn-go">Prepare {n(newCount)} new</button></form>
+                    <form action={writeEmails.bind(null, c.id, false)}><SubmitButton className="btn-go" pendingLabel="Starting…">Prepare {n(newCount)} new</SubmitButton></form>
                   )}
                   {errorCount > 0 && (
-                    <form action={writeEmails.bind(null, c.id, true)}><button className="btn">Retry {n(errorCount)} failed</button></form>
+                    <form action={writeEmails.bind(null, c.id, true)}><SubmitButton pendingLabel="Starting…">Retry {n(errorCount)} failed</SubmitButton></form>
                   )}
                 </div>
               </>
             )}
-            {(counts.drafting ?? 0) > 0 && <p className="text-sm text-info">Preparing {n(counts.drafting)} emails…</p>}
             {(counts.review ?? 0) > 0 && (
               <Link href={`/clients/${clientId}/campaigns/${c.id}/approve`} className="text-sm text-wait underline">
                 {n(counts.review)} waiting for your approval →
@@ -98,11 +98,10 @@ export default async function CampaignContactsPage({ params, searchParams }: Pag
               Instantly checks each address exists before anyone is emailed. Invalid ones are set aside; ones it can&apos;t confirm get a note for the approver.
             </p>
             {unchecked > 0 ? (
-              <form action={verifyLeads.bind(null, c.id)}><button className="btn-go">Check {n(unchecked)} addresses</button></form>
+              <form action={verifyLeads.bind(null, c.id)}><SubmitButton className="btn-go" pendingLabel="Starting…">Check {n(unchecked)} addresses</SubmitButton></form>
             ) : (
               <p className="text-sm text-muted">{report.checking ? "" : total ? "Every address that can be checked has been." : ""}</p>
             )}
-            {report.checking > 0 && <p className="text-sm text-info">Checking {n(report.checking)} addresses…</p>}
             {verifyError && !report.checking && unchecked > 0 && <p className="text-sm text-bad">{verifyError}</p>}
             {report.checked > 0 && (
               <p className="text-xs text-muted">
@@ -145,7 +144,13 @@ export default async function CampaignContactsPage({ params, searchParams }: Pag
               </tr>
             </thead>
             <tbody>
-              {rows.length === 0 && <tr><td colSpan={5} className="px-3 py-4 text-muted">No contacts yet.</td></tr>}
+              {rows.length === 0 && (
+                <tr>
+                  <td colSpan={5} className="px-3 py-8 text-center text-sm text-muted">
+                    {total === 0 ? "No contacts yet. Add some above, from the Nexus Portal, a CSV file or by typing them in." : "No contacts at this stage."}
+                  </td>
+                </tr>
+              )}
               {rows.map((r) => (
                 <tr key={r.id} className="border-t border-line">
                   <td className="px-3 py-2">

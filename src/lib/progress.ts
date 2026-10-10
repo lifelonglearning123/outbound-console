@@ -19,6 +19,7 @@ export type Progress = {
   replies: number; // contacts who replied
   preparing: number; // emails being written right now
   checking: number; // addresses being checked right now
+  updatingPortal: number; // Nexus Portal tags / deletions still to do
 };
 
 export async function campaignProgress(campaignId: number): Promise<Progress> {
@@ -29,7 +30,8 @@ export async function campaignProgress(campaignId: number): Promise<Progress> {
        COUNT(*) FILTER (WHERE stage IN ('approved', 'pushed') OR stage LIKE 'extend_%') approved,
        COUNT(*) FILTER (WHERE stage = 'pushed' OR stage LIKE 'extend_%') sending,
        COUNT(*) FILTER (WHERE stage IN ('drafting', 'extending')) preparing,
-       COUNT(*) FILTER (WHERE verification IN ('queued', 'pending')) checking
+       COUNT(*) FILTER (WHERE verification IN ('queued', 'pending')) checking,
+       COUNT(*) FILTER (WHERE ghl_verification_tag LIKE 'queued%') "updatingPortal"
      FROM leads WHERE campaign_id = ?`,
     campaignId,
   ))!;
