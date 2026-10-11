@@ -38,7 +38,7 @@ function guess(headers: string[]): Partial<Record<Col, string>> {
   return out;
 }
 
-const CHUNK = 200; // contacts per server call, so a large import shows progress and never runs into the time limit
+const CHUNK = 50; // contacts per server call: the bar moves every 50, and each call is a few database trips whatever its size
 const MAX_GHL = 5000;
 
 type Progress = { label: string; done: number; total: number };

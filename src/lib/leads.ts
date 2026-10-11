@@ -1,5 +1,5 @@
 import "server-only";
-import { all, run, get, tx, logActivity } from "./db";
+import { all, run, tx, logActivity } from "./db";
 import type { Outcome } from "./checkTags";
 import { NO_IMPORT, type ImportResult } from "./importResult";
 
@@ -125,87 +125,102 @@ export async function importLeads(
 ): Promise<ImportResult> {
   const r: ImportResult = { ...NO_IMPORT };
   const now = new Date().toISOString();
+
+  // Each database trip costs tens of milliseconds, so a batch is read in one query and written in two, however big.
+  const wanted = new Map<string, LeadFields>();
+  for (const l of leads) {
+    const email = l.email?.trim().toLowerCase();
+    if (!email || !EMAIL_RE.test(email)) r.skippedInvalid++;
+    else if (wanted.has(email)) r.skippedExisting++; // the same address twice in one import
+    else wanted.set(email, l);
+  }
+  if (wanted.size === 0) {
+    if (log) await logImport(clientId, source, sourceRef, r);
+    return r;
+  }
+  const earlier = new Map<string, Earlier[]>();
+  for (const e of await all<Earlier & { email: string }>(
+    `SELECT l.email, l.id, l.campaign_id, l.stage, l.verification, l.verified_at, l.ghl_contact_id, l.ghl_verification_tag, ${DO_NOT_CONTACT("l")} dnc
+     FROM leads l WHERE l.client_id = ? AND l.email = ANY(?) ORDER BY l.id DESC`,
+    clientId, [...wanted.keys()],
+  )) earlier.set(e.email, [...(earlier.get(e.email) ?? []), e]);
+
+  type Write = {
+    id?: number; email: string; first_name: string | null; last_name: string | null; company: string | null; title: string | null;
+    phone: string | null; website: string | null; fields: string; ghl: string | null;
+    verification: string; verified_at: string | null; tag: string | null; stage: string; stage_message: string | null;
+  };
+  const inserts: Write[] = [];
+  const refreshes: Write[] = [];
+  for (const [email, l] of wanted) {
+    const mine = earlier.get(email) ?? [];
+    const existing = mine.find((e) => e.campaign_id === campaignId);
+    if (existing && existing.stage !== "new") {
+      r.skippedExisting++;
+      continue;
+    }
+    const others = mine.filter((e) => e !== existing);
+    if (others.some((e) => e.dnc)) {
+      r.skippedDoNotContact++;
+      continue;
+    }
+    const w: Write = {
+      email,
+      first_name: l.first_name?.trim() || null,
+      last_name: l.last_name?.trim() || null,
+      company: l.company?.trim() || null,
+      title: l.title?.trim() || null,
+      phone: l.phone?.trim() || null,
+      website: l.website?.trim() || null,
+      fields: JSON.stringify(l.fields ?? {}),
+      ghl: l.ghl_contact_id ?? others.find((e) => e.ghl_contact_id)?.ghl_contact_id ?? null,
+      verification: existing?.verification ?? "queued", verified_at: null, tag: null, stage: "new", stage_message: null,
+    };
+    const prior = existing ? undefined : others.find((e) => e.verification === "verified" || e.verification === "catch_all");
+    const portal = source === "ghl" && w.ghl ? l.check : null;
+    if (prior) {
+      // Checked in an earlier campaign: keep that result and prepare the email straight away.
+      Object.assign(w, { verification: prior.verification, verified_at: prior.verified_at, tag: prior.ghl_verification_tag === "done" ? "done" : null, stage: "drafting" });
+      r.reused++;
+    } else if (portal && w.verification === "queued") {
+      // Already tagged with a result in the portal; a contact mid-check or already checked keeps its own result.
+      Object.assign(w, {
+        verification: portal, verified_at: now, tag: "done",
+        stage: portal === "invalid" ? "rejected" : "drafting",
+        stage_message: portal === "invalid" ? "Invalid email address (already tagged in the Nexus Portal)" : null,
+      });
+      r.reused++;
+    }
+    if (existing) refreshes.push({ ...w, id: existing.id });
+    else inserts.push(w);
+  }
+
+  const columns = `email text, first_name text, last_name text, company text, title text, phone text, website text, fields text,
+    ghl text, verification text, verified_at text, tag text, stage text, stage_message text`;
   await tx(async () => {
-    for (const l of leads) {
-      const email = l.email?.trim().toLowerCase();
-      if (!email || !EMAIL_RE.test(email)) {
-        r.skippedInvalid++;
-        continue;
-      }
-      const earlier = await all<Earlier>(
-        `SELECT l.id, l.campaign_id, l.stage, l.verification, l.verified_at, l.ghl_contact_id, l.ghl_verification_tag, ${DO_NOT_CONTACT("l")} dnc
-         FROM leads l WHERE l.client_id = ? AND l.email = ? ORDER BY l.id DESC`,
-        clientId, email,
-      );
-      const existing = earlier.find((e) => e.campaign_id === campaignId);
-      if (existing && existing.stage !== "new") {
-        r.skippedExisting++;
-        continue;
-      }
-      const others = earlier.filter((e) => e !== existing);
-      if (others.some((e) => e.dnc)) {
-        r.skippedDoNotContact++;
-        continue;
-      }
-      const prior = others.find((e) => e.verification === "verified" || e.verification === "catch_all");
-      const values = {
-        clientId, campaignId, email, source, sourceRef,
-        first_name: l.first_name?.trim() || null,
-        last_name: l.last_name?.trim() || null,
-        company: l.company?.trim() || null,
-        title: l.title?.trim() || null,
-        phone: l.phone?.trim() || null,
-        website: l.website?.trim() || null,
-        fields: JSON.stringify(l.fields ?? {}),
-        ghl: l.ghl_contact_id ?? others.find((e) => e.ghl_contact_id)?.ghl_contact_id ?? null,
-      };
-      let id: number;
-      if (!existing && prior) {
-        // Checked in an earlier campaign: keep that result and prepare the email straight away.
-        await run(
-          `INSERT INTO leads (client_id, campaign_id, email, first_name, last_name, company, title, phone, website, fields,
-             source, source_ref, ghl_contact_id, verification, verified_at, ghl_verification_tag, stage)
-           VALUES (@clientId, @campaignId, @email, @first_name, @last_name, @company, @title, @phone, @website, @fields,
-             @source, @sourceRef, @ghl, @verification, @verified_at, @tag, 'drafting')`,
-          {
-            ...values, verification: prior.verification, verified_at: prior.verified_at,
-            tag: prior.ghl_verification_tag === "done" ? "done" : null,
-          },
-        );
-        r.added++;
-        r.reused++;
-        continue;
-      } else if (!existing) {
-        id = (await get<{ id: number }>(
-          `INSERT INTO leads (client_id, campaign_id, email, first_name, last_name, company, title, phone, website, fields,
-             source, source_ref, ghl_contact_id, verification)
-           VALUES (@clientId, @campaignId, @email, @first_name, @last_name, @company, @title, @phone, @website, @fields,
-             @source, @sourceRef, @ghl, 'queued')
-           RETURNING id`,
-          values,
-        ))!.id;
-        r.added++;
-      } else {
-        id = existing.id;
-        await run(
-          `UPDATE leads SET campaign_id = @campaignId, first_name = @first_name, last_name = @last_name, company = @company,
-             title = @title, phone = @phone, website = @website, fields = @fields, ghl_contact_id = COALESCE(@ghl, ghl_contact_id),
-             verification = COALESCE(verification, 'queued')
-           WHERE id = @id`,
-          { ...values, id },
-        );
-        r.updated++;
-      }
-      if (source === "ghl" && l.check && values.ghl) {
-        // Only a contact still waiting for its check; one that's mid-check or already checked keeps its own result.
-        r.reused += (await run(
-          `UPDATE leads SET verification = @check, verified_at = @now, ghl_verification_tag = 'done',
-             stage = CASE WHEN @check = 'invalid' THEN 'rejected' ELSE 'drafting' END,
-             stage_message = CASE WHEN @check = 'invalid' THEN 'Invalid email address (already tagged in the Nexus Portal)' ELSE NULL END
-           WHERE id = @id AND stage = 'new' AND verification = 'queued'`,
-          { id, check: l.check, now },
-        )).changes;
-      }
+    if (inserts.length) {
+      const added = (await run(
+        `INSERT INTO leads (client_id, campaign_id, source, source_ref, email, first_name, last_name, company, title, phone, website,
+           fields, ghl_contact_id, verification, verified_at, ghl_verification_tag, stage, stage_message)
+         SELECT ?, ?, ?, ?, x.email, x.first_name, x.last_name, x.company, x.title, x.phone, x.website, x.fields, x.ghl,
+           x.verification, x.verified_at, x.tag, x.stage, x.stage_message
+         FROM jsonb_to_recordset(?::jsonb) AS x(${columns})
+         ON CONFLICT (campaign_id, email) DO NOTHING`,
+        clientId, campaignId, source, sourceRef, JSON.stringify(inserts),
+      )).changes;
+      r.added += added;
+      r.skippedExisting += inserts.length - added; // added by another import a moment ago
+    }
+    if (refreshes.length) {
+      r.updated += (await run(
+        `UPDATE leads l SET first_name = x.first_name, last_name = x.last_name, company = x.company, title = x.title, phone = x.phone,
+           website = x.website, fields = x.fields, ghl_contact_id = COALESCE(x.ghl, l.ghl_contact_id), verification = x.verification,
+           verified_at = COALESCE(x.verified_at, l.verified_at), ghl_verification_tag = COALESCE(x.tag, l.ghl_verification_tag),
+           stage = x.stage, stage_message = x.stage_message
+         FROM jsonb_to_recordset(?::jsonb) AS x(id int, ${columns})
+         WHERE l.id = x.id AND l.stage = 'new'`,
+        JSON.stringify(refreshes),
+      )).changes;
     }
   });
   if (log) await logImport(clientId, source, sourceRef, r);

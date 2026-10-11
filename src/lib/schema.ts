@@ -144,6 +144,8 @@ CREATE TABLE IF NOT EXISTS emails (
   ghl_log_error TEXT
 );
 CREATE INDEX IF NOT EXISTS emails_client_time ON emails(client_id, sent_at);
+-- "Has this contact replied?" is asked for every contact on import and send.
+CREATE INDEX IF NOT EXISTS emails_client_lead ON emails(client_id, lead_email);
 CREATE INDEX IF NOT EXISTS emails_lead ON emails(lead_id);
 
 CREATE TABLE IF NOT EXISTS daily_stats (
