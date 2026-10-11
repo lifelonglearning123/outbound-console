@@ -86,6 +86,9 @@ ALTER TABLE leads ADD COLUMN IF NOT EXISTS verification TEXT;
 ALTER TABLE leads ADD COLUMN IF NOT EXISTS verified_at TEXT;
 -- Nexus Portal (GHL) follow-up to verification: queued_tag | queued_delete | done | deleted (null = nothing done yet).
 ALTER TABLE leads ADD COLUMN IF NOT EXISTS ghl_verification_tag TEXT;
+-- A note on the portal contact for each campaign that starts emailing it, so the portal keeps the campaign history.
+ALTER TABLE leads ADD COLUMN IF NOT EXISTS ghl_noted_at TEXT;
+ALTER TABLE leads ADD COLUMN IF NOT EXISTS ghl_note_error TEXT;
 
 CREATE TABLE IF NOT EXISTS drafts (
   id SERIAL PRIMARY KEY,

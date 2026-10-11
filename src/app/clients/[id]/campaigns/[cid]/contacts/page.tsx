@@ -14,6 +14,7 @@ import { AutoRefresh } from "@/components/AutoRefresh";
 import { SubmitButton } from "@/components/SubmitButton";
 import { CONTACT_GROUPS, contactStatus } from "@/lib/stages";
 import { ago } from "@/lib/format";
+import { otherCampaigns } from "@/lib/leads";
 import { LEAD_STATUS, INTEREST_STATUS } from "@/lib/instantly";
 
 const n = (v: number) => v.toLocaleString("en-GB");
@@ -56,6 +57,7 @@ export default async function CampaignContactsPage({ params, searchParams }: Pag
     `SELECT * FROM leads WHERE campaign_id = ? ${group ? `AND ${group.where}` : ""} ORDER BY id DESC LIMIT 300`,
     c.id,
   );
+  const elsewhere = await otherCampaigns(clientId, c.id, rows.map((r) => r.email));
   const base = `/clients/${clientId}/campaigns/${c.id}/contacts`;
 
   return (
@@ -119,6 +121,7 @@ export default async function CampaignContactsPage({ params, searchParams }: Pag
                 <th className="px-3 py-2 font-medium">Contact</th>
                 <th className="px-3 py-2 font-medium">Address check</th>
                 <th className="px-3 py-2 font-medium">Where they are</th>
+                <th className="px-3 py-2 font-medium">Other campaigns</th>
                 <th className="px-3 py-2 font-medium">Added from</th>
                 <th className="px-3 py-2 font-medium">Added</th>
               </tr>
@@ -126,7 +129,7 @@ export default async function CampaignContactsPage({ params, searchParams }: Pag
             <tbody>
               {rows.length === 0 && (
                 <tr>
-                  <td colSpan={5} className="px-3 py-8 text-center text-sm text-muted">
+                  <td colSpan={6} className="px-3 py-8 text-center text-sm text-muted">
                     {total === 0 ? "No contacts yet. Add some above, from the Nexus Portal, a CSV file or by typing them in." : "No contacts in this group."}
                   </td>
                 </tr>
@@ -149,6 +152,14 @@ export default async function CampaignContactsPage({ params, searchParams }: Pag
                         </span>
                       )}
                       {r.stage_message && r.verification !== "invalid" && <div className="max-w-sm truncate text-xs text-bad" title={r.stage_message}>{r.stage_message}</div>}
+                    </td>
+                    <td className="px-3 py-2 text-xs">
+                      {(elsewhere.get(r.email) ?? []).map((o, i) => (
+                        <div key={i}>
+                          <span className="text-ink">{o.campaign}</span> <span className={o.tone}>· {o.outcome}</span>
+                        </div>
+                      ))}
+                      {!elsewhere.has(r.email) && <span className="text-muted">None</span>}
                     </td>
                     <td className="px-3 py-2 text-xs text-muted">{r.source_ref ?? r.source}</td>
                     <td className="px-3 py-2 text-xs text-muted">{ago(r.created_at)}</td>

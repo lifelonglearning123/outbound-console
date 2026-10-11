@@ -9,7 +9,7 @@ import { runWriter } from "./writer";
 import { runVerifier } from "./verify";
 import { runVerificationActions } from "./verifyReport";
 import { syncMeetings } from "./meetings";
-import { linkPendingLeads, logEmailsToGhl, pullTaggedContacts } from "./ghlsync";
+import { linkPendingLeads, logEmailsToGhl, noteCampaignsInGhl, pullTaggedContacts } from "./ghlsync";
 
 const day = (offset = 0) => new Date(Date.now() - offset * 86400_000).toISOString().slice(0, 10);
 
@@ -321,6 +321,7 @@ export async function syncClient(clientId: number): Promise<{ ok: boolean; messa
       if (await pullTaggedContacts(client)) void await runWriter();
     }],
     ["ghl conversations", () => logEmailsToGhl(client)],
+    ["ghl campaign notes", () => noteCampaignsInGhl(client)],
   ];
   const errors: string[] = [];
   for (const [name, fn] of steps) {

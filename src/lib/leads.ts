@@ -64,6 +64,36 @@ export const DO_NOT_CONTACT = (a: string) =>
 export const IN_SEQUENCE = (a: string) =>
   `((${a}.pushed_at IS NOT NULL OR ${a}.instantly_lead_id IS NOT NULL) AND COALESCE(${a}.instantly_status, 1) NOT IN (3, -3))`;
 
+export type OtherCampaign = { campaign: string; outcome: string; tone: string };
+
+/** For each of these contacts, the client's other campaigns they're in and how each went, oldest first. */
+export async function otherCampaigns(clientId: number, campaignId: number, emails: string[]): Promise<Map<string, OtherCampaign[]>> {
+  const out = new Map<string, OtherCampaign[]>();
+  if (emails.length === 0) return out;
+  const rows = await all<{ email: string; campaign: string; stage: string; verification: string | null; instantly_status: number | null; replied: boolean }>(
+    `SELECT o.email, c.name campaign, o.stage, o.verification, o.instantly_status,
+       EXISTS (SELECT 1 FROM emails e WHERE e.client_id = o.client_id AND e.lead_email = o.email AND e.direction = 'in'
+         AND e.campaign_id = o.campaign_id AND e.interest IS DISTINCT FROM 'ooo') replied
+     FROM leads o JOIN campaigns c ON c.id = o.campaign_id
+     WHERE o.client_id = ? AND o.campaign_id <> ? AND o.email = ANY(?) ORDER BY o.id`,
+    clientId, campaignId, emails,
+  );
+  for (const r of rows) {
+    const sent = r.stage === "pushed" || r.stage.startsWith("extend");
+    const [outcome, tone] =
+      r.replied ? ["replied", "text-go"]
+      : r.instantly_status === -1 ? ["bounced", "text-bad"]
+      : r.instantly_status === -2 ? ["unsubscribed", "text-bad"]
+      : r.verification === "invalid" ? ["invalid address", "text-bad"]
+      : sent && r.instantly_status === 3 ? ["sequence finished, no reply", "text-muted"]
+      : sent ? ["being emailed", "text-info"]
+      : r.stage === "rejected" || r.stage === "removed" ? ["not sent", "text-muted"]
+      : ["waiting, not sent yet", "text-wait"];
+    out.set(r.email, [...(out.get(r.email) ?? []), { campaign: r.campaign, outcome, tone }]);
+  }
+  return out;
+}
+
 type Earlier = {
   id: number;
   campaign_id: number | null;

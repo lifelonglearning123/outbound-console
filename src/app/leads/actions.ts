@@ -175,7 +175,11 @@ export async function writeEmails(campaignId: number, includeErrors = false) {
 export async function removeLeads(ids: number[]) {
   for (const id of ids) await requireClientAccess(await clientOfLead(id));
   if (!ids.length) return;
-  await run(`DELETE FROM leads WHERE stage NOT IN ('pushed') AND id IN (${ids.map(() => "?").join(",")})`, ...ids);
+  // Marked, not deleted, so the record that they were in this campaign is kept.
+  await run(
+    `UPDATE leads SET stage = 'removed', stage_message = 'Removed by hand' WHERE stage <> 'pushed' AND id IN (${ids.map(() => "?").join(",")})`,
+    ...ids,
+  );
   revalidatePath("/", "layout");
 }
 

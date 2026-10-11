@@ -1,7 +1,7 @@
 import "server-only";
 import { all, get, run, logActivity } from "./db";
 import type { Client } from "./clients";
-import { contactsWithTag, emailDnd, getContact, logEmail, upsertContact, type GhlContact, type GhlCreds } from "./ghl";
+import { addNote, contactsWithTag, emailDnd, getContact, logEmail, upsertContact, type GhlContact, type GhlCreds } from "./ghl";
 import { importLeads, type LeadRow } from "./leads";
 import { portalCheck } from "./checkTags";
 import { toHtml } from "./merge";
@@ -122,6 +122,35 @@ export async function pullTaggedContacts(client: Client): Promise<number> {
     if (r.added) await logActivity(client.id, "ghl", `${r.added} new contacts tagged "${c.ghl_tag}" in Nexus Portal joined "${c.name}"; preparing their emails`);
   }
   return total;
+}
+
+/**
+ * Note on each portal contact which campaign started emailing it and when, so the portal (the source of truth for
+ * contacts) keeps their campaign history. One note per lead, written once it's been handed to Instantly.
+ */
+export async function noteCampaignsInGhl(client: Client, limit = 40): Promise<number> {
+  const creds = ghlCreds(client);
+  if (!creds) return 0;
+  const leads = await all<LeadRow & { campaign: string }>(
+    `SELECT l.*, c.name campaign FROM leads l JOIN campaigns c ON c.id = l.campaign_id
+     WHERE l.client_id = ? AND l.pushed_at IS NOT NULL AND l.ghl_noted_at IS NULL AND l.ghl_note_error IS NULL
+     ORDER BY l.pushed_at LIMIT ?`,
+    client.id, limit,
+  );
+  let n = 0;
+  for (const l of leads) {
+    try {
+      const contactId = await linkLead(client, l);
+      if (!contactId) continue;
+      const day = new Date(l.pushed_at!).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
+      await addNote(creds, contactId, `Email campaign "${l.campaign}": started emailing this contact on ${day} (outbound console).`);
+      await run("UPDATE leads SET ghl_noted_at = datetime('now') WHERE id = ?", l.id);
+      n++;
+    } catch (e) {
+      await run("UPDATE leads SET ghl_note_error = ? WHERE id = ?", (e as Error).message.slice(0, 300), l.id);
+    }
+  }
+  return n;
 }
 
 const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
