@@ -69,23 +69,30 @@ export type GhlContact = {
   [k: string]: unknown;
 };
 
+export const CONTACTS_PAGE = 100;
+
+/** One page (1-based) of the contacts carrying `tag`, with the total across all pages. */
+export async function contactsWithTagPage(creds: GhlCreds, tag: string, page: number): Promise<{ contacts: GhlContact[]; total: number }> {
+  const r = await ghl<{ contacts: GhlContact[]; total: number }>(creds, "/contacts/search", {
+    method: "POST",
+    body: JSON.stringify({
+      locationId: creds.locationId,
+      page,
+      pageLimit: CONTACTS_PAGE,
+      filters: [{ field: "tags", operator: "contains", value: tag }],
+    }),
+  });
+  return { contacts: r.contacts ?? [], total: r.total ?? 0 };
+}
+
 /** Every contact carrying `tag`, following pagination. */
 export async function contactsWithTag(creds: GhlCreds, tag: string, max = 5000): Promise<GhlContact[]> {
   const out: GhlContact[] = [];
   let page = 1;
   while (out.length < max) {
-    const r = await ghl<{ contacts: GhlContact[]; total: number }>(creds, "/contacts/search", {
-      method: "POST",
-      body: JSON.stringify({
-        locationId: creds.locationId,
-        page,
-        pageLimit: 100,
-        filters: [{ field: "tags", operator: "contains", value: tag }],
-      }),
-    });
-    const batch = r.contacts ?? [];
-    out.push(...batch);
-    if (batch.length < 100 || out.length >= (r.total ?? 0)) break;
+    const r = await contactsWithTagPage(creds, tag, page);
+    out.push(...r.contacts);
+    if (r.contacts.length < CONTACTS_PAGE || out.length >= r.total) break;
     page += 1;
   }
   return out.slice(0, max);

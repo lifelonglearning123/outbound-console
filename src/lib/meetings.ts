@@ -6,11 +6,16 @@ import { calendarEvents, contactEmail, listCalendars, opportunitiesInStage, type
 // A "meeting booked" is a lead from these campaigns who (a) books on one of the client's GHL calendars
 // after we first emailed them, or (b) has an opportunity in the client's chosen "meeting" stage.
 
-async function leadIdFor(clientId: number, email: string | null): Promise<{ id: number; pushed_at: string | null } | undefined> {
+/**
+ * A contact can be in several campaigns: the meeting counts for the latest one that had emailed them by `bookedAt`
+ * (or, with no time, the latest one); if none had, the latest one, which the caller's "booked after emailed" test turns away.
+ */
+async function leadIdFor(clientId: number, email: string | null, bookedAt: string | null = null): Promise<{ id: number; pushed_at: string | null } | undefined> {
   if (!email) return undefined;
   return await get<{ id: number; pushed_at: string | null }>(
-    "SELECT id, pushed_at FROM leads WHERE client_id = ? AND email = ? AND instantly_lead_id IS NOT NULL",
-    clientId, email.toLowerCase(),
+    `SELECT id, pushed_at FROM leads WHERE client_id = ? AND email = ? AND instantly_lead_id IS NOT NULL
+     ORDER BY (pushed_at IS NULL OR ?::text IS NULL OR pushed_at <= ?) DESC, pushed_at DESC NULLS LAST, id DESC LIMIT 1`,
+    clientId, email.toLowerCase(), bookedAt, bookedAt,
   );
 }
 
@@ -43,8 +48,8 @@ export async function syncMeetings(client: Client): Promise<number> {
     for (const ev of await calendarEvents(creds, calId, from, to)) {
       if (ev.deleted || !ev.contactId) continue;
       if (["cancelled", "invalid"].includes(ev.appointmentStatus ?? "")) continue;
-      const lead = await leadIdFor(client.id, await emailForContact(client.id, creds, ev.contactId));
       const bookedAt = ev.dateAdded ?? ev.startTime;
+      const lead = await leadIdFor(client.id, await emailForContact(client.id, creds, ev.contactId), bookedAt);
       // Only bookings made after we first emailed the lead count as coming from outbound.
       if (!lead || (lead.pushed_at && bookedAt < lead.pushed_at)) continue;
       found.push({ id: `cal:${ev.id}`, lead_id: lead.id, source: "calendar", booked_at: bookedAt, starts_at: ev.startTime, title: ev.title ?? null, status: ev.appointmentStatus ?? null });

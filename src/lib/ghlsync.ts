@@ -3,6 +3,7 @@ import { all, get, run, logActivity } from "./db";
 import type { Client } from "./clients";
 import { contactsWithTag, emailDnd, getContact, logEmail, upsertContact, type GhlContact, type GhlCreds } from "./ghl";
 import { importLeads, type LeadRow } from "./leads";
+import { portalCheck } from "./checkTags";
 import { toHtml } from "./merge";
 
 // GHL is the source of truth for contacts:
@@ -88,10 +89,11 @@ export async function pullTaggedContacts(client: Client): Promise<number> {
   let total = 0;
   for (const c of campaigns) {
     const contacts: GhlContact[] = (await contactsWithTag(creds, c.ghl_tag)).filter((x) => x.email && !emailDnd(x));
-    // Only contacts this client doesn't have yet; people already in any campaign are left where they are.
+    // Only contacts not yet in this campaign. importLeads decides about people in other campaigns: someone still in
+    // another sequence is skipped for now and picked up by a later sync once it's over.
     const fresh: GhlContact[] = [];
     for (const x of contacts) {
-      const known = await get<{ id: number }>("SELECT id FROM leads WHERE client_id = ? AND email = ?", client.id, String(x.email).toLowerCase());
+      const known = await get<{ id: number }>("SELECT id FROM leads WHERE campaign_id = ? AND email = ?", c.id, String(x.email).toLowerCase());
       if (!known) fresh.push(x);
     }
     if (fresh.length === 0) continue;
@@ -108,7 +110,9 @@ export async function pullTaggedContacts(client: Client): Promise<number> {
         phone: x.phone ?? null,
         website: x.website ?? null,
         ghl_contact_id: x.id,
+        check: portalCheck(x.tags),
       })),
+      false, // contacts waiting on another campaign come round on every sync; only real joins are logged, below
     );
     await run(
       "UPDATE leads SET stage = 'drafting' WHERE client_id = ? AND campaign_id = ? AND stage = 'new' AND source = 'ghl'",

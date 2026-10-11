@@ -6,8 +6,10 @@ import { after } from "next/server";
 import { all, get, run, tx, logActivity } from "@/lib/db";
 import { requireClient } from "@/lib/clients";
 import { requireCampaign } from "@/lib/campaigns";
-import { importLeads, type LeadFields, type ImportResult } from "@/lib/leads";
-import { contactsWithTag, listTags } from "@/lib/ghl";
+import { importLeads, logImport, type LeadFields, type ImportResult } from "@/lib/leads";
+import { addImports } from "@/lib/importResult";
+import { contactsWithTagPage, listTags } from "@/lib/ghl";
+import { portalCheck } from "@/lib/checkTags";
 import { runWriter, rewriteStep } from "@/lib/writer";
 import { pushApproved } from "@/lib/push";
 import { linkPendingLeads } from "@/lib/ghlsync";
@@ -29,7 +31,9 @@ export async function addManualLead(
   after(async () => linkPendingLeads(await requireClient(clientId))); // Nexus Portal is the source of truth: add the contact there
   // The address check runs first; a contact that passes has its email prepared by the checker (writeNow is implied).
   void writeNow;
-  if (r.added || r.updated) {
+  if (r.reused) {
+    after(runWriter); // checked in an earlier campaign: prepare the email now
+  } else if (r.added || r.updated) {
     await logActivity(clientId, "verify", `Checking ${lead.email}'s address for "${c.name}"`);
     after(runVerifier);
   }
@@ -37,14 +41,29 @@ export async function addManualLead(
   return r;
 }
 
-export async function importCsvLeads(clientId: number, campaignId: number, fileName: string, leads: LeadFields[]): Promise<ImportResult> {
+/**
+ * Add one chunk of a CSV or Nexus Portal import. The importer sends a large import in chunks so it can show progress;
+ * `totals` (the whole import's result) comes with the last chunk and is what the activity log records.
+ */
+export async function importLeadChunk(
+  clientId: number,
+  campaignId: number,
+  source: "csv" | "ghl",
+  sourceRef: string,
+  leads: LeadFields[],
+  totals: ImportResult | null = null,
+): Promise<ImportResult> {
   await requireClientAccess(clientId);
   if ((await clientOfCampaign(campaignId)) !== clientId) throw new Error("Campaign not found");
   await requireCampaign(campaignId);
-  const r = await importLeads(clientId, campaignId, "csv", fileName, leads);
-  after(async () => linkPendingLeads(await requireClient(clientId))); // Nexus Portal is the source of truth: add the contacts there
-  if (r.added || r.updated) after(runVerifier); // every new contact is checked before anything else
-  revalidatePath("/", "layout");
+  const r = await importLeads(clientId, campaignId, source, sourceRef, leads, false);
+  if (totals) {
+    await logImport(clientId, source, sourceRef, addImports(totals, r));
+    if (source === "csv") after(async () => linkPendingLeads(await requireClient(clientId))); // Nexus Portal is the source of truth: add the contacts there
+  }
+  if (r.added + r.updated > r.reused) after(runVerifier); // every new contact is checked before anything else
+  if (r.reused) after(runWriter); // already checked in the portal: prepare their emails now
+  if (totals) revalidatePath("/", "layout");
   return r;
 }
 
@@ -59,14 +78,13 @@ export async function ghlTags(clientId: number): Promise<{ tags: string[]; error
   }
 }
 
-export async function importGhlLeads(clientId: number, campaignId: number, tag: string): Promise<ImportResult & { error?: string }> {
+/** One page of the Nexus Portal contacts carrying `tag`, as leads, with the total so the importer can show progress. */
+export async function ghlContactsPage(clientId: number, tag: string, page: number): Promise<{ leads: LeadFields[]; total: number; error?: string }> {
   await requireClientAccess(clientId);
-  if ((await clientOfCampaign(campaignId)) !== clientId) throw new Error("Campaign not found");
   const c = await requireClient(clientId);
-  await requireCampaign(campaignId);
-  if (!c.ghl_location_id || !c.ghl_token) return { added: 0, updated: 0, skippedInvalid: 0, skippedExisting: 0, error: "Nexus Portal not set up" };
+  if (!c.ghl_location_id || !c.ghl_token) return { leads: [], total: 0, error: "Nexus Portal not set up" };
   try {
-    const contacts = await contactsWithTag({ locationId: c.ghl_location_id, token: c.ghl_token }, tag);
+    const { contacts, total } = await contactsWithTagPage({ locationId: c.ghl_location_id, token: c.ghl_token }, tag, page);
     const leads: LeadFields[] = contacts.map((ct) => ({
       email: ct.email ?? "",
       first_name: ct.firstNameRaw ?? ct.firstName ?? null,
@@ -75,18 +93,16 @@ export async function importGhlLeads(clientId: number, campaignId: number, tag: 
       phone: ct.phone ?? null,
       website: ct.website ?? null,
       ghl_contact_id: ct.id,
+      check: portalCheck(ct.tags),
       fields: Object.fromEntries(
         Object.entries(ct).filter(
           ([k, v]) => typeof v === "string" && v && ["city", "state", "country", "source", "address1"].includes(k),
         ) as [string, string][],
       ),
     }));
-    const r = await importLeads(clientId, campaignId, "ghl", `tag: ${tag}`, leads);
-    if (r.added || r.updated) after(runVerifier); // every new contact is checked before anything else
-    revalidatePath("/", "layout");
-    return r;
+    return { leads, total };
   } catch (e) {
-    return { added: 0, updated: 0, skippedInvalid: 0, skippedExisting: 0, error: (e as Error).message };
+    return { leads: [], total: 0, error: (e as Error).message };
   }
 }
 

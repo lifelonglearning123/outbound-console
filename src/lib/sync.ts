@@ -75,8 +75,15 @@ async function syncEmails(client: Client, api: InstantlyClient) {
       c.id,
     ]),
   );
-  const leadId = async (email: string | null) =>
-    email ? ((await get<{ id: number }>("SELECT id FROM leads WHERE client_id = ? AND email = ?", clientId, email.toLowerCase()))?.id ?? null) : null;
+  // A contact can be in several campaigns: prefer its lead in the email's campaign, else its most recently sent one.
+  const leadId = async (email: string | null, campaignId: number | null) =>
+    email
+      ? ((await get<{ id: number }>(
+          `SELECT id FROM leads WHERE client_id = ? AND email = ?
+           ORDER BY campaign_id = ? DESC NULLS LAST, pushed_at DESC NULLS LAST, id DESC LIMIT 1`,
+          clientId, email.toLowerCase(), campaignId,
+        ))?.id ?? null)
+      : null;
 
   let newest = since ?? "";
   let inbound = 0;
@@ -87,6 +94,8 @@ async function syncEmails(client: Client, api: InstantlyClient) {
       const direction = e.ue_type === 2 ? "in" : "out";
       const text = e.body?.text || (e.body?.html ? stripHtml(e.body.html) : e.content_preview ?? "");
       const lead = e.lead?.toLowerCase() ?? null;
+      const campaignId = e.campaign_id ? campaigns.get(e.campaign_id) ?? null : null;
+      const lid = await leadId(lead, campaignId);
       const known = await get<{ client_id: number }>("SELECT client_id FROM emails WHERE id = ?", e.id);
       await run(
         // Re-reads fill in details stored before (step), and a mailbox that moved to this client from another
@@ -97,14 +106,13 @@ async function syncEmails(client: Client, api: InstantlyClient) {
          ON CONFLICT(id) DO UPDATE SET client_id = excluded.client_id,
            campaign_id = COALESCE(excluded.campaign_id, emails.campaign_id), lead_id = COALESCE(excluded.lead_id, emails.lead_id),
            step = COALESCE(emails.step, excluded.step)`,
-        e.id, clientId, e.campaign_id ? campaigns.get(e.campaign_id) ?? null : null, await leadId(lead), lead, direction,
+        e.id, clientId, campaignId, lid, lead, direction,
         parseStep(e.step), e.eaccount, e.subject,
         direction === "in" ? newestPart(text) : text,
         e.thread_id, e.timestamp_email, e.is_unread ? 1 : 0,
         direction === "in" && e.is_auto_reply ? "ooo" : null,
       );
       if (known && known.client_id === clientId) continue; // not new to this client
-      const lid = await leadId(lead);
       if (lid && direction === "out") await run("UPDATE leads SET last_sent_at = GREATEST(COALESCE(last_sent_at, ''), ?) WHERE id = ?", e.timestamp_email, lid);
       if (lid && direction === "in") await run("UPDATE leads SET last_reply_at = GREATEST(COALESCE(last_reply_at, ''), ?) WHERE id = ?", e.timestamp_email, lid);
       if (direction === "in") inbound++;
@@ -230,9 +238,9 @@ async function syncLeads(clientId: number, api: InstantlyClient) {
         if (!l.email) continue;
         await run(
           `UPDATE leads SET instantly_status = ?, interest_status = COALESCE(?, interest_status), last_open_at = COALESCE(?, last_open_at)
-           WHERE client_id = ? AND email = ?`,
+           WHERE campaign_id = ? AND email = ?`,
           // Instantly omits fields that were never set (e.g. no opens yet); undefined can't be bound.
-          l.status ?? null, l.lt_interest_status ?? null, l.timestamp_last_open ?? null, clientId, l.email.toLowerCase(),
+          l.status ?? null, l.lt_interest_status ?? null, l.timestamp_last_open ?? null, c.id, l.email.toLowerCase(),
         );
       }
     });

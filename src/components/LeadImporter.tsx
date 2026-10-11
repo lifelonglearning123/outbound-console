@@ -2,8 +2,9 @@
 
 import { useState, useTransition } from "react";
 import Papa from "papaparse";
-import { addManualLead, importCsvLeads, importGhlLeads, ghlTags } from "@/app/leads/actions";
-import type { LeadFields, ImportResult } from "@/lib/leads";
+import { addManualLead, importLeadChunk, ghlContactsPage, ghlTags } from "@/app/leads/actions";
+import type { LeadFields } from "@/lib/leads";
+import { NO_IMPORT, addImports, type ImportResult } from "@/lib/importResult";
 
 const COLUMNS = [
   { key: "email", label: "Email", required: true },
@@ -37,6 +38,26 @@ function guess(headers: string[]): Partial<Record<Col, string>> {
   return out;
 }
 
+const CHUNK = 200; // contacts per server call, so a large import shows progress and never runs into the time limit
+const MAX_GHL = 5000;
+
+type Progress = { label: string; done: number; total: number };
+
+function ProgressBar({ p }: { p: Progress }) {
+  const pct = p.total ? Math.min(100, Math.round((p.done / p.total) * 100)) : 0;
+  return (
+    <div className="flex flex-col gap-1.5" role="progressbar" aria-valuemin={0} aria-valuemax={p.total} aria-valuenow={p.done}>
+      <div className="flex justify-between text-sm">
+        <span>{p.label}</span>
+        <span className="num text-muted">{p.done.toLocaleString()} of {p.total.toLocaleString()}</span>
+      </div>
+      <div className="h-1.5 rounded-full bg-paper">
+        <div className="h-1.5 rounded-full bg-go transition-all" style={{ width: `${pct}%` }} />
+      </div>
+    </div>
+  );
+}
+
 export function LeadImporter({
   clientId, campaigns, hasGhl, campaignId: fixedCampaignId,
 }: {
@@ -55,6 +76,7 @@ export function LeadImporter({
   const [tags, setTags] = useState<string[] | null>(null);
   const [tag, setTag] = useState("");
   const [result, setResult] = useState<string>("");
+  const [progress, setProgress] = useState<Progress | null>(null);
   const [pending, start] = useTransition();
 
   if (campaigns.length === 0) {
@@ -76,7 +98,25 @@ export function LeadImporter({
 
   const summary = (r: ImportResult & { error?: string }) =>
     r.error ??
-    `${r.added} added${r.updated ? `, ${r.updated} refreshed` : ""}${r.skippedExisting ? `, ${r.skippedExisting} already in progress` : ""}${r.skippedInvalid ? `, ${r.skippedInvalid} without a valid email` : ""}.`;
+    [
+      `${r.added} added${r.updated ? `, ${r.updated} refreshed` : ""}${r.reused ? ` (${r.reused} already checked before, so not checked again)` : ""}`,
+      r.skippedExisting && `${r.skippedExisting} already in this campaign`,
+      r.skippedBusy && `${r.skippedBusy} skipped for now: still being emailed or prepared in another campaign (they can join once that finishes)`,
+      r.skippedDoNotContact && `${r.skippedDoNotContact} skipped: they replied, bounced, unsubscribed or were invalid before`,
+      r.skippedInvalid && `${r.skippedInvalid} without a valid email`,
+    ].filter(Boolean).join(", ") + ".";
+
+  /** Add leads in chunks, moving the bar as each one lands. */
+  const addInChunks = async (source: "csv" | "ghl", sourceRef: string, leads: LeadFields[]) => {
+    let totals = NO_IMPORT;
+    setProgress({ label: "Adding contacts to the campaign", done: 0, total: leads.length });
+    for (let i = 0; i < leads.length; i += CHUNK) {
+      const last = i + CHUNK >= leads.length;
+      totals = addImports(totals,await importLeadChunk(clientId, campaignId, source, sourceRef, leads.slice(i, i + CHUNK), last ? totals : null));
+      setProgress({ label: "Adding contacts to the campaign", done: Math.min(i + CHUNK, leads.length), total: leads.length });
+    }
+    return totals;
+  };
 
   const importCsv = () => {
     if (!file || !map.email) return;
@@ -93,9 +133,14 @@ export function LeadImporter({
       fields: Object.fromEntries(Object.entries(row).filter(([k, v]) => !mapped.has(k) && v && String(v).trim())),
     }));
     start(async () => {
-      const r = await importCsvLeads(clientId, campaignId, file.name, leads);
-      setResult(summary(r));
-      setFile(null);
+      try {
+        setResult(summary(await addInChunks("csv", file.name, leads)));
+        setFile(null);
+      } catch (e) {
+        setResult(`The import stopped: ${(e as Error).message}`);
+      } finally {
+        setProgress(null);
+      }
     });
   };
 
@@ -108,8 +153,30 @@ export function LeadImporter({
 
   const importGhl = () =>
     start(async () => {
-      const r = await importGhlLeads(clientId, campaignId, tag);
-      setResult(summary(r));
+      setResult("");
+      try {
+        const leads: LeadFields[] = [];
+        setProgress({ label: "Fetching contacts from the Nexus Portal", done: 0, total: 0 });
+        for (let page = 1; leads.length < MAX_GHL; page++) {
+          const r = await ghlContactsPage(clientId, tag, page);
+          if (r.error) {
+            setResult(r.error);
+            return;
+          }
+          leads.push(...r.leads);
+          setProgress({ label: "Fetching contacts from the Nexus Portal", done: leads.length, total: Math.min(r.total, MAX_GHL) });
+          if (r.leads.length === 0 || leads.length >= r.total) break;
+        }
+        if (leads.length === 0) {
+          setResult(`No contacts in the Nexus Portal carry the tag "${tag}".`);
+          return;
+        }
+        setResult(summary(await addInChunks("ghl", `tag: ${tag}`, leads.slice(0, MAX_GHL))));
+      } catch (e) {
+        setResult(`The import stopped: ${(e as Error).message}`);
+      } finally {
+        setProgress(null);
+      }
     });
 
   return (
@@ -150,7 +217,13 @@ export function LeadImporter({
                 setResult(`Added ${manual.email}${writeNow ? "; the AI is writing its emails now, then it'll be in Approvals" : ""}.`);
                 setManual({ email: "", first_name: "", last_name: "", company: "", title: "", website: "" });
               } else {
-                setResult(r.error ?? (r.skippedExisting ? `${manual.email} is already in progress for this client.` : "That email address doesn't look valid."));
+                setResult(
+                  r.error ??
+                    (r.skippedExisting ? `${manual.email} is already in this campaign.`
+                      : r.skippedBusy ? `${manual.email} is still being emailed or prepared in another campaign; add them once that finishes.`
+                      : r.skippedDoNotContact ? `${manual.email} replied, bounced, unsubscribed or was invalid before, so they won't be emailed again.`
+                      : "That email address doesn't look valid."),
+                );
               }
             });
           }}
@@ -232,6 +305,7 @@ export function LeadImporter({
         </div>
       )}
 
+      {progress && <ProgressBar p={progress} />}
       {result && <p className="text-sm">{result}</p>}
     </div>
   );

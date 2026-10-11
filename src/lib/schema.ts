@@ -75,9 +75,12 @@ CREATE TABLE IF NOT EXISTS leads (
   last_reply_at TEXT,
   pushed_at TEXT,
   ghl_synced_at TEXT,
-  created_at TEXT NOT NULL DEFAULT ${NOW_TEXT},
-  UNIQUE (client_id, email)
+  created_at TEXT NOT NULL DEFAULT ${NOW_TEXT}
 );
+-- A contact can be in several of a client's campaigns, once per campaign (it used to be once per client).
+ALTER TABLE leads DROP CONSTRAINT IF EXISTS leads_client_id_email_key;
+CREATE UNIQUE INDEX IF NOT EXISTS leads_campaign_email ON leads (campaign_id, email);
+CREATE INDEX IF NOT EXISTS leads_client_email ON leads (client_id, email);
 -- Instantly email verification: queued | pending | verified | catch_all | invalid (null = never checked).
 ALTER TABLE leads ADD COLUMN IF NOT EXISTS verification TEXT;
 ALTER TABLE leads ADD COLUMN IF NOT EXISTS verified_at TEXT;

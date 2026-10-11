@@ -4,6 +4,7 @@ import { requireClient } from "./clients";
 import { ghlCreds } from "./ghlsync";
 import { addContactTags, deleteContact, GhlError } from "./ghl";
 import { llmKeyHint, llmLabel, llmReady, llmText } from "./llm";
+import { GHL_TAGS, type Outcome } from "./checkTags";
 
 /**
  * What came out of email verification (verify.ts), what it means, and what to do with each group in the
@@ -19,10 +20,8 @@ import { llmKeyHint, llmLabel, llmReady, llmText } from "./llm";
 
 export const PORTAL = "Nexus Portal";
 
-export type Outcome = "verified" | "catch_all" | "invalid";
+export { GHL_TAGS, type Outcome };
 export const OUTCOMES: Outcome[] = ["verified", "catch_all", "invalid"];
-/** The exact tag each group gets in the portal. */
-export const GHL_TAGS: Record<Outcome, string> = { verified: "Email Verified", catch_all: "Email Unable To Verify", invalid: "Email Invalid" };
 export const OUTCOME_LABEL: Record<Outcome, string> = { verified: "Verified", catch_all: "Unable to verify", invalid: "Invalid" };
 
 const CONCURRENCY = 3; // the portal allows bursts of 100 per 10s; keep well under it
