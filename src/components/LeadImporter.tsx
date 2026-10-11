@@ -49,35 +49,40 @@ function ProgressBar({ p }: { p: Progress }) {
     <div className="flex flex-col gap-1.5" role="progressbar" aria-valuemin={0} aria-valuemax={p.total} aria-valuenow={p.done}>
       <div className="flex justify-between text-sm">
         <span>{p.label}</span>
-        <span className="num text-muted">{p.done.toLocaleString()} of {p.total.toLocaleString()}</span>
+        <span className="num text-muted">{p.total ? `${p.done.toLocaleString()} of ${p.total.toLocaleString()}` : "starting…"}</span>
       </div>
       <div className="h-1.5 rounded-full bg-paper">
-        <div className="h-1.5 rounded-full bg-go transition-all" style={{ width: `${pct}%` }} />
+        {/* Until the total is known, a pulsing bar shows it's working. */}
+        <div className={`h-1.5 rounded-full bg-go transition-all ${p.total ? "" : "animate-pulse"}`} style={{ width: p.total ? `${pct}%` : "100%" }} />
       </div>
     </div>
   );
 }
 
 export function LeadImporter({
-  clientId, campaigns, hasGhl, campaignId: fixedCampaignId,
+  clientId, campaigns, hasGhl, campaignId: fixedCampaignId, ghlTag,
 }: {
   clientId: number;
   campaigns: { id: number; name: string }[];
   hasGhl: boolean;
   /** When given, contacts always go into this campaign and the campaign picker is hidden. */
   campaignId?: number;
+  /** The campaign's linked portal tag: the importer opens on it, so it can be imported now instead of at the next sync. */
+  ghlTag?: string | null;
 }) {
-  const [mode, setMode] = useState<"manual" | "csv" | "ghl">("manual");
+  const [mode, setMode] = useState<"manual" | "csv" | "ghl">(hasGhl && ghlTag ? "ghl" : "manual");
   const [manual, setManual] = useState({ email: "", first_name: "", last_name: "", company: "", title: "", website: "" });
   const writeNow = true; // the address check decides; a contact that passes is prepared automatically
   const [campaignId, setCampaignId] = useState<number>(fixedCampaignId ?? campaigns[0]?.id ?? 0);
   const [file, setFile] = useState<{ name: string; headers: string[]; rows: Record<string, string>[] } | null>(null);
   const [map, setMap] = useState<Partial<Record<Col, string>>>({});
   const [tags, setTags] = useState<string[] | null>(null);
-  const [tag, setTag] = useState("");
+  const [tag, setTag] = useState(ghlTag ?? "");
   const [result, setResult] = useState<string>("");
   const [progress, setProgress] = useState<Progress | null>(null);
+  const [importing, setImporting] = useState(false);
   const [pending, start] = useTransition();
+  const busy = pending || importing;
 
   if (campaigns.length === 0) {
     return <div className="card p-4 text-sm text-muted">Create a campaign first; contacts are added to a campaign.</div>;
@@ -112,10 +117,27 @@ export function LeadImporter({
     setProgress({ label: "Adding contacts to the campaign", done: 0, total: leads.length });
     for (let i = 0; i < leads.length; i += CHUNK) {
       const last = i + CHUNK >= leads.length;
-      totals = addImports(totals,await importLeadChunk(clientId, campaignId, source, sourceRef, leads.slice(i, i + CHUNK), last ? totals : null));
+      totals = addImports(totals, await importLeadChunk(clientId, campaignId, source, sourceRef, leads.slice(i, i + CHUNK), last ? totals : null));
       setProgress({ label: "Adding contacts to the campaign", done: Math.min(i + CHUNK, leads.length), total: leads.length });
     }
     return totals;
+  };
+
+  /**
+   * Run a long import with the bar showing. Deliberately not a transition: React holds back state set inside an
+   * async transition until it finishes, so the bar would only appear once there was nothing left to show.
+   */
+  const runImport = async (work: () => Promise<void>) => {
+    setImporting(true);
+    setResult("");
+    try {
+      await work();
+    } catch (e) {
+      setResult(`The import stopped: ${(e as Error).message}`);
+    } finally {
+      setImporting(false);
+      setProgress(null);
+    }
   };
 
   const importCsv = () => {
@@ -132,15 +154,9 @@ export function LeadImporter({
       // Every unmapped column is still available to the AI writer.
       fields: Object.fromEntries(Object.entries(row).filter(([k, v]) => !mapped.has(k) && v && String(v).trim())),
     }));
-    start(async () => {
-      try {
-        setResult(summary(await addInChunks("csv", file.name, leads)));
-        setFile(null);
-      } catch (e) {
-        setResult(`The import stopped: ${(e as Error).message}`);
-      } finally {
-        setProgress(null);
-      }
+    void runImport(async () => {
+      setResult(summary(await addInChunks("csv", file.name, leads)));
+      setFile(null);
     });
   };
 
@@ -152,31 +168,24 @@ export function LeadImporter({
     });
 
   const importGhl = () =>
-    start(async () => {
-      setResult("");
-      try {
-        const leads: LeadFields[] = [];
-        setProgress({ label: "Fetching contacts from the Nexus Portal", done: 0, total: 0 });
-        for (let page = 1; leads.length < MAX_GHL; page++) {
-          const r = await ghlContactsPage(clientId, tag, page);
-          if (r.error) {
-            setResult(r.error);
-            return;
-          }
-          leads.push(...r.leads);
-          setProgress({ label: "Fetching contacts from the Nexus Portal", done: leads.length, total: Math.min(r.total, MAX_GHL) });
-          if (r.leads.length === 0 || leads.length >= r.total) break;
-        }
-        if (leads.length === 0) {
-          setResult(`No contacts in the Nexus Portal carry the tag "${tag}".`);
+    void runImport(async () => {
+      const leads: LeadFields[] = [];
+      setProgress({ label: "Fetching contacts from the Nexus Portal", done: 0, total: 0 });
+      for (let page = 1; leads.length < MAX_GHL; page++) {
+        const r = await ghlContactsPage(clientId, tag, page);
+        if (r.error) {
+          setResult(r.error);
           return;
         }
-        setResult(summary(await addInChunks("ghl", `tag: ${tag}`, leads.slice(0, MAX_GHL))));
-      } catch (e) {
-        setResult(`The import stopped: ${(e as Error).message}`);
-      } finally {
-        setProgress(null);
+        leads.push(...r.leads);
+        setProgress({ label: "Fetching contacts from the Nexus Portal", done: leads.length, total: Math.min(r.total, MAX_GHL) });
+        if (r.leads.length === 0 || leads.length >= r.total) break;
       }
+      if (leads.length === 0) {
+        setResult(`No contacts in the Nexus Portal carry the tag "${tag}".`);
+        return;
+      }
+      setResult(summary(await addInChunks("ghl", `tag: ${tag}`, leads.slice(0, MAX_GHL))));
     });
 
   return (
@@ -251,7 +260,7 @@ export function LeadImporter({
             ))}
           </div>
           <p className="text-xs text-muted">The address is checked first; if it passes, the email is prepared and the contact appears as ready to send.</p>
-          <button className="btn-go self-start" disabled={pending || !manual.email}>
+          <button className="btn-go self-start" disabled={busy || !manual.email}>
             {pending ? "Adding…" : "Add contact"}
           </button>
         </form>
@@ -278,8 +287,8 @@ export function LeadImporter({
                   </div>
                 ))}
               </div>
-              <button type="button" className="btn-go self-start" disabled={!map.email || pending} onClick={importCsv}>
-                {pending ? "Importing…" : `Add ${file.rows.length} contacts`}
+              <button type="button" className="btn-go self-start" disabled={!map.email || busy} onClick={importCsv}>
+                {importing ? "Importing…" : `Add ${file.rows.length} contacts`}
               </button>
             </div>
           )}
@@ -299,8 +308,8 @@ export function LeadImporter({
               <input id="imp-tag" className="field" value={tag} onChange={(e) => setTag(e.target.value)} placeholder={pending ? "Loading tags…" : "tag name"} />
             )}
           </div>
-          <button type="button" className="btn-go" disabled={!tag || pending} onClick={importGhl}>
-            {pending ? "Importing…" : "Import"}
+          <button type="button" className="btn-go" disabled={!tag || busy} onClick={importGhl}>
+            {importing ? "Importing…" : "Import"}
           </button>
         </div>
       )}
