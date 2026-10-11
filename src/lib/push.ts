@@ -1,9 +1,9 @@
 import "server-only";
-import { all, run, tx, logActivity } from "./db";
+import { all, get, run, tx, logActivity } from "./db";
 import { requireClient } from "./clients";
 import { requireCampaign, subjectVar, bodyVar, liveSteps } from "./campaigns";
 import { instantly, type LeadInput } from "./instantly";
-import type { LeadRow } from "./leads";
+import { DO_NOT_CONTACT, IN_SEQUENCE, type LeadRow } from "./leads";
 
 import { stripCodeFence, toHtml } from "./merge";
 import { ghlCreds, linkLead } from "./ghlsync";
@@ -50,6 +50,25 @@ export async function pushApproved(campaignId: number): Promise<{ pushed: number
     // Belt and braces: re-check approval at the last moment.
     if (mine.some((d) => d.status !== "approved")) {
       await run("UPDATE leads SET stage = 'review' WHERE id = ?", lead.id);
+      continue;
+    }
+    // The same contact in other campaigns: never after a reply, bounce or unsubscribe, and never two sequences at once.
+    const other = await get<{ name: string; dnc: boolean }>(
+      `SELECT c.name, ${DO_NOT_CONTACT("o")} dnc FROM leads o JOIN campaigns c ON c.id = o.campaign_id
+       WHERE o.client_id = ? AND o.email = ? AND o.id <> ? AND (${DO_NOT_CONTACT("o")} OR ${IN_SEQUENCE("o")})
+       ORDER BY 2 DESC LIMIT 1`,
+      lead.client_id, lead.email, lead.id,
+    );
+    if (other?.dnc) {
+      await tx(async () => {
+        await run("UPDATE leads SET stage = 'rejected', stage_message = ? WHERE id = ?", `Not sent: replied, bounced or unsubscribed in "${other.name}"`, lead.id);
+        await run("UPDATE drafts SET status = 'rejected', reviewed_at = datetime('now') WHERE lead_id = ? AND status IN ('pending', 'approved')", lead.id);
+      });
+      continue;
+    }
+    if (other) {
+      // Stays approved; the next send picks it up once the other sequence is over.
+      await run("UPDATE leads SET stage_message = ? WHERE id = ?", `Waiting: still being emailed by "${other.name}". Sent once that sequence ends.`, lead.id);
       continue;
     }
     const vars = copyVars(mine);

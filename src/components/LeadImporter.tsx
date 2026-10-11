@@ -106,7 +106,6 @@ export function LeadImporter({
     [
       `${r.added} added${r.updated ? `, ${r.updated} refreshed` : ""}${r.reused ? ` (${r.reused} already checked before, so not checked again)` : ""}`,
       r.skippedExisting && `${r.skippedExisting} already in this campaign`,
-      r.skippedBusy && `${r.skippedBusy} skipped for now: still being emailed or prepared in another campaign (they can join once that finishes)`,
       r.skippedDoNotContact && `${r.skippedDoNotContact} skipped: they replied, bounced, unsubscribed or were invalid before`,
       r.skippedInvalid && `${r.skippedInvalid} without a valid email`,
     ].filter(Boolean).join(", ") + ".";
@@ -229,7 +228,6 @@ export function LeadImporter({
                 setResult(
                   r.error ??
                     (r.skippedExisting ? `${manual.email} is already in this campaign.`
-                      : r.skippedBusy ? `${manual.email} is still being emailed or prepared in another campaign; add them once that finishes.`
                       : r.skippedDoNotContact ? `${manual.email} replied, bounced, unsubscribed or was invalid before, so they won't be emailed again.`
                       : "That email address doesn't look valid."),
                 );

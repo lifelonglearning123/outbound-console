@@ -2,7 +2,6 @@
 
 /**
  * skippedExisting: already in this campaign and past 'new'.
- * skippedBusy: still being prepared or emailed in another campaign; can join once that sequence is over.
  * skippedDoNotContact: replied, bounced, unsubscribed or invalid in an earlier campaign; never added again.
  * reused: kept an earlier check result (from another campaign or the portal's tags) instead of being checked again.
  */
@@ -11,12 +10,11 @@ export type ImportResult = {
   updated: number;
   skippedInvalid: number;
   skippedExisting: number;
-  skippedBusy: number;
   skippedDoNotContact: number;
   reused: number;
 };
 
-export const NO_IMPORT: ImportResult = { added: 0, updated: 0, skippedInvalid: 0, skippedExisting: 0, skippedBusy: 0, skippedDoNotContact: 0, reused: 0 };
+export const NO_IMPORT: ImportResult = { added: 0, updated: 0, skippedInvalid: 0, skippedExisting: 0,skippedDoNotContact: 0, reused: 0 };
 
 export function addImports(a: ImportResult, b: ImportResult): ImportResult {
   return Object.fromEntries(Object.keys(NO_IMPORT).map((k) => [k, a[k as keyof ImportResult] + b[k as keyof ImportResult]])) as ImportResult;

@@ -89,8 +89,8 @@ export async function pullTaggedContacts(client: Client): Promise<number> {
   let total = 0;
   for (const c of campaigns) {
     const contacts: GhlContact[] = (await contactsWithTag(creds, c.ghl_tag)).filter((x) => x.email && !emailDnd(x));
-    // Only contacts not yet in this campaign. importLeads decides about people in other campaigns: someone still in
-    // another sequence is skipped for now and picked up by a later sync once it's over.
+    // Only contacts not yet in this campaign. importLeads turns away anyone who replied, bounced or unsubscribed
+    // elsewhere; someone still in another campaign's sequence joins, and the send waits until that sequence is over.
     const fresh: GhlContact[] = [];
     for (const x of contacts) {
       const known = await get<{ id: number }>("SELECT id FROM leads WHERE campaign_id = ? AND email = ?", c.id, String(x.email).toLowerCase());

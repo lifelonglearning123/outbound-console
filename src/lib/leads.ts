@@ -48,6 +48,22 @@ export type LeadRow = {
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
+// A contact can be in several of a client's campaigns, once in each. These two rules, written against a lead
+// aliased `a`, keep that safe: the import uses the first, the send (push.ts) uses both.
+
+/**
+ * Never emailed again from any campaign: replied (an out-of-office doesn't count), bounced, unsubscribed, or invalid.
+ * Instantly lead status: -1 bounced, -2 unsubscribed.
+ */
+export const DO_NOT_CONTACT = (a: string) =>
+  `(${a}.instantly_status IN (-1, -2) OR ${a}.verification = 'invalid' OR EXISTS (
+     SELECT 1 FROM emails e WHERE e.client_id = ${a}.client_id AND e.lead_email = ${a}.email AND e.direction = 'in'
+       AND e.interest IS DISTINCT FROM 'ooo'))`;
+
+/** Handed to Instantly and its sequence not over yet (3 = completed, -3 = skipped), so another campaign must wait. */
+export const IN_SEQUENCE = (a: string) =>
+  `((${a}.pushed_at IS NOT NULL OR ${a}.instantly_lead_id IS NOT NULL) AND COALESCE(${a}.instantly_status, 1) NOT IN (3, -3))`;
+
 type Earlier = {
   id: number;
   campaign_id: number | null;
@@ -56,25 +72,15 @@ type Earlier = {
   verified_at: string | null;
   ghl_contact_id: string | null;
   ghl_verification_tag: string | null;
-  instantly_status: number | null;
-  last_reply_at: string | null;
+  dnc: boolean;
 };
 
-/** Replied, bounced, unsubscribed or invalid: never emailed again from any campaign. */
-const doNotContact = (e: Earlier) => !!e.last_reply_at || e.instantly_status === -1 || e.instantly_status === -2 || e.verification === "invalid";
-
-/** Still being prepared, waiting for approval, or in a sequence Instantly hasn't finished (completed = 3, skipped = -3). */
-const busy = (e: Earlier) =>
-  ["drafting", "review", "approved", "extending"].includes(e.stage) ||
-  ((e.stage === "pushed" || e.stage.startsWith("extend_")) && e.instantly_status !== 3 && e.instantly_status !== -3);
-
 /**
- * Add leads to a campaign. A contact can be in several of a client's campaigns, once each:
+ * Add leads to a campaign:
  *   - already in this campaign: its fields are refreshed while it's still 'new', otherwise it's left alone;
- *   - replied, bounced, unsubscribed or invalid anywhere before: skipped;
- *   - still being prepared or emailed in another campaign: skipped for now, so nobody gets two sequences at once;
- *   - sitting unprepared ('new') in another campaign: moved here;
- *   - otherwise a new lead, which keeps the address check from its latest earlier campaign.
+ *   - replied, bounced, unsubscribed or invalid in any campaign: skipped;
+ *   - otherwise added, even while another campaign has it: the send waits until no other sequence is emailing it.
+ *     It keeps the address check from its latest earlier campaign.
  * A lead with no earlier result starts queued for an address check (verify.ts), unless it comes from the portal
  * already tagged with a result. A passed result sends it straight to 'drafting' (the caller runs the writer); an
  * invalid one sets it aside, as the checker would have done.
@@ -97,27 +103,19 @@ export async function importLeads(
         continue;
       }
       const earlier = await all<Earlier>(
-        `SELECT id, campaign_id, stage, verification, verified_at, ghl_contact_id, ghl_verification_tag, instantly_status, last_reply_at
-         FROM leads WHERE client_id = ? AND email = ? ORDER BY id DESC`,
+        `SELECT l.id, l.campaign_id, l.stage, l.verification, l.verified_at, l.ghl_contact_id, l.ghl_verification_tag, ${DO_NOT_CONTACT("l")} dnc
+         FROM leads l WHERE l.client_id = ? AND l.email = ? ORDER BY l.id DESC`,
         clientId, email,
       );
-      let existing: Earlier | undefined = earlier.find((e) => e.campaign_id === campaignId);
+      const existing = earlier.find((e) => e.campaign_id === campaignId);
       if (existing && existing.stage !== "new") {
         r.skippedExisting++;
         continue;
       }
       const others = earlier.filter((e) => e !== existing);
-      if (others.length) {
-        const replied = await get("SELECT 1 FROM emails WHERE client_id = ? AND lead_email = ? AND direction = 'in' LIMIT 1", clientId, email);
-        if (replied || others.some(doNotContact)) {
-          r.skippedDoNotContact++;
-          continue;
-        }
-        if (others.some(busy)) {
-          r.skippedBusy++;
-          continue;
-        }
-        existing ??= others.find((e) => e.stage === "new"); // never prepared elsewhere: bring it over
+      if (others.some((e) => e.dnc)) {
+        r.skippedDoNotContact++;
+        continue;
       }
       const prior = others.find((e) => e.verification === "verified" || e.verification === "catch_all");
       const values = {
@@ -192,7 +190,6 @@ export async function logImport(clientId: number, source: string, sourceRef: str
     `Imported ${r.added} new leads from ${source.toUpperCase()} (${sourceRef})` +
       (r.reused ? `, ${r.reused} already checked before (not checked again)` : "") +
       (r.skippedExisting ? `, ${r.skippedExisting} already in this campaign` : "") +
-      (r.skippedBusy ? `, ${r.skippedBusy} still in another campaign's sequence` : "") +
       (r.skippedDoNotContact ? `, ${r.skippedDoNotContact} replied, bounced, unsubscribed or invalid before` : "") +
       (r.skippedInvalid ? `, ${r.skippedInvalid} invalid emails` : ""),
   );
