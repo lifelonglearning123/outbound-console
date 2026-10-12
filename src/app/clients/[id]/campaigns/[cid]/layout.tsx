@@ -32,11 +32,18 @@ export default async function CampaignLayout({ children, params }: LayoutProps<"
   const base = `/clients/${clientId}/campaigns/${c.id}`;
 
   // Each tile opens the place where that number can be acted on.
+  const checkSub = [
+    p.verified && `${n(p.verified)} verified`,
+    p.catchAll && `${n(p.catchAll)} unconfirmed`,
+    p.invalid && `${n(p.invalid)} invalid`,
+  ].filter(Boolean).join(" · ");
   const strip = [
-    { label: "Contacts", value: p.contacts, sub: p.checking ? `${n(p.checking)} being checked` : p.contacts ? "all checked" : "none added yet", tone: "", href: `${base}/contacts` },
-    { label: "Verified", value: p.verified, sub: p.verified ? "tag in the portal →" : "address confirmed", tone: "text-go", href: `${base}/contacts#check-verified` },
-    { label: "Unable to verify", value: p.catchAll, sub: p.catchAll ? "tag or delete →" : "catch-all company", tone: "text-wait", href: `${base}/contacts#check-catch_all` },
-    { label: "Invalid", value: p.invalid, sub: p.invalid ? "tag or delete →" : "set aside", tone: "text-bad", href: `${base}/contacts#check-invalid` },
+    { label: "Contacts", value: p.contacts, sub: p.contacts ? "" : "none added yet", tone: "", href: `${base}/contacts` },
+    {
+      label: "Address checks", value: p.checked,
+      sub: p.checking ? `checking ${n(p.checking)}` : checkSub,
+      tone: p.invalid ? "text-wait" : p.checked ? "text-go" : "", href: `${base}/contacts`,
+    },
     { label: "Ready to send", value: p.ready, sub: p.unconfirmed ? `+ ${n(p.unconfirmed)} unconfirmed` : p.preparing ? `preparing ${n(p.preparing)}` : "", tone: p.ready ? "text-go" : "", href: `${base}/approve` },
     { label: "Sending", value: p.sending, sub: p.sent ? `${n(p.sent)} emails sent` : p.approved - p.sending > 0 ? `${n(p.approved - p.sending)} approved, not handed over` : "", tone: "", href: base },
     { label: "Replies", value: p.replies, sub: "", tone: "", href: `/clients/${clientId}/replies` },
@@ -74,7 +81,7 @@ export default async function CampaignLayout({ children, params }: LayoutProps<"
         ]}
       />
 
-      <div className="grid grid-cols-7 gap-3">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
         {strip.map((k) => (
           <Link key={k.label} href={k.href} className="card p-3 transition-colors hover:border-ink">
             <div className="text-xs text-muted">{k.label}</div>
@@ -89,7 +96,7 @@ export default async function CampaignLayout({ children, params }: LayoutProps<"
         tabs={[
           { href: "/contacts", label: "Contacts" },
           { href: "/email", label: c.managed ? "Email" : "Settings" },
-          { href: "/approve", label: "Approve", count: p.ready },
+          { href: "/approve", label: "Approvals", count: p.ready },
           { href: "", label: "Sending" },
         ]}
       />

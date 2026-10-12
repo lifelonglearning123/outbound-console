@@ -113,7 +113,7 @@ export default async function OverviewPage() {
               {rows.map((r) => (
                 <tr key={r.id} className="border-t border-line">
                   <td className="px-3 py-2">
-                    <Link href={`/clients/${r.id}`} className="font-medium hover:underline">{r.name}</Link>
+                    <Link href={`/clients/${r.id}/campaigns`} className="font-medium hover:underline">{r.name}</Link>
                     {r.key_status !== "ok" && <span className="ml-2 text-xs text-bad">{r.key_status === "error" ? "connection problem" : "not connected"}</span>}
                   </td>
                   <td className="num px-3 py-2 text-right">{r.active}</td>

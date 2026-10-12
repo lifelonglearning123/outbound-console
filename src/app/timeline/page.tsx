@@ -37,7 +37,7 @@ export default async function TimelinePage({ searchParams }: PageProps<"/timelin
       </header>
       {clientId && u.role === "admin" && (
         <Link
-          href={`/clients/${clientId}`}
+          href={`/clients/${clientId}/campaigns`}
           className="rounded-md border border-info/30 bg-info-soft px-3 py-2 text-sm text-info hover:opacity-90"
         >
           You&apos;re only seeing {clients.find((c) => c.id === clientId)?.name ?? "one client"}. Open their workspace →

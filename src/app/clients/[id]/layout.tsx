@@ -8,7 +8,7 @@ export async function generateMetadata({ params }: { params: Promise<{ id: strin
   return { title: client?.name ?? "Client" };
 }
 
-/** The client's workspace. Its sections (Overview, Campaigns, Approvals, Replies, Stats, Settings) live in the sidebar. */
+/** The client's workspace. Its sections (Campaigns, Approvals, Replies, Stats, Settings) live in the sidebar. */
 export default async function ClientLayout({ children, params }: LayoutProps<"/clients/[id]">) {
   const id = Number((await params).id);
   await requireClientAccess(id); // only admins and this client's own logins

@@ -9,7 +9,7 @@ type NavClient = { id: number; name: string; keyStatus: string | null };
 const ALL_CLIENTS = [
   { href: "/", label: "Dashboard" },
   { href: "/approvals", label: "Approvals" },
-  { href: "/inbox", label: "Inbox" },
+  { href: "/inbox", label: "Replies" },
   { href: "/timeline", label: "Send timeline" },
   { href: "/mailboxes", label: "Mailboxes" },
   { href: "/activity", label: "Activity" },
@@ -17,7 +17,6 @@ const ALL_CLIENTS = [
 
 /** Everything a client's workspace holds. The sidebar shows these under the open client, so you never leave it by accident. */
 const sections = (isAdmin: boolean) => [
-  { href: "", label: "Overview" },
   { href: "/campaigns", label: "Campaigns" },
   { href: "/approvals", label: "Approvals" },
   { href: "/replies", label: "Replies" },
@@ -59,7 +58,7 @@ export function Nav({ clients, user }: { clients: NavClient[]; user: { email: st
             const open = c.id === openId;
             return (
               <div key={c.id} className="flex flex-col gap-0.5">
-                <Link key={c.id} href={user.isAdmin ? base : `${base}/campaigns`} className={item(open)}>
+                <Link key={c.id} href={`${base}/campaigns`} className={item(open)}>
                   <span className="truncate font-medium">{c.name}</span>
                   {user.isAdmin && (
                     <span
@@ -74,7 +73,7 @@ export function Nav({ clients, user }: { clients: NavClient[]; user: { email: st
                   <div className="mb-1 ml-2.5 flex flex-col gap-0.5 border-l border-line pl-1.5">
                     {sections(user.isAdmin).map((s) => {
                       const href = `${base}${s.href}`;
-                      const active = s.href === "" ? path === base : path.startsWith(href);
+                      const active = path.startsWith(href);
                       return (
                         <Link
                           key={s.href}

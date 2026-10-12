@@ -82,7 +82,7 @@ export default async function StatsPage({ params, searchParams }: PageProps<"/cl
           <Section title="Funnel">
             <FunnelBars h={r.now} />
           </Section>
-          <Section title="Replies by type" note="Leads by their reply, tagged by AI (you can retag in the Inbox).">
+          <Section title="Replies by type" note="Leads by their reply, tagged by AI (you can retag on the Replies page).">
             <HBars rows={r.replies.map((x) => ({ label: x.label, value: x.n }))} />
           </Section>
         </div>
