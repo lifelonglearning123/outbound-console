@@ -180,7 +180,7 @@ export function ApprovalQueue({
       {!selected ? (
         <div className="card p-8 text-center text-sm text-muted">Nothing ready to send.</div>
       ) : (
-        <div className="grid grid-cols-[280px_1fr] gap-4">
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-[280px_1fr]">
           <ul className="card max-h-[calc(100vh-220px)] overflow-y-auto">
             <li className="border-b border-line bg-paper px-3 py-1.5 text-xs font-medium uppercase tracking-wide text-muted">Ready to send</li>
             {queue.map((l) => (

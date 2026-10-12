@@ -74,7 +74,7 @@ export default async function StatsPage({ params, searchParams }: PageProps<"/cl
 
       <HeadlineTiles now={r.now} before={r.before} />
 
-      <div className="grid grid-cols-[1fr_380px] gap-5">
+      <div className="grid grid-cols-1 gap-5 lg:grid-cols-[1fr_380px]">
         <Section title="Sends and replies" note="Two panels on one timeline, so replies aren't dwarfed by sends.">
           <TrendChart days={r.daily} />
         </Section>

@@ -29,7 +29,8 @@ export default async function RootLayout({ children }: LayoutProps<"/">) {
     <html lang="en" className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}>
       <body className="flex min-h-full font-sans">
         {user && <Nav clients={clients} user={{ email: user.email, isAdmin: user.role === "admin" }} />}
-        <main className="min-w-0 flex-1 px-8 py-6 print:p-0">{children}</main>
+        {/* Small screens get the fixed top bar, so the content starts below it. */}
+        <main className={`min-w-0 flex-1 px-4 pb-6 md:px-8 md:pt-6 print:p-0 ${user ? "pt-16" : "pt-6"}`}>{children}</main>
       </body>
     </html>
   );

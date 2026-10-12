@@ -64,7 +64,7 @@ export default async function CampaignApprovePage({ params, searchParams }: Page
               : <>Nothing ready to send. <Link href={`${base}/contacts`} className="underline">Add contacts</Link> to get started.</>}
         </div>
       ) : (
-        <div className="grid grid-cols-[1fr_380px] gap-6">
+        <div className="grid grid-cols-1 gap-6 lg:grid-cols-[1fr_380px]">
           <section className="card flex flex-col gap-3 p-5">
             <div>
               <h2 className="font-semibold">The email everyone gets</h2>

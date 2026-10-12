@@ -4,7 +4,7 @@ import { Skeleton, SkeletonTable } from "@/components/Skeleton";
 export default function CampaignTabLoading() {
   return (
     <div className="flex flex-col gap-6" aria-busy="true" aria-label="Loading">
-      <div className="grid grid-cols-[1fr_320px] gap-6">
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-[1fr_320px]">
         <div className="card flex flex-col gap-3 p-5">
           <Skeleton className="h-4 w-32" />
           <Skeleton className="h-9 w-full" />

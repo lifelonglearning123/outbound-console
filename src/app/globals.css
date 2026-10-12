@@ -53,16 +53,26 @@ body {
   @apply mb-1 block text-xs font-medium uppercase tracking-wide text-muted;
 }
 .btn {
-  @apply inline-flex items-center gap-1.5 rounded-md border border-line bg-card px-3 py-1.5 text-sm font-medium hover:border-ink disabled:opacity-50;
+  @apply inline-flex items-center gap-1.5 rounded-md border border-line bg-card px-3 py-1.5 text-sm font-medium hover:border-ink active:translate-y-px disabled:opacity-50;
 }
 .btn-go {
-  @apply inline-flex items-center gap-1.5 rounded-md bg-go px-3 py-1.5 text-sm font-medium text-white hover:opacity-90 disabled:opacity-50;
+  @apply inline-flex items-center gap-1.5 rounded-md bg-go px-3 py-1.5 text-sm font-medium text-white hover:opacity-90 active:translate-y-px disabled:opacity-50;
 }
 .btn-bad {
-  @apply inline-flex items-center gap-1.5 rounded-md border border-bad px-3 py-1.5 text-sm font-medium text-bad hover:bg-bad-soft disabled:opacity-50;
+  @apply inline-flex items-center gap-1.5 rounded-md border border-bad px-3 py-1.5 text-sm font-medium text-bad hover:bg-bad-soft active:translate-y-px disabled:opacity-50;
 }
 .card {
   @apply rounded-lg border border-line bg-card;
+}
+
+/* On narrow screens, a card-wrapped table scrolls sideways instead of crushing its columns. */
+@media (max-width: 767px) {
+  .card:has(> table) {
+    overflow-x: auto;
+  }
+  .card > table {
+    min-width: 560px;
+  }
 }
 
 /* Loading shapes and the "working" dot. Both go still when the person prefers reduced motion. */

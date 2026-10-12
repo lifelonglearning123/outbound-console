@@ -5,6 +5,7 @@ import { INTEREST_LABELS } from "@/lib/triage";
 import { dateTime } from "@/lib/format";
 import { tagReply, markRead } from "@/app/inbox/actions";
 import { ReplyBox, GhlButton } from "@/components/InboxControls";
+import { SubmitButton } from "@/components/SubmitButton";
 
 /**
  * The reply browser: filter chips, the list, and the open thread. Rendered in two places with the same look:
@@ -110,8 +111,8 @@ export async function RepliesView({
       {list.length === 0 ? (
         <div className="card p-8 text-center text-sm text-muted">No replies here.</div>
       ) : (
-        <div className="grid grid-cols-[340px_1fr] gap-4">
-          <ul className="card max-h-[calc(100vh-230px)] overflow-y-auto">
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-[340px_1fr]">
+          <ul className="card max-h-80 overflow-y-auto md:max-h-[calc(100vh-230px)]">
             {list.map((m) => (
               <li key={m.id}>
                 <Link
@@ -144,15 +145,18 @@ export async function RepliesView({
                     </div>
                   </div>
                   {selected.is_unread ? (
-                    <form action={markRead.bind(null, selected.id)}><button className="btn text-xs">Mark read</button></form>
+                    <form action={markRead.bind(null, selected.id)}><SubmitButton className="btn text-xs" pendingLabel="Marking…">Mark read</SubmitButton></form>
                   ) : null}
                 </div>
                 <div className="flex flex-wrap items-center gap-1.5">
                   {Object.entries(INTEREST_LABELS).map(([k, label]) => (
                     <form key={k} action={tagReply.bind(null, selected.id, k)}>
-                      <button className={`rounded-md border px-2 py-0.5 text-xs ${selected.interest === k ? `border-transparent ${TAG_STYLE[k]} font-medium` : "border-line hover:border-ink"}`}>
+                      <SubmitButton
+                        className={`rounded-md border px-2 py-0.5 text-xs disabled:opacity-50 ${selected.interest === k ? `border-transparent ${TAG_STYLE[k]} font-medium` : "border-line hover:border-ink"}`}
+                        pendingLabel="Saving…"
+                      >
                         {label}
-                      </button>
+                      </SubmitButton>
                     </form>
                   ))}
                 </div>

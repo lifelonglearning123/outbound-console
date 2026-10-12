@@ -84,7 +84,7 @@ export default async function CampaignContactsPage({ params, searchParams }: Pag
       )}
 
       {/* 2. Add */}
-      <section className="grid grid-cols-[1fr_320px] gap-6">
+      <section className="grid grid-cols-1 gap-6 lg:grid-cols-[1fr_320px]">
         <LeadImporter clientId={clientId} campaigns={[{ id: c.id, name: c.name }]} campaignId={c.id} ghlTag={c.ghl_tag} hasGhl={Boolean(client.ghl_location_id && client.ghl_token)} />
         <div className="card flex flex-col gap-3 p-5">
           <h2 className="font-semibold">What happens next</h2>
