@@ -11,7 +11,8 @@ import { addImports } from "@/lib/importResult";
 import { contactsWithTagPage, listTags } from "@/lib/ghl";
 import { portalCheck } from "@/lib/checkTags";
 import { runWriter, rewriteStep } from "@/lib/writer";
-import { pushApproved } from "@/lib/push";
+import { pushApproved, pullBackMimecast } from "@/lib/push";
+import { detectMailDomains } from "@/lib/mailhost";
 import { linkPendingLeads } from "@/lib/ghlsync";
 import { queueVerification, runVerifier, PASSED } from "@/lib/verify";
 import { queueTagging, queueDeletion, runVerificationActions, writeVerificationSummary, GHL_TAGS, OUTCOME_LABEL, PORTAL, type Outcome } from "@/lib/verifyReport";
@@ -61,6 +62,7 @@ export async function importLeadChunk(
     await logImport(clientId, source, sourceRef, addImports(totals, r));
     if (source === "csv") after(async () => linkPendingLeads(await requireClient(clientId))); // Nexus Portal is the source of truth: add the contacts there
   }
+  if (r.added) after(detectMailDomains); // who handles each new company's email (Mimecast and the like)
   if (r.added + r.updated > r.reused) after(runVerifier); // every new contact is checked before anything else
   if (r.reused) after(runWriter); // already checked in the portal: prepare their emails now
   if (totals) revalidatePath("/", "layout");
@@ -264,6 +266,13 @@ export async function pushCampaign(campaignId: number) {
   after(runWriter); // leads missing newly released steps were sent back to the writer
   revalidatePath("/", "layout");
   return r;
+}
+
+/** Take contacts behind Mimecast back out of Instantly before they're emailed; they stay approved and held. */
+export async function holdBackMimecast(campaignId: number) {
+  await requireClientAccess(await clientOfCampaign(campaignId));
+  await pullBackMimecast(campaignId);
+  revalidatePath("/", "layout");
 }
 
 /** Form-action version of pushCampaign for the campaign's Approve tab. */

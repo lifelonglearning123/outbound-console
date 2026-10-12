@@ -4,6 +4,7 @@ import { requireClient } from "./clients";
 import { requireCampaign, subjectVar, bodyVar, liveSteps } from "./campaigns";
 import { instantly, type LeadInput } from "./instantly";
 import { DO_NOT_CONTACT, IN_SEQUENCE, type LeadRow } from "./leads";
+import { BEHIND_MIMECAST, detectMailDomains } from "./mailhost";
 
 import { stripCodeFence, toHtml } from "./merge";
 import { ghlCreds, linkLead } from "./ghlsync";
@@ -20,7 +21,21 @@ export async function pushApproved(campaignId: number): Promise<{ pushed: number
   const client = await requireClient(campaign.client_id);
   const api = instantly(client.instantly_api_key!);
 
-  const leads = await all<LeadRow>("SELECT * FROM leads WHERE campaign_id = ? AND stage = 'approved' ORDER BY id LIMIT 1000", campaignId);
+  if (campaign.hold_mimecast) {
+    // Know each company's mail server before deciding; contacts behind Mimecast stay approved but aren't sent.
+    await detectMailDomains();
+    const held = await run(
+      `UPDATE leads l SET stage_message = ? WHERE l.campaign_id = ? AND l.stage = 'approved' AND ${BEHIND_MIMECAST("l")}`,
+      "Held back: their company filters email through Mimecast, which blocks cold email from new sending domains. Sent if the campaign stops holding these back.",
+      campaignId,
+    );
+    if (held.changes) await logActivity(client.id, "push", `Held back ${held.changes} contacts behind Mimecast in "${campaign.name}"`);
+  }
+  const leads = await all<LeadRow>(
+    `SELECT * FROM leads l WHERE campaign_id = ? AND stage = 'approved' ${campaign.hold_mimecast ? `AND NOT ${BEHIND_MIMECAST("l")}` : ""}
+     ORDER BY id LIMIT 1000`,
+    campaignId,
+  );
   if (leads.length === 0) return { pushed: 0, skipped: 0 };
 
   const drafts = await all<{ lead_id: number; step: number; subject: string; body: string; status: string; format: string }>(
@@ -116,6 +131,54 @@ export async function pushApproved(campaignId: number): Promise<{ pushed: number
       (skipped ? ` (${skipped} skipped by Instantly: ${res.duplicated_leads} duplicates, ${res.in_blocklist} blocklisted, ${res.invalid_email_count} invalid)` : ""),
   );
   return { pushed, skipped };
+}
+
+/** SQL: leads of a campaign already in Instantly, behind Mimecast, that it hasn't emailed yet (as far as the last sync knows). */
+const MIMECAST_NOT_YET_EMAILED = `l.stage = 'pushed' AND l.instantly_lead_id IS NOT NULL AND l.last_sent_at IS NULL
+  AND COALESCE(l.instantly_status, 1) = 1 AND ${BEHIND_MIMECAST("l")}`;
+
+export async function mimecastNotYetEmailed(campaignId: number): Promise<number> {
+  return (await all<{ n: number }>(`SELECT COUNT(*) n FROM leads l WHERE l.campaign_id = ? AND ${MIMECAST_NOT_YET_EMAILED}`, campaignId))[0]?.n ?? 0;
+}
+
+/**
+ * Take contacts behind Mimecast back out of Instantly before it emails them: each is checked with Instantly first
+ * (anyone it has already emailed stays), removed there, and goes back to approved and held, ready to send later.
+ */
+export async function pullBackMimecast(campaignId: number): Promise<{ pulled: number; alreadyEmailed: number }> {
+  const campaign = await requireCampaign(campaignId);
+  const client = await requireClient(campaign.client_id);
+  const api = instantly(client.instantly_api_key!);
+  const leads = await all<{ id: number; instantly_lead_id: string }>(
+    `SELECT l.id, l.instantly_lead_id FROM leads l WHERE l.campaign_id = ? AND ${MIMECAST_NOT_YET_EMAILED} ORDER BY l.id`,
+    campaignId,
+  );
+  let pulled = 0;
+  let alreadyEmailed = 0;
+  for (let i = 0; i < leads.length; i += 5) {
+    await Promise.all(leads.slice(i, i + 5).map(async (l) => {
+      const live = await api.getLead(l.instantly_lead_id);
+      if (live.timestamp_last_contact || live.status !== 1) {
+        alreadyEmailed++;
+        return;
+      }
+      await api.deleteLead(l.instantly_lead_id);
+      await run(
+        `UPDATE leads SET stage = 'approved', pushed_at = NULL, instantly_lead_id = NULL, instantly_status = NULL, stage_message = ?
+         WHERE id = ? AND stage = 'pushed'`,
+        "Held back: their company filters email through Mimecast, which blocks cold email from new sending domains. Taken back out of Instantly before it was sent.",
+        l.id,
+      );
+      pulled++;
+    }));
+  }
+  await logActivity(
+    client.id,
+    "push",
+    `Took ${pulled} contacts behind Mimecast back out of "${campaign.name}" before they were emailed` +
+      (alreadyEmailed ? ` (${alreadyEmailed} had already been emailed, so they stay)` : ""),
+  );
+  return { pulled, alreadyEmailed };
 }
 
 /**

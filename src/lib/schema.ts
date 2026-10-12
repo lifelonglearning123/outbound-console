@@ -86,6 +86,17 @@ ALTER TABLE leads ADD COLUMN IF NOT EXISTS verification TEXT;
 ALTER TABLE leads ADD COLUMN IF NOT EXISTS verified_at TEXT;
 -- Nexus Portal (GHL) follow-up to verification: queued_tag | queued_delete | done | deleted (null = nothing done yet).
 ALTER TABLE leads ADD COLUMN IF NOT EXISTS ghl_verification_tag TEXT;
+-- Who handles each recipient domain's mail, read from its MX records (mailhost.ts): the provider (google |
+-- microsoft | other | none) and any security filter in front of it (mimecast | proofpoint | barracuda | cisco).
+CREATE TABLE IF NOT EXISTS mail_domains (
+  domain TEXT PRIMARY KEY,
+  provider TEXT NOT NULL,
+  gateway TEXT,
+  mx TEXT,
+  checked_at TEXT NOT NULL
+);
+-- Hold back contacts whose company filters mail through Mimecast, which blocks cold email from new sending domains.
+ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS hold_mimecast INTEGER NOT NULL DEFAULT 1;
 -- A note on the portal contact for each campaign that starts emailing it, so the portal keeps the campaign history.
 ALTER TABLE leads ADD COLUMN IF NOT EXISTS ghl_noted_at TEXT;
 ALTER TABLE leads ADD COLUMN IF NOT EXISTS ghl_note_error TEXT;

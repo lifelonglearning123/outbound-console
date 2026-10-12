@@ -38,6 +38,7 @@ export default async function NewCampaignPage({ params }: PageProps<"/clients/[i
       lockedLive={0}
       ghlTag={null}
       ghlTags={ghlTags}
+      holdMimecast
     />
     </div>
   );

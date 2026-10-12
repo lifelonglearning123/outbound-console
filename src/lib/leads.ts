@@ -2,6 +2,7 @@ import "server-only";
 import { all, run, tx, logActivity } from "./db";
 import type { Outcome } from "./checkTags";
 import { NO_IMPORT, type ImportResult } from "./importResult";
+import { BEHIND_GATEWAY, GATEWAY_LABEL, PROVIDER_LABEL, type Gateway, type Provider } from "./mailhost";
 
 export type { ImportResult };
 
@@ -52,28 +53,63 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 // aliased `a`, keep that safe: the import uses the first, the send (push.ts) uses both.
 
 /**
- * Never emailed again from any campaign: replied (an out-of-office doesn't count), bounced, unsubscribed, or invalid.
- * Instantly lead status: -1 bounced, -2 unsubscribed.
+ * A bounce from a checked address at a company behind a security filter (Mimecast and the like): the address
+ * exists, the filter refused the email. Not a reason to give up on the contact; they can be tried again later.
  */
+export const FILTER_BLOCKED = (a: string) =>
+  `(COALESCE(${a}.instantly_status, 0) = -1 AND COALESCE(${a}.verification, '') IN ('verified', 'catch_all') AND ${BEHIND_GATEWAY(a)})`;
+
+/**
+ * Never emailed again from any campaign: replied (an out-of-office doesn't count), bounced (unless the company's
+ * filter blocked it, see FILTER_BLOCKED), unsubscribed, or invalid. Instantly lead status: -1 bounced, -2 unsubscribed.
+ */
+// COALESCEs throughout: a never-synced status or never-checked address must read as "no", not as unknown,
+// or the whole rule comes out unknown and the contact slips through.
 export const DO_NOT_CONTACT = (a: string) =>
-  `(${a}.instantly_status IN (-1, -2) OR ${a}.verification = 'invalid' OR EXISTS (
+  `(COALESCE(${a}.instantly_status, 0) = -2 OR (COALESCE(${a}.instantly_status, 0) = -1 AND NOT ${FILTER_BLOCKED(a)})
+     OR COALESCE(${a}.verification, '') = 'invalid' OR EXISTS (
      SELECT 1 FROM emails e WHERE e.client_id = ${a}.client_id AND e.lead_email = ${a}.email AND e.direction = 'in'
        AND e.interest IS DISTINCT FROM 'ooo'))`;
 
-/** Handed to Instantly and its sequence not over yet (3 = completed, -3 = skipped), so another campaign must wait. */
+/**
+ * Handed to Instantly and its sequence not over yet, so another campaign must wait. Over means completed (3),
+ * skipped (-3), bounced (-1) or unsubscribed (-2).
+ */
 export const IN_SEQUENCE = (a: string) =>
-  `((${a}.pushed_at IS NOT NULL OR ${a}.instantly_lead_id IS NOT NULL) AND COALESCE(${a}.instantly_status, 1) NOT IN (3, -3))`;
+  `((${a}.pushed_at IS NOT NULL OR ${a}.instantly_lead_id IS NOT NULL) AND COALESCE(${a}.instantly_status, 1) NOT IN (3, -3, -1, -2))`;
 
 export type OtherCampaign = { campaign: string; outcome: string; tone: string };
+
+/** Who handles each of these contacts' email, in words ("Microsoft", "Other · Mimecast"); absent while not looked up yet. */
+export async function mailServers(emails: string[]): Promise<Map<string, { label: string; gateway: Gateway | null }>> {
+  const out = new Map<string, { label: string; gateway: Gateway | null }>();
+  if (emails.length === 0) return out;
+  const rows = await all<{ domain: string; provider: Provider; gateway: Gateway | null }>(
+    "SELECT domain, provider, gateway FROM mail_domains WHERE domain = ANY(?)",
+    [...new Set(emails.map((e) => e.split("@")[1]))],
+  );
+  const byDomain = new Map(rows.map((r) => [r.domain, r]));
+  for (const email of emails) {
+    const d = byDomain.get(email.split("@")[1]);
+    if (!d) continue;
+    const label = d.gateway ? `${GATEWAY_LABEL[d.gateway]} filter` : PROVIDER_LABEL[d.provider];
+    out.set(email, { label, gateway: d.gateway });
+  }
+  return out;
+}
 
 /** For each of these contacts, the client's other campaigns they're in and how each went, oldest first. */
 export async function otherCampaigns(clientId: number, campaignId: number, emails: string[]): Promise<Map<string, OtherCampaign[]>> {
   const out = new Map<string, OtherCampaign[]>();
   if (emails.length === 0) return out;
-  const rows = await all<{ email: string; campaign: string; stage: string; verification: string | null; instantly_status: number | null; replied: boolean }>(
+  const rows = await all<{
+    email: string; campaign: string; stage: string; verification: string | null; instantly_status: number | null; replied: boolean;
+    blocked: boolean; gateway: Gateway | null;
+  }>(
     `SELECT o.email, c.name campaign, o.stage, o.verification, o.instantly_status,
        EXISTS (SELECT 1 FROM emails e WHERE e.client_id = o.client_id AND e.lead_email = o.email AND e.direction = 'in'
-         AND e.campaign_id = o.campaign_id AND e.interest IS DISTINCT FROM 'ooo') replied
+         AND e.campaign_id = o.campaign_id AND e.interest IS DISTINCT FROM 'ooo') replied,
+       ${FILTER_BLOCKED("o")} blocked, (SELECT md.gateway FROM mail_domains md WHERE md.domain = split_part(o.email, '@', 2)) gateway
      FROM leads o JOIN campaigns c ON c.id = o.campaign_id
      WHERE o.client_id = ? AND o.campaign_id <> ? AND o.email = ANY(?) ORDER BY o.id`,
     clientId, campaignId, emails,
@@ -82,6 +118,7 @@ export async function otherCampaigns(clientId: number, campaignId: number, email
     const sent = r.stage === "pushed" || r.stage.startsWith("extend");
     const [outcome, tone] =
       r.replied ? ["replied", "text-go"]
+      : r.blocked ? [`blocked by ${r.gateway ? GATEWAY_LABEL[r.gateway] : "their email filter"}, can retry`, "text-wait"]
       : r.instantly_status === -1 ? ["bounced", "text-bad"]
       : r.instantly_status === -2 ? ["unsubscribed", "text-bad"]
       : r.verification === "invalid" ? ["invalid address", "text-bad"]

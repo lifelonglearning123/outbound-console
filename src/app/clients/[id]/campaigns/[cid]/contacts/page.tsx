@@ -14,7 +14,10 @@ import { AutoRefresh } from "@/components/AutoRefresh";
 import { SubmitButton } from "@/components/SubmitButton";
 import { CONTACT_GROUPS, contactStatus } from "@/lib/stages";
 import { ago } from "@/lib/format";
-import { otherCampaigns } from "@/lib/leads";
+import { mailServers, otherCampaigns } from "@/lib/leads";
+import { BEHIND_MIMECAST, detectMailDomains, uncheckedDomains } from "@/lib/mailhost";
+import { mimecastNotYetEmailed } from "@/lib/push";
+import { holdBackMimecast } from "@/app/leads/actions";
 import { LEAD_STATUS, INTEREST_STATUS } from "@/lib/instantly";
 
 const n = (v: number) => v.toLocaleString("en-GB");
@@ -58,6 +61,14 @@ export default async function CampaignContactsPage({ params, searchParams }: Pag
     c.id,
   );
   const elsewhere = await otherCampaigns(clientId, c.id, rows.map((r) => r.email));
+  const servers = await mailServers(rows.map((r) => r.email));
+  if (await uncheckedDomains(c.id)) after(detectMailDomains); // who handles each company's email, looked up in the background
+  const mimecast = (await get<{ held: number; total: number }>(
+    `SELECT COUNT(*) FILTER (WHERE l.stage = 'approved') held, COUNT(*) total FROM leads l
+     WHERE l.campaign_id = ? AND l.stage NOT IN ('rejected', 'removed') AND ${BEHIND_MIMECAST("l")}`,
+    c.id,
+  ))!;
+  const pullable = c.hold_mimecast ? await mimecastNotYetEmailed(c.id) : 0;
   const base = `/clients/${clientId}/campaigns/${c.id}/contacts`;
 
   return (
@@ -97,6 +108,22 @@ export default async function CampaignContactsPage({ params, searchParams }: Pag
               {errorCount > 0 && <form action={writeEmails.bind(null, c.id, true)}><SubmitButton pendingLabel="Starting…">Retry {n(errorCount)} that failed</SubmitButton></form>}
             </div>
           )}
+          {Number(mimecast.total) > 0 && (
+            <div className="flex flex-col gap-1 border-t border-line pt-3 text-sm">
+              <p>
+                <span className="num font-medium">{n(Number(mimecast.total))}</span> contacts work at companies that filter email through Mimecast.{" "}
+                {c.hold_mimecast
+                  ? <>They&apos;re held back from sending{Number(mimecast.held) ? <> (<span className="num">{n(Number(mimecast.held))}</span> approved and waiting)</> : null}.</>
+                  : <>This campaign sends to them; Mimecast may refuse some, which count as bounces.</>}
+              </p>
+              {pullable > 0 && (
+                <form action={holdBackMimecast.bind(null, c.id)}>
+                  <SubmitButton pendingLabel="Taking them back…">Take {n(pullable)} back out of Instantly before they&apos;re emailed</SubmitButton>
+                </form>
+              )}
+              <p className="text-xs text-muted">Change this in the campaign&apos;s Email tab.</p>
+            </div>
+          )}
           {report.counts.verified > 0 && (
             <Link href={`/clients/${clientId}/campaigns/${c.id}/approve`} className="text-sm text-go underline">Go to Approve →</Link>
           )}
@@ -120,6 +147,7 @@ export default async function CampaignContactsPage({ params, searchParams }: Pag
               <tr>
                 <th className="px-3 py-2 font-medium">Contact</th>
                 <th className="px-3 py-2 font-medium">Address check</th>
+                <th className="px-3 py-2 font-medium">Mail server</th>
                 <th className="px-3 py-2 font-medium">Where they are</th>
                 <th className="px-3 py-2 font-medium">Other campaigns</th>
                 <th className="px-3 py-2 font-medium">Added from</th>
@@ -129,7 +157,7 @@ export default async function CampaignContactsPage({ params, searchParams }: Pag
             <tbody>
               {rows.length === 0 && (
                 <tr>
-                  <td colSpan={6} className="px-3 py-8 text-center text-sm text-muted">
+                  <td colSpan={7} className="px-3 py-8 text-center text-sm text-muted">
                     {total === 0 ? "No contacts yet. Add some above, from the Nexus Portal, a CSV file or by typing them in." : "No contacts in this group."}
                   </td>
                 </tr>
@@ -144,6 +172,9 @@ export default async function CampaignContactsPage({ params, searchParams }: Pag
                       <div className="text-xs text-muted">{[r.title, r.company].filter(Boolean).join(" · ") || r.email}</div>
                     </td>
                     <td className={`px-3 py-2 text-xs font-medium ${check?.tone ?? "text-muted"}`}>{check?.label ?? "Not checked"}</td>
+                    <td className={`px-3 py-2 text-xs ${servers.get(r.email)?.gateway === "mimecast" ? "font-medium text-wait" : "text-muted"}`}>
+                      {servers.get(r.email)?.label ?? "Looking up…"}
+                    </td>
                     <td className="px-3 py-2">
                       <span className={`text-xs font-medium ${where.tone}`}>{where.label}</span>
                       {r.stage === "pushed" && (

@@ -317,6 +317,7 @@ export function instantly(key: string) {
     /** Replace a lead's custom variables (we always send the full set, so merge vs replace doesn't matter). */
     patchLeadVars: (leadId: string, vars: Record<string, string>) =>
       call<Lead>(key, "PATCH", `/leads/${leadId}`, { body: { custom_variables: vars } }),
+    getLead: (leadId: string) => call<Lead>(key, "GET", `/leads/${leadId}`),
     deleteLead: (leadId: string) => call(key, "DELETE", `/leads/${leadId}`),
     setInterest: (leadEmail: string, campaignId: string, value: number | null) =>
       call(key, "POST", "/leads/update-interest-status", {

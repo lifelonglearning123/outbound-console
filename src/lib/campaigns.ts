@@ -27,6 +27,7 @@ export type Campaign = {
   hold_after: number | null;   // steps live in Instantly; later steps are on hold (null = no hold)
   release_to: number | null;   // while releasing a hold: how many steps will be live once applied
   ghl_tag: string | null;      // contacts with this Nexus Portal tag join the campaign automatically
+  hold_mimecast: number;       // 1 = don't send to contacts whose company filters mail through Mimecast (mailhost.ts)
   last_synced_at: string | null;
   created_at: string;
 };
