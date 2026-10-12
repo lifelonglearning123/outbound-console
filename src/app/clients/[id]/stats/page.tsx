@@ -1,4 +1,5 @@
 import { requireClientAccess } from "@/lib/auth";
+import { getClient } from "@/lib/clients";
 import Link from "next/link";
 import { buildReport, leadList, LEAD_FILTERS, RANGES } from "@/lib/report";
 import { requireClient } from "@/lib/clients";
@@ -18,6 +19,11 @@ function Section({ title, note, children, className = "" }: { title: string; not
       {children}
     </section>
   );
+}
+
+export async function generateMetadata({ params }: { params: Promise<{ id: string }> }) {
+  const client = await getClient(Number((await params).id));
+  return { title: client ? `Stats · ${client.name}` : "Stats" };
 }
 
 export default async function StatsPage({ params, searchParams }: PageProps<"/clients/[id]/stats">) {
@@ -44,6 +50,10 @@ export default async function StatsPage({ params, searchParams }: PageProps<"/cl
 
   return (
     <div className="flex flex-col gap-5">
+      <header>
+        <h2 className="font-semibold">Stats</h2>
+        <p className="text-sm text-muted">How the sending is doing, with the previous period alongside.</p>
+      </header>
       {/* Filters: one row above everything they affect */}
       <div className="flex flex-wrap items-center gap-1.5">
         {RANGES.map((x) => (
@@ -162,7 +172,7 @@ export default async function StatsPage({ params, searchParams }: PageProps<"/cl
                 <td className="text-xs text-muted">{dateTime(l.last_sent)}</td>
                 <td className="text-xs">
                   {l.replied_at ? (
-                    <Link href={`/inbox?f=all&client=${clientId}`} className="hover:underline">
+                    <Link href={`/clients/${clientId}/replies?f=all`} className="hover:underline">
                       {INTEREST_LABELS[l.interest ?? "other"] ?? "Replied"} · {dateTime(l.replied_at)}
                     </Link>
                   ) : [-1, -2].includes(l.status ?? 0) ? (

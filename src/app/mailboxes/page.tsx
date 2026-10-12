@@ -11,6 +11,8 @@ type Box = {
   bounced_7d: number | null; auto_paused_at: string | null; auto_paused_reason: string | null;
 };
 
+export const metadata = { title: "Mailboxes" };
+
 export default async function MailboxesPage() {
   const u = await requireUser();
   const rules = await healthRules();

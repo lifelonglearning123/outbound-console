@@ -1,6 +1,8 @@
 import { requireAdmin } from "@/lib/auth";
 import { ClientForm } from "@/components/ClientForm";
 
+export const metadata = { title: "New client" };
+
 export default async function NewClientPage() {
   await requireAdmin();
   return (

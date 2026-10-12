@@ -10,6 +10,8 @@ const RANGES = [
   { key: "week", label: "Last 7 days", past: 168, future: 24 },
 ];
 
+export const metadata = { title: "Send timeline" };
+
 export default async function TimelinePage({ searchParams }: PageProps<"/timeline">) {
   const u = await requireUser();
   const sp = await searchParams;
@@ -33,6 +35,14 @@ export default async function TimelinePage({ searchParams }: PageProps<"/timelin
         <h1 className="text-2xl font-semibold tracking-tight">Send timeline</h1>
         <p className="text-sm text-muted">Every email per mailbox. Hover a dot for the lead and subject. Refreshes every minute.</p>
       </header>
+      {clientId && u.role === "admin" && (
+        <Link
+          href={`/clients/${clientId}`}
+          className="rounded-md border border-info/30 bg-info-soft px-3 py-2 text-sm text-info hover:opacity-90"
+        >
+          You&apos;re only seeing {clients.find((c) => c.id === clientId)?.name ?? "one client"}. Open their workspace →
+        </Link>
+      )}
       <div className="flex flex-wrap items-center gap-1.5">
         {u.role === "admin" && <Link href={href({ client: null })} className={chip(!clientId)}>All clients</Link>}
         {clients.map((c) => <Link key={c.id} href={href({ client: c.id })} className={chip(clientId === c.id)}>{c.name}</Link>)}

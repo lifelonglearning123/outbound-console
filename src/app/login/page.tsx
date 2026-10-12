@@ -5,6 +5,8 @@ import { get } from "@/lib/db";
 import { login } from "@/app/auth-actions";
 import { AuthForm } from "@/components/AuthForm";
 
+export const metadata = { title: "Sign in" };
+
 export default async function LoginPage() {
   if (await currentUser()) redirect("/");
   const needsSetup = !(await get<{ id: number }>("SELECT id FROM users WHERE role = 'admin' AND password_hash IS NOT NULL"));

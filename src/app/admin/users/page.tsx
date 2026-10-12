@@ -5,6 +5,8 @@ import { ago } from "@/lib/format";
 import { createUser, deleteUser, resetPassword, setUserClients } from "./actions";
 import { CreateUserClients } from "@/components/CreateUserClients";
 
+export const metadata = { title: "Users" };
+
 export default async function UsersPage() {
   const me = await requireAdmin();
   const clients = await listClients();

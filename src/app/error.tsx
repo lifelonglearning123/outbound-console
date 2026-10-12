@@ -14,7 +14,7 @@ export default function AppError({ error, reset }: { error: Error & { digest?: s
       <p className="text-sm text-muted">{error.message || "The page couldn't be loaded."}</p>
       <div className="flex gap-2">
         <button className="btn-go" onClick={reset}>Try again</button>
-        <Link href="/" className="btn">Go to the overview</Link>
+        <Link href="/" className="btn">Go to the dashboard</Link>
       </div>
     </div>
   );

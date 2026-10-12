@@ -14,7 +14,8 @@ const geistSans = Geist({ variable: "--font-geist-sans", subsets: ["latin"] });
 const geistMono = Geist_Mono({ variable: "--font-geist-mono", subsets: ["latin"] });
 
 export const metadata: Metadata = {
-  title: "Outbound Console",
+  // Every page names itself, so tabs and history read like places ("Simple campaign · Fruitful · Outbound Console").
+  title: { default: "Outbound Console", template: "%s · Outbound Console" },
   description: "Multi-client cold email control room on top of Instantly",
 };
 

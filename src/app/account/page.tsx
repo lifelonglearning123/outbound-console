@@ -2,6 +2,8 @@ import { requireUser } from "@/lib/auth";
 import { changePassword, logout } from "@/app/auth-actions";
 import { AuthForm } from "@/components/AuthForm";
 
+export const metadata = { title: "Your account" };
+
 export default async function AccountPage() {
   const u = await requireUser();
   return (

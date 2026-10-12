@@ -2,9 +2,12 @@
 
 import { useEffect } from "react";
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 
-/** Something threw while rendering a client page or running one of its actions. Say what, offer a retry. */
+/** Something threw while rendering a client page or running one of its actions. Say what, offer a retry, stay in the client. */
 export default function ClientError({ error, reset }: { error: Error & { digest?: string }; reset: () => void }) {
+  const path = usePathname();
+  const base = /^\/clients\/\d+/.exec(path)?.[0] ?? "/";
   useEffect(() => {
     console.error(error);
   }, [error]);
@@ -15,7 +18,7 @@ export default function ClientError({ error, reset }: { error: Error & { digest?
       <p className="text-xs text-muted">If this keeps happening, the Activity page usually says why.</p>
       <div className="flex gap-2">
         <button className="btn-go" onClick={reset}>Try again</button>
-        <Link href="/" className="btn">Go to the overview</Link>
+        <Link href={base} className="btn">{base === "/" ? "Go to the dashboard" : "Back to this client"}</Link>
       </div>
     </div>
   );

@@ -1,15 +1,19 @@
 import { requireClientAccess } from "@/lib/auth";
 import { notFound } from "next/navigation";
 import { getClient } from "@/lib/clients";
-import { Tabs } from "@/components/Tabs";
 import { ConnectionBadge } from "@/components/ConnectionBadge";
 
+export async function generateMetadata({ params }: { params: Promise<{ id: string }> }) {
+  const client = await getClient(Number((await params).id));
+  return { title: client?.name ?? "Client" };
+}
+
+/** The client's workspace. Its sections (Overview, Campaigns, Approvals, Replies, Stats, Settings) live in the sidebar. */
 export default async function ClientLayout({ children, params }: LayoutProps<"/clients/[id]">) {
   const id = Number((await params).id);
-  const user = await requireClientAccess(id); // only admins and this client's own logins
+  await requireClientAccess(id); // only admins and this client's own logins
   const client = await getClient(id);
   if (!client) notFound();
-  const base = `/clients/${id}`;
 
   return (
     <div className="flex flex-col gap-5">
@@ -22,19 +26,6 @@ export default async function ClientLayout({ children, params }: LayoutProps<"/c
         </div>
         <ConnectionBadge client={client} />
       </header>
-      <div className="print:hidden">
-        <Tabs
-          base={base}
-          tabs={[
-            { href: "", label: "Overview" },
-            { href: "/campaigns", label: "Campaigns" },
-            { href: `/inbox?client=${id}`, label: "Replies", absolute: true },
-            { href: "/stats", label: "Stats" },
-            // Settings hold the API keys, so only admins see them.
-            ...(user.role === "admin" ? [{ href: "/settings", label: "Settings" }] : []),
-          ]}
-        />
-      </div>
       <div>{children}</div>
     </div>
   );

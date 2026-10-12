@@ -4,6 +4,8 @@ import { reviewQueue, approvalCounts } from "@/lib/approvals";
 import { ApprovalQueue } from "@/components/ApprovalQueue";
 import { AutoRefresh } from "@/components/AutoRefresh";
 
+export const metadata = { title: "Approvals" };
+
 export default async function ApprovalsPage() {
   const u = await requireUser();
   if (u.role !== "admin") redirect(u.clientIds.length ? `/clients/${u.clientIds[0]}/approvals` : "/account");

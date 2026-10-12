@@ -12,14 +12,14 @@ export async function tagReply(emailId: string, interest: string) {
   await requireClientAccess(await clientOfEmail(emailId));
   if (!(interest in INTEREST_LABELS)) throw new Error("Unknown tag");
   await applyInterest(emailId, interest, "Set by hand", "manual");
-  revalidatePath("/inbox");
+  revalidatePath("/", "layout");
 }
 
 export async function sendToGhl(emailId: string): Promise<string> {
   await requireClientAccess(await clientOfEmail(emailId));
   try {
     const msg = await pushToGhl(emailId);
-    revalidatePath("/inbox");
+    revalidatePath("/", "layout");
     return msg;
   } catch (e) {
     return (e as Error).message;
@@ -29,7 +29,7 @@ export async function sendToGhl(emailId: string): Promise<string> {
 export async function markRead(emailId: string) {
   await requireClientAccess(await clientOfEmail(emailId));
   await run("UPDATE emails SET is_unread = 0 WHERE id = ?", emailId);
-  revalidatePath("/inbox");
+  revalidatePath("/", "layout");
 }
 
 export async function replyTo(emailId: string, text: string): Promise<string> {
@@ -47,7 +47,7 @@ export async function replyTo(emailId: string, text: string): Promise<string> {
     });
     await run("UPDATE emails SET is_unread = 0 WHERE id = ?", emailId);
     await logActivity(e.client_id, "reply_sent", `Replied to ${e.lead_email}`);
-    revalidatePath("/inbox");
+    revalidatePath("/", "layout");
     return "Sent";
   } catch (err) {
     return (err as Error).message;

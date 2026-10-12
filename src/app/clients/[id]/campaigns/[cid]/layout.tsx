@@ -2,6 +2,7 @@ import { requireClientAccess } from "@/lib/auth";
 import { notFound } from "next/navigation";
 import Link from "next/link";
 import { getCampaign } from "@/lib/campaigns";
+import { getClient } from "@/lib/clients";
 import { campaignProgress } from "@/lib/progress";
 import { pauseCampaign, resumeCampaign } from "@/app/campaigns/actions";
 import { StatusPill } from "@/components/CampaignTable";
@@ -13,6 +14,12 @@ import { AutoRefresh } from "@/components/AutoRefresh";
 import { PORTAL } from "@/lib/verifyReport";
 
 const n = (v: number) => v.toLocaleString("en-GB");
+
+export async function generateMetadata({ params }: { params: Promise<{ id: string; cid: string }> }) {
+  const { id, cid } = await params;
+  const [c, client] = [await getCampaign(Number(cid)), await getClient(Number(id))];
+  return { title: c && client ? `${c.name} · ${client.name}` : client?.name ?? "Campaign" };
+}
 
 /** Every campaign page: name and sending controls, the progress strip, and the four steps as tabs. */
 export default async function CampaignLayout({ children, params }: LayoutProps<"/clients/[id]/campaigns/[cid]">) {
@@ -32,7 +39,7 @@ export default async function CampaignLayout({ children, params }: LayoutProps<"
     { label: "Invalid", value: p.invalid, sub: p.invalid ? "tag or delete →" : "set aside", tone: "text-bad", href: `${base}/contacts#check-invalid` },
     { label: "Ready to send", value: p.ready, sub: p.unconfirmed ? `+ ${n(p.unconfirmed)} unconfirmed` : p.preparing ? `preparing ${n(p.preparing)}` : "", tone: p.ready ? "text-go" : "", href: `${base}/approve` },
     { label: "Sending", value: p.sending, sub: p.sent ? `${n(p.sent)} emails sent` : p.approved - p.sending > 0 ? `${n(p.approved - p.sending)} approved, not handed over` : "", tone: "", href: base },
-    { label: "Replies", value: p.replies, sub: "", tone: "", href: `/inbox?client=${clientId}` },
+    { label: "Replies", value: p.replies, sub: "", tone: "", href: `/clients/${clientId}/replies` },
   ];
 
   return (

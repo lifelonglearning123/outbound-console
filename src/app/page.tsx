@@ -14,6 +14,8 @@ type ClientRow = {
   active: number; review: number; approved: number; sent_today: number; replies_7d: number; interested_7d: number; mailboxes_bad: number;
 };
 
+export const metadata = { title: "Dashboard" };
+
 export default async function OverviewPage() {
   const u = await requireUser();
   // Client logins work inside their own client; this cross-client page is for admins.
@@ -74,7 +76,7 @@ export default async function OverviewPage() {
     <div className="flex flex-col gap-6">
       <header className="flex items-start justify-between">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Overview</h1>
+          <h1 className="text-2xl font-semibold tracking-tight">Dashboard</h1>
           <p className="text-sm text-muted">All clients, last 30 days.</p>
         </div>
         <SyncButton lastSync={ago(await getSetting("last_sync_all", "") || null)} />

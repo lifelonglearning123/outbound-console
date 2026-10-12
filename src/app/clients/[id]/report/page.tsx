@@ -1,4 +1,5 @@
 import { requireClientAccess } from "@/lib/auth";
+import { getClient } from "@/lib/clients";
 import Link from "next/link";
 import { buildReport, RANGES } from "@/lib/report";
 import { requireClient } from "@/lib/clients";
@@ -8,6 +9,11 @@ import { ClientTiles, FunnelBars, HBars, StepPerformance } from "@/components/st
 import { PrintButton } from "@/components/PrintButton";
 
 // Client-facing: results only (no mailboxes, bounces or tooling). Print → "Save as PDF" to send it.
+export async function generateMetadata({ params }: { params: Promise<{ id: string }> }) {
+  const client = await getClient(Number((await params).id));
+  return { title: client ? `Report · ${client.name}` : "Report" };
+}
+
 export default async function ClientReportPage({ params, searchParams }: PageProps<"/clients/[id]/report">) {
   const clientId = Number((await params).id);
   await requireClientAccess(clientId); // only admins and this client's own logins

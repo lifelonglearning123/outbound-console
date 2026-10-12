@@ -7,6 +7,8 @@ const TONE: Record<string, string> = {
   push: "text-go", ghl: "text-go", resume: "text-go", reply: "text-wait",
 };
 
+export const metadata = { title: "Activity" };
+
 export default async function ActivityPage() {
   const u = await requireUser();
   const rows = await all<{ id: number; kind: string; message: string; at: string; client: string | null }>(
