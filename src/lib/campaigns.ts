@@ -4,6 +4,7 @@ import { requireClient } from "./clients";
 import { instantly, type CampaignSchedule } from "./instantly";
 import { campaignState } from "./connection";
 import { DEFAULT_TIMEZONE } from "./timezones";
+import type { Gateway } from "./mailhost";
 import { htmlToText } from "./merge";
 
 // mode "fixed" = the client wrote this email (subject/body with merge fields); otherwise the AI writes it from `instructions`.
@@ -27,7 +28,7 @@ export type Campaign = {
   hold_after: number | null;   // steps live in Instantly; later steps are on hold (null = no hold)
   release_to: number | null;   // while releasing a hold: how many steps will be live once applied
   ghl_tag: string | null;      // contacts with this Nexus Portal tag join the campaign automatically
-  hold_mimecast: number;       // 1 = don't send to contacts whose company filters mail through Mimecast (mailhost.ts)
+  hold_gateways: Gateway[];    // mail filters this campaign doesn't send to (mailhost.ts); managed on the Contacts page
   last_synced_at: string | null;
   created_at: string;
 };
@@ -40,7 +41,9 @@ export const DEFAULT_STEPS: Step[] = [
 
 export const DEFAULT_SCHEDULE: Schedule = { days: [1, 2, 3, 4, 5], from: "08:30", to: "17:00", timezone: DEFAULT_TIMEZONE };
 
-type CampaignDbRow = Omit<Campaign, "steps" | "schedule" | "accounts"> & { steps: string; schedule: string; accounts: string };
+type CampaignDbRow = Omit<Campaign, "steps" | "schedule" | "accounts" | "hold_gateways"> & {
+  steps: string; schedule: string; accounts: string; hold_gateways: string | null;
+};
 
 function parse(row: CampaignDbRow): Campaign {
   const j = <T,>(s: string, fallback: T): T => {
@@ -55,6 +58,7 @@ function parse(row: CampaignDbRow): Campaign {
     steps: j(row.steps, []),
     schedule: { ...DEFAULT_SCHEDULE, ...j(row.schedule, {}) },
     accounts: j(row.accounts, []),
+    hold_gateways: j(row.hold_gateways ?? '["mimecast"]', ["mimecast"] as Gateway[]),
   };
 }
 

@@ -71,7 +71,6 @@ function readForm(form: FormData) {
     hold_after: holdAfter,
     step_count: steps.length,
     ghl_tag: String(form.get("ghl_tag") ?? "").trim() || null,
-    hold_mimecast: form.get("hold_mimecast") ? 1 : 0,
   };
 }
 
@@ -96,15 +95,14 @@ export async function saveCampaign(clientId: number, campaignId: number | null, 
     } else {
       await run(
         `UPDATE campaigns SET name = @name, steps = @steps, schedule = @schedule, daily_limit = @daily_limit,
-           accounts = @accounts, stop_on_reply = @stop_on_reply, hold_after = @hold_after, ghl_tag = @ghl_tag,
-           hold_mimecast = @hold_mimecast WHERE id = @id`,
+           accounts = @accounts, stop_on_reply = @stop_on_reply, hold_after = @hold_after, ghl_tag = @ghl_tag WHERE id = @id`,
         { ...fields, id },
       );
     }
   } else {
     id = (await run(
-      `INSERT INTO campaigns (client_id, name, steps, schedule, daily_limit, accounts, stop_on_reply, hold_after, ghl_tag, hold_mimecast)
-       VALUES (@clientId, @name, @steps, @schedule, @daily_limit, @accounts, @stop_on_reply, @hold_after, @ghl_tag, @hold_mimecast)`,
+      `INSERT INTO campaigns (client_id, name, steps, schedule, daily_limit, accounts, stop_on_reply, hold_after, ghl_tag)
+       VALUES (@clientId, @name, @steps, @schedule, @daily_limit, @accounts, @stop_on_reply, @hold_after, @ghl_tag)`,
       { ...fields, clientId },
     )).id;
     await logActivity(clientId, "campaign", `Created campaign "${fields.name}"`);

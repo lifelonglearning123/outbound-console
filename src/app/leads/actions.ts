@@ -11,8 +11,8 @@ import { addImports } from "@/lib/importResult";
 import { contactsWithTagPage, listTags } from "@/lib/ghl";
 import { portalCheck } from "@/lib/checkTags";
 import { runWriter, rewriteStep } from "@/lib/writer";
-import { pushApproved, pullBackMimecast } from "@/lib/push";
-import { detectMailDomains } from "@/lib/mailhost";
+import { pushApproved, pullBackHeld } from "@/lib/push";
+import { detectMailDomains, GATEWAY_LABEL, type Gateway } from "@/lib/mailhost";
 import { linkPendingLeads } from "@/lib/ghlsync";
 import { queueVerification, runVerifier, PASSED } from "@/lib/verify";
 import { queueTagging, queueDeletion, runVerificationActions, writeVerificationSummary, GHL_TAGS, OUTCOME_LABEL, PORTAL, type Outcome } from "@/lib/verifyReport";
@@ -268,10 +268,25 @@ export async function pushCampaign(campaignId: number) {
   return r;
 }
 
-/** Take contacts behind Mimecast back out of Instantly before they're emailed; they stay approved and held. */
-export async function holdBackMimecast(campaignId: number) {
+/** Take contacts behind the campaign's held mail filters back out of Instantly before they're emailed; they stay approved and held. */
+export async function takeBackHeld(campaignId: number) {
   await requireClientAccess(await clientOfCampaign(campaignId));
-  await pullBackMimecast(campaignId);
+  await pullBackHeld(campaignId);
+  revalidatePath("/", "layout");
+}
+
+/** Pause or resume sending to one mail filter (Mimecast and the like) for a campaign. */
+export async function setGatewayHold(campaignId: number, gateway: Gateway, hold: boolean) {
+  await requireClientAccess(await clientOfCampaign(campaignId));
+  if (!(gateway in GATEWAY_LABEL)) throw new Error("Unknown mail filter");
+  const c = await requireCampaign(campaignId);
+  const next = hold ? [...new Set([...c.hold_gateways, gateway])] : c.hold_gateways.filter((g) => g !== gateway);
+  await run("UPDATE campaigns SET hold_gateways = ? WHERE id = ?", JSON.stringify(next), campaignId);
+  await logActivity(c.client_id, "push", `${hold ? "Paused" : "Resumed"} sending to contacts behind ${GATEWAY_LABEL[gateway]} in "${c.name}"`);
+  if (!hold && c.instantly_campaign_id) {
+    // Resumed: held contacts are still 'approved', so hand them to the sender after the response.
+    after(() => pushApproved(campaignId));
+  }
   revalidatePath("/", "layout");
 }
 

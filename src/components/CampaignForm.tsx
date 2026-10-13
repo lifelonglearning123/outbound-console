@@ -27,7 +27,6 @@ type Props = {
   lockedLive: number;
   ghlTag: string | null;
   ghlTags: string[] | null; // null = client has no Nexus Portal connection
-  holdMimecast: boolean;
   /** New campaign: show the sections three steps at a time, with a check before creating. */
   wizard?: boolean;
 };
@@ -271,18 +270,6 @@ export function CampaignForm(p: Props) {
             Stop the sequence for a lead when they reply
           </label>
         </div>
-        {p.managed && (
-          <label className="flex items-start gap-2 text-sm">
-            <input type="checkbox" name="hold_mimecast" defaultChecked={p.holdMimecast} className="mt-1" />
-            <span>
-              Hold back contacts whose company uses Mimecast
-              <span className="block text-xs text-muted">
-                Mimecast often refuses cold email from newer sending domains, and each refusal counts as a bounce. Held contacts stay approved
-                and are sent once you untick this.
-              </span>
-            </span>
-          </label>
-        )}
         <div>
           <span className="label">Send from</span>
           {p.mailboxes.length === 0 ? (

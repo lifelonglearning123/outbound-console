@@ -45,7 +45,6 @@ export default async function CampaignEmailPage({ params }: PageProps<"/clients/
         lockedLive={pushed ? liveSteps(c) : 0}
         ghlTag={c.ghl_tag}
         ghlTags={ghlTags}
-        holdMimecast={Boolean(c.hold_mimecast)}
       />
     </div>
   );

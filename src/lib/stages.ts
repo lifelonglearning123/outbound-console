@@ -36,6 +36,12 @@ export const CONTACT_GROUPS: { key: string; label: string; tone: string; where: 
   { key: "invalid", label: "Invalid", tone: "text-bad", where: "verification = 'invalid'" },
   { key: "checking", label: "Checking", tone: "text-info", where: "verification IN ('queued', 'pending')" },
   { key: "unchecked", label: "Not checked", tone: "text-muted", where: "verification IS NULL" },
+  {
+    key: "filtered",
+    label: "Behind a mail filter",
+    tone: "text-wait",
+    where: "EXISTS (SELECT 1 FROM mail_domains md WHERE md.domain = split_part(leads.email, '@', 2) AND md.gateway IS NOT NULL)",
+  },
 ];
 
 /** Campaign status, in the user's words. */

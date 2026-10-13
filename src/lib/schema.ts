@@ -97,6 +97,11 @@ CREATE TABLE IF NOT EXISTS mail_domains (
 );
 -- Hold back contacts whose company filters mail through Mimecast, which blocks cold email from new sending domains.
 ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS hold_mimecast INTEGER NOT NULL DEFAULT 1;
+-- Which mail filters the campaign holds back from sending, as a JSON list of gateways (mailhost.ts).
+-- Replaces hold_mimecast (kept for rollback); existing campaigns carry their Mimecast choice over.
+ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS hold_gateways TEXT;
+UPDATE campaigns SET hold_gateways = CASE WHEN hold_mimecast = 1 THEN '["mimecast"]' ELSE '[]' END WHERE hold_gateways IS NULL;
+ALTER TABLE campaigns ALTER COLUMN hold_gateways SET DEFAULT '["mimecast"]';
 -- A note on the portal contact for each campaign that starts emailing it, so the portal keeps the campaign history.
 ALTER TABLE leads ADD COLUMN IF NOT EXISTS ghl_noted_at TEXT;
 ALTER TABLE leads ADD COLUMN IF NOT EXISTS ghl_note_error TEXT;

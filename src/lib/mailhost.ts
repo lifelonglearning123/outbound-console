@@ -25,9 +25,9 @@ const GATEWAYS: [RegExp, Gateway][] = [
 /** The domain of an address, as SQL against a lead aliased `a`. */
 export const DOMAIN = (a: string) => `split_part(${a}.email, '@', 2)`;
 
-/** SQL: the lead's company filters its mail through Mimecast. */
-export const BEHIND_MIMECAST = (a: string) =>
-  `EXISTS (SELECT 1 FROM mail_domains md WHERE md.domain = ${DOMAIN(a)} AND md.gateway = 'mimecast')`;
+/** SQL with one `?` (a text[] of gateways): the lead's company filters its mail through one of them. */
+export const BEHIND_HELD = (a: string) =>
+  `EXISTS (SELECT 1 FROM mail_domains md WHERE md.domain = ${DOMAIN(a)} AND md.gateway = ANY(?))`;
 
 /** SQL: the lead's company has any security filter in front of its mail. */
 export const BEHIND_GATEWAY = (a: string) =>

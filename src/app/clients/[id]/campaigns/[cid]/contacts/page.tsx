@@ -15,9 +15,9 @@ import { SubmitButton } from "@/components/SubmitButton";
 import { CONTACT_GROUPS, contactStatus } from "@/lib/stages";
 import { ago } from "@/lib/format";
 import { mailServers, otherCampaigns } from "@/lib/leads";
-import { BEHIND_MIMECAST, detectMailDomains, uncheckedDomains } from "@/lib/mailhost";
-import { mimecastNotYetEmailed } from "@/lib/push";
-import { holdBackMimecast } from "@/app/leads/actions";
+import { detectMailDomains, GATEWAY_LABEL, uncheckedDomains, type Gateway } from "@/lib/mailhost";
+import { heldNotYetEmailed } from "@/lib/push";
+import { setGatewayHold, takeBackHeld } from "@/app/leads/actions";
 import { LEAD_STATUS, INTEREST_STATUS } from "@/lib/instantly";
 
 const n = (v: number) => v.toLocaleString("en-GB");
@@ -63,12 +63,16 @@ export default async function CampaignContactsPage({ params, searchParams }: Pag
   const elsewhere = await otherCampaigns(clientId, c.id, rows.map((r) => r.email));
   const servers = await mailServers(rows.map((r) => r.email));
   if (await uncheckedDomains(c.id)) after(detectMailDomains); // who handles each company's email, looked up in the background
-  const mimecast = (await get<{ held: number; total: number }>(
-    `SELECT COUNT(*) FILTER (WHERE l.stage = 'approved') held, COUNT(*) total FROM leads l
-     WHERE l.campaign_id = ? AND l.stage NOT IN ('rejected', 'removed') AND ${BEHIND_MIMECAST("l")}`,
+  // Send-safety per mail filter: who sits behind each, what happened so far, and whether this campaign sends to it.
+  const gateways = await all<{ gateway: Gateway; contacts: number; held: number; emailed: number; bounced: number }>(
+    `SELECT md.gateway, COUNT(*) contacts, COUNT(*) FILTER (WHERE l.stage = 'approved') held,
+       COUNT(*) FILTER (WHERE l.last_sent_at IS NOT NULL) emailed, COUNT(*) FILTER (WHERE l.instantly_status = -1) bounced
+     FROM leads l JOIN mail_domains md ON md.domain = split_part(l.email, '@', 2)
+     WHERE l.campaign_id = ? AND md.gateway IS NOT NULL AND l.stage NOT IN ('rejected', 'removed')
+     GROUP BY md.gateway ORDER BY 2 DESC`,
     c.id,
-  ))!;
-  const pullable = c.hold_mimecast ? await mimecastNotYetEmailed(c.id) : 0;
+  );
+  const pullable = await heldNotYetEmailed(c.id);
   const base = `/clients/${clientId}/campaigns/${c.id}/contacts`;
 
   return (
@@ -108,29 +112,70 @@ export default async function CampaignContactsPage({ params, searchParams }: Pag
               {errorCount > 0 && <form action={writeEmails.bind(null, c.id, true)}><SubmitButton pendingLabel="Starting…">Retry {n(errorCount)} that failed</SubmitButton></form>}
             </div>
           )}
-          {Number(mimecast.total) > 0 && (
-            <div className="flex flex-col gap-1 border-t border-line pt-3 text-sm">
-              <p>
-                <span className="num font-medium">{n(Number(mimecast.total))}</span> contacts work at companies that filter email through Mimecast.{" "}
-                {c.hold_mimecast
-                  ? <>They&apos;re held back from sending{Number(mimecast.held) ? <> (<span className="num">{n(Number(mimecast.held))}</span> approved and waiting)</> : null}.</>
-                  : <>This campaign sends to them; Mimecast may refuse some, which count as bounces.</>}
-              </p>
-              {pullable > 0 && (
-                <form action={holdBackMimecast.bind(null, c.id)}>
-                  <SubmitButton pendingLabel="Taking them back…">Take {n(pullable)} back out of Instantly before they&apos;re emailed</SubmitButton>
-                </form>
-              )}
-              <p className="text-xs text-muted">Change this in the campaign&apos;s Email tab.</p>
-            </div>
-          )}
           {report.counts.verified > 0 && (
             <Link href={`/clients/${clientId}/campaigns/${c.id}/approve`} className="text-sm text-go underline">Go to Approve →</Link>
           )}
         </div>
       </section>
 
-      {/* 3. Everyone */}
+      {/* 3. Mail filters: pause sending to the ones that reject you */}
+      {gateways.length > 0 && (
+        <section className="flex flex-col gap-2">
+          <header>
+            <h2 className="font-semibold">Mail filters</h2>
+            <p className="text-sm text-muted">
+              Some companies put a filter in front of their email. A filter that distrusts your sending domain refuses the email,
+              which counts as a bounce. Pause the ones rejecting you; held contacts stay approved and are sent when you resume.
+            </p>
+          </header>
+          <div className="card overflow-hidden">
+            <table className="w-full text-sm">
+              <thead className="bg-paper text-left text-xs uppercase tracking-wide text-muted">
+                <tr>
+                  <th className="px-3 py-2 font-medium">Filter</th>
+                  <th className="px-3 py-2 text-right font-medium">Contacts</th>
+                  <th className="px-3 py-2 text-right font-medium">Emailed</th>
+                  <th className="px-3 py-2 text-right font-medium">Bounced</th>
+                  <th className="px-3 py-2 font-medium">Sending</th>
+                  <th className="px-3 py-2" />
+                </tr>
+              </thead>
+              <tbody>
+                {gateways.map((g) => {
+                  const held = c.hold_gateways.includes(g.gateway);
+                  return (
+                    <tr key={g.gateway} className="border-t border-line">
+                      <td className="px-3 py-2 font-medium">{GATEWAY_LABEL[g.gateway]}</td>
+                      <td className="num px-3 py-2 text-right">{n(Number(g.contacts))}</td>
+                      <td className="num px-3 py-2 text-right">{n(Number(g.emailed))}</td>
+                      <td className={`num px-3 py-2 text-right ${Number(g.bounced) ? "font-semibold text-bad" : ""}`}>{n(Number(g.bounced))}</td>
+                      <td className={`px-3 py-2 text-xs font-medium ${held ? "text-wait" : "text-go"}`}>
+                        {held ? `Paused${Number(g.held) ? ` · ${n(Number(g.held))} approved and waiting` : ""}` : "Sending"}
+                      </td>
+                      <td className="px-3 py-2 text-right">
+                        <form action={setGatewayHold.bind(null, c.id, g.gateway, !held)}>
+                          <SubmitButton className="btn text-xs" pendingLabel={held ? "Resuming…" : "Pausing…"}>
+                            {held ? "Resume and send" : "Pause sending"}
+                          </SubmitButton>
+                        </form>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+          {pullable > 0 && (
+            <form action={takeBackHeld.bind(null, c.id)}>
+              <SubmitButton pendingLabel="Taking them back…">
+                Take {n(pullable)} contacts behind paused filters back out of Instantly before they&apos;re emailed
+              </SubmitButton>
+            </form>
+          )}
+        </section>
+      )}
+
+      {/* 4. Everyone */}
       <section className="flex flex-col gap-2">
         <h2 className="font-semibold">All contacts <span className="num text-sm font-normal text-muted">{n(total)}</span></h2>
         <div className="flex flex-wrap gap-1.5 text-sm">
