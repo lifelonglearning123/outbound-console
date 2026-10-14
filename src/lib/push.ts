@@ -4,7 +4,10 @@ import { requireClient } from "./clients";
 import { requireCampaign, subjectVar, bodyVar, liveSteps } from "./campaigns";
 import { instantly, type LeadInput } from "./instantly";
 import { DO_NOT_CONTACT, IN_SEQUENCE, type LeadRow } from "./leads";
-import { BEHIND_HELD, detectMailDomains, GATEWAY_LABEL } from "./mailhost";
+import { BEHIND_HELD, detectMailDomains, GATEWAY_LABEL, type Gateway } from "./mailhost";
+import type { PushResult } from "./pushResult";
+
+export type { PushResult };
 
 import { stripCodeFence, toHtml } from "./merge";
 import { ghlCreds, linkLead } from "./ghlsync";
@@ -12,34 +15,73 @@ import { ghlCreds, linkLead } from "./ghlsync";
 export { toHtml };
 
 /**
+ * Where a campaign's approved contacts stand, split exactly the way the send splits them, so the page can say
+ * "sendable now" instead of a raw approved count the send button can't honour.
+ */
+export type ApprovedBreakdown = {
+  approved: number;
+  sendable: number; // will go on the next send
+  held: { gateway: Gateway; n: number }[]; // behind a mail filter this campaign has paused
+  waiting: { campaign: string; n: number }[]; // the same person is mid-sequence in another campaign
+  stopped: number; // replied, bounced or unsubscribed elsewhere: the next send sets them aside
+};
+
+export async function approvedBreakdown(campaignId: number): Promise<ApprovedBreakdown> {
+  const c = await requireCampaign(campaignId);
+  const rows = await all<{ kind: string; label: string | null; n: number }>(
+    `WITH a AS (
+       SELECT l.*,
+         (SELECT md.gateway FROM mail_domains md WHERE md.domain = split_part(l.email, '@', 2) AND md.gateway = ANY(?)) held_by,
+         EXISTS (SELECT 1 FROM leads o WHERE o.client_id = l.client_id AND o.email = l.email AND o.id <> l.id AND ${DO_NOT_CONTACT("o")}) stop,
+         (SELECT oc.name FROM leads o JOIN campaigns oc ON oc.id = o.campaign_id
+           WHERE o.client_id = l.client_id AND o.email = l.email AND o.id <> l.id AND ${IN_SEQUENCE("o")} LIMIT 1) busy_in
+       FROM leads l WHERE l.campaign_id = ? AND l.stage = 'approved'
+     )
+     SELECT CASE WHEN held_by IS NOT NULL THEN 'held' WHEN stop THEN 'stopped' WHEN busy_in IS NOT NULL THEN 'waiting' ELSE 'sendable' END kind,
+       CASE WHEN held_by IS NOT NULL THEN held_by WHEN stop THEN NULL ELSE busy_in END label, COUNT(*) n
+     FROM a GROUP BY 1, 2`,
+    c.hold_gateways, campaignId,
+  );
+  const sum = (k: string) => rows.filter((r) => r.kind === k).reduce((s, r) => s + Number(r.n), 0);
+  return {
+    approved: rows.reduce((s, r) => s + Number(r.n), 0),
+    sendable: sum("sendable"),
+    held: rows.filter((r) => r.kind === "held").map((r) => ({ gateway: r.label as Gateway, n: Number(r.n) })),
+    waiting: rows.filter((r) => r.kind === "waiting").map((r) => ({ campaign: r.label ?? "another campaign", n: Number(r.n) })),
+    stopped: sum("stopped"),
+  };
+}
+
+/**
  * Upload every approved lead of a campaign to Instantly, with its approved copy in custom variables.
  * Only leads whose every step is approved are in stage 'approved', so nothing unapproved can leave.
  */
-export async function pushApproved(campaignId: number): Promise<{ pushed: number; skipped: number }> {
+export async function pushApproved(campaignId: number, opts: { onlyWaiting?: boolean } = {}): Promise<PushResult> {
   const campaign = await requireCampaign(campaignId);
   if (!campaign.instantly_campaign_id) throw new Error("Create the campaign in Instantly first");
   const client = await requireClient(campaign.client_id);
   const api = instantly(client.instantly_api_key!);
 
   const holding = campaign.hold_gateways;
+  let held = 0;
+  let waiting = 0;
+  let stopped = 0;
   if (holding.length) {
     // Know each company's mail server before deciding; contacts behind a held filter stay approved but aren't sent.
     await detectMailDomains();
-    const held = await run(
+    held = (await run(
       `UPDATE leads l SET stage_message = ? WHERE l.campaign_id = ? AND l.stage = 'approved' AND ${BEHIND_HELD("l")}`,
       "Held back: this campaign isn't sending to their company's email filter (see Mail filters on the Contacts page). Sent when that filter is resumed.",
       campaignId, holding,
-    );
-    if (held.changes) {
-      await logActivity(client.id, "push", `Held back ${held.changes} contacts behind ${holding.map((g) => GATEWAY_LABEL[g]).join(", ")} in "${campaign.name}"`);
-    }
+    )).changes;
   }
   const leads = await all<LeadRow>(
     `SELECT * FROM leads l WHERE campaign_id = ? AND stage = 'approved' ${holding.length ? `AND NOT ${BEHIND_HELD("l")}` : ""}
+       ${opts.onlyWaiting ? "AND l.stage_message LIKE 'Waiting:%'" : ""}
      ORDER BY id LIMIT 1000`,
     ...(holding.length ? [campaignId, holding] : [campaignId]),
   );
-  if (leads.length === 0) return { pushed: 0, skipped: 0 };
+  if (leads.length === 0) return { pushed: 0, skipped: 0, held, waiting, stopped };
 
   const drafts = await all<{ lead_id: number; step: number; subject: string; body: string; status: string; format: string }>(
     `SELECT lead_id, step, subject, body, status, format FROM drafts WHERE lead_id IN (${leads.map(() => "?").join(",")}) ORDER BY step`,
@@ -82,11 +124,13 @@ export async function pushApproved(campaignId: number): Promise<{ pushed: number
         await run("UPDATE leads SET stage = 'rejected', stage_message = ? WHERE id = ?", `Not sent: replied, bounced or unsubscribed in "${other.name}"`, lead.id);
         await run("UPDATE drafts SET status = 'rejected', reviewed_at = datetime('now') WHERE lead_id = ? AND status IN ('pending', 'approved')", lead.id);
       });
+      stopped++;
       continue;
     }
     if (other) {
       // Stays approved; the next send picks it up once the other sequence is over.
       await run("UPDATE leads SET stage_message = ? WHERE id = ?", `Waiting: still being emailed by "${other.name}". Sent once that sequence ends.`, lead.id);
+      waiting++;
       continue;
     }
     const vars = copyVars(mine);
@@ -104,7 +148,7 @@ export async function pushApproved(campaignId: number): Promise<{ pushed: number
       },
     });
   }
-  if (ready.length === 0) return { pushed: 0, skipped: 0 };
+  if (ready.length === 0) return { pushed: 0, skipped: 0, held, waiting, stopped };
 
   const res = await api.addLeads(campaign.instantly_campaign_id, ready.map((r) => r.input));
   const created = new Map((res.created_leads ?? []).map((c) => [c.index, c.id]));
@@ -133,7 +177,23 @@ export async function pushApproved(campaignId: number): Promise<{ pushed: number
     `Sent ${pushed} approved leads to "${campaign.name}"` +
       (skipped ? ` (${skipped} skipped by Instantly: ${res.duplicated_leads} duplicates, ${res.in_blocklist} blocklisted, ${res.invalid_email_count} invalid)` : ""),
   );
-  return { pushed, skipped };
+  return { pushed, skipped, held, waiting, stopped };
+}
+
+/**
+ * Keep the "Sent once that sequence ends" promise: retry contacts that were approved and sent, but waited because
+ * another campaign was still emailing them. Only those; anything newly approved still needs someone to press Send.
+ */
+export async function sendWaiting(clientId: number): Promise<number> {
+  const campaigns = await all<{ id: number }>(
+    `SELECT DISTINCT l.campaign_id id FROM leads l JOIN campaigns c ON c.id = l.campaign_id
+     WHERE l.client_id = ? AND l.stage = 'approved' AND l.stage_message LIKE 'Waiting:%'
+       AND c.managed = 1 AND c.instantly_campaign_id IS NOT NULL AND c.status IN ('active', 'paused', 'draft')`,
+    clientId,
+  );
+  let pushed = 0;
+  for (const c of campaigns) pushed += (await pushApproved(c.id, { onlyWaiting: true })).pushed;
+  return pushed;
 }
 
 /** SQL with one `?` (a text[] of gateways): leads already in Instantly, behind one of them, not emailed yet (as far as the last sync knows). */

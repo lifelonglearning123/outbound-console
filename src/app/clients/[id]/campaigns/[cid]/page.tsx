@@ -4,6 +4,7 @@ import Link from "next/link";
 import { all } from "@/lib/db";
 import { campaignStepProblems, getCampaign, liveSteps } from "@/lib/campaigns";
 import { campaignProgress } from "@/lib/progress";
+import { approvedBreakdown } from "@/lib/push";
 import { AutoRefresh } from "@/components/AutoRefresh";
 import { holdStatus } from "@/lib/hold";
 import { HoldPanel } from "@/components/HoldPanel";
@@ -20,6 +21,7 @@ export default async function CampaignSendingPage({ params }: PageProps<"/client
   const c = await getCampaign(Number(cid));
   if (!c || c.client_id !== clientId) notFound();
   const p = await campaignProgress(c.id);
+  const split = await approvedBreakdown(c.id);
   const base = `/clients/${clientId}/campaigns/${c.id}`;
 
   const days = await all<{ date: string; sent: number; opened: number; replied: number; bounced: number }>(
@@ -40,8 +42,10 @@ export default async function CampaignSendingPage({ params }: PageProps<"/client
   const next =
     p.contacts === 0
       ? { href: `${base}/contacts`, text: "Add contacts to this campaign." }
-      : p.ready > 0 || p.approved - p.sending > 0
-        ? { href: `${base}/approve`, text: `${n(p.ready + (p.approved - p.sending))} contacts are ready to send.` }
+      : p.ready > 0 || split.sendable > 0
+        ? { href: `${base}/approve`, text: `${n(p.ready + split.sendable)} contacts are ready to send.` }
+        : split.approved > 0
+          ? { href: `${base}/approve`, text: `${n(split.approved)} approved contacts are held or waiting; see why.` }
         : p.checking > 0
           ? { href: `${base}/contacts`, text: `${n(p.checking)} addresses are still being checked.` }
           : p.unconfirmed > 0

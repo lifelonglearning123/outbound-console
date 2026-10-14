@@ -143,6 +143,12 @@ function GroupCard({
       ) : connected && count > 0 ? (
         <p className="text-xs text-muted">Done: nothing left to tag or delete in this group.</p>
       ) : null}
+      {campaignId && count > 0 && outcome !== "verified" && (
+        // Campaign-level actions (remove from this campaign) live on the list below, filtered to this group.
+        <a href={`?group=${outcome}#all-contacts`} className="text-sm underline">
+          {outcome === "invalid" ? "Already set aside, never emailed. See them or remove them from this campaign" : "See them, or remove them from this campaign"} →
+        </a>
+      )}
       {leads.length > 0 && (
         <details>
           <summary className="cursor-pointer text-sm font-medium">Show the {n(leads.length)} emails</summary>

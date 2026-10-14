@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import Link from "next/link";
 import { getCampaign } from "@/lib/campaigns";
 import { getClient } from "@/lib/clients";
+import { approvedBreakdown } from "@/lib/push";
 import { campaignProgress } from "@/lib/progress";
 import { pauseCampaign, resumeCampaign } from "@/app/campaigns/actions";
 import { StatusPill } from "@/components/CampaignTable";
@@ -29,6 +30,8 @@ export default async function CampaignLayout({ children, params }: LayoutProps<"
   const c = await getCampaign(Number(cid));
   if (!c || c.client_id !== clientId) notFound();
   const p = await campaignProgress(c.id);
+  const split = await approvedBreakdown(c.id);
+  const stuck = split.approved - split.sendable;
   const base = `/clients/${clientId}/campaigns/${c.id}`;
 
   // Each tile opens the place where that number can be acted on.
@@ -45,7 +48,11 @@ export default async function CampaignLayout({ children, params }: LayoutProps<"
       tone: p.invalid ? "text-wait" : p.checked ? "text-go" : "", href: `${base}/contacts`,
     },
     { label: "Ready to send", value: p.ready, sub: p.unconfirmed ? `+ ${n(p.unconfirmed)} unconfirmed` : p.preparing ? `preparing ${n(p.preparing)}` : "", tone: p.ready ? "text-go" : "", href: `${base}/approve` },
-    { label: "Sending", value: p.sending, sub: p.sent ? `${n(p.sent)} emails sent` : p.approved - p.sending > 0 ? `${n(p.approved - p.sending)} approved, not handed over` : "", tone: "", href: base },
+    {
+      label: "Sending", value: p.sending,
+      sub: split.sendable ? `${n(split.sendable)} ready to hand over` : stuck ? `${n(stuck)} held or waiting` : p.sent ? `${n(p.sent)} emails sent` : "",
+      tone: "", href: split.approved ? `${base}/approve` : base,
+    },
     { label: "Replies", value: p.replies, sub: "", tone: "", href: `/clients/${clientId}/replies` },
   ];
 
@@ -61,7 +68,13 @@ export default async function CampaignLayout({ children, params }: LayoutProps<"
             {!c.managed && <span className="text-xs text-muted">set up outside the console, so its email is managed there</span>}
           </div>
           <p className="text-sm text-muted">
-            {c.status === "active" && c.not_sending ? <span className="text-wait">{c.not_sending} · </span> : null}
+            {c.status === "active" && c.not_sending ? (
+              <span className="text-wait">
+                {/daily sending limit/i.test(c.not_sending)
+                  ? `Sent today's ${n(c.daily_limit)} emails; carries on tomorrow`
+                  : c.not_sending}{" · "}
+              </span>
+            ) : null}
             updated {ago(c.last_synced_at)}
           </p>
         </div>

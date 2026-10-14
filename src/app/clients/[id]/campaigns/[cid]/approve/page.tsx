@@ -4,7 +4,10 @@ import Link from "next/link";
 import { getCampaign } from "@/lib/campaigns";
 import { batchInfo } from "@/lib/progress";
 import { reviewQueue, approvalCounts } from "@/lib/approvals";
-import { approveGroupAndSend, sendApproved } from "@/app/leads/actions";
+import { approveGroupAndSend } from "@/app/leads/actions";
+import { approvedBreakdown } from "@/lib/push";
+import { GATEWAY_LABEL } from "@/lib/mailhost";
+import { SendPanel } from "@/components/SendPanel";
 import { ApprovalQueue } from "@/components/ApprovalQueue";
 import { AutoRefresh } from "@/components/AutoRefresh";
 import { SubmitButton } from "@/components/SubmitButton";
@@ -28,6 +31,8 @@ export default async function CampaignApprovePage({ params, searchParams }: Page
   const counts = await approvalCounts(clientId, c.id);
   const base = `/clients/${clientId}/campaigns/${c.id}`;
   const waiting = b.groups.verified + b.groups.catch_all;
+  const split = await approvedBreakdown(c.id);
+  const sendable = { ...split, held: split.held.map((h) => ({ ...h, label: GATEWAY_LABEL[h.gateway] })) };
 
   if (!b.fixed || eachOne) {
     const leads = await reviewQueue(clientId, 200, c.id);
@@ -35,7 +40,8 @@ export default async function CampaignApprovePage({ params, searchParams }: Page
       <div className="flex flex-col gap-3">
         {b.fixed && <Link href={`${base}/approve`} className="text-sm underline">← Back to approving in one go</Link>}
         <AutoRefresh active={counts.drafting > 0 && leads.length === 0} />
-        <ApprovalQueue leads={leads} clientId={clientId} campaignId={c.id} approvedCount={counts.approved} draftingCount={counts.drafting} showClient={false} />
+        <SendPanel campaignId={c.id} contactsHref={`${base}/contacts`} b={sendable} />
+        <ApprovalQueue leads={leads} clientId={clientId} campaignId={c.id} approvedCount={counts.approved} draftingCount={counts.drafting} showClient={false} hideSend />
       </div>
     );
   }
@@ -48,12 +54,7 @@ export default async function CampaignApprovePage({ params, searchParams }: Page
     <div className="flex flex-col gap-6">
       <AutoRefresh active={counts.drafting > 0} />
 
-      {b.approvedNotSent > 0 && (
-        <div className="card flex items-center justify-between gap-4 border-wait/40 bg-wait-soft/40 p-4 text-sm">
-          <span>{n(b.approvedNotSent)} contacts are approved but haven&apos;t been handed over for sending yet.</span>
-          <form action={sendApproved.bind(null, c.id)}><SubmitButton className="btn-go" pendingLabel="Sending…">Send {n(b.approvedNotSent)} now</SubmitButton></form>
-        </div>
-      )}
+      <SendPanel campaignId={c.id} contactsHref={`${base}/contacts`} b={sendable} />
 
       {waiting === 0 ? (
         <div className="card p-8 text-center text-sm text-muted">

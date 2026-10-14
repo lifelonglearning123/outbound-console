@@ -19,7 +19,8 @@ type Props = {
   dailyLimit: number;
   accounts: string[];
   stopOnReply: boolean;
-  mailboxes: { email: string; healthy: boolean }[];
+  /** `note` says in a few words why an unhealthy mailbox is out ("paused: too many bounces"); `reason` is the detail. */
+  mailboxes: { email: string; healthy: boolean; note: string; reason: string | null }[];
   managed: boolean;
   submitLabel: string;
   holdAfter: number | null;
@@ -264,6 +265,7 @@ export function CampaignForm(p: Props) {
           <div>
             <label className="label" htmlFor="daily_limit">Daily cap</label>
             <input id="daily_limit" name="daily_limit" type="number" min={1} defaultValue={p.dailyLimit} className="field" />
+            <p className="mt-1 text-xs text-muted">Emails a day for the whole campaign, shared across the mailboxes below.</p>
           </div>
           <label className="col-span-3 flex items-end gap-2 pb-2 text-sm">
             <input type="checkbox" name="stop_on_reply" defaultChecked={p.stopOnReply} disabled={!p.managed} />
@@ -280,7 +282,11 @@ export function CampaignForm(p: Props) {
                 <label key={m.email} className="flex items-center gap-2 text-sm">
                   <input type="checkbox" name="accounts" value={m.email} defaultChecked={p.accounts.includes(m.email)} />
                   <span className="font-mono text-xs">{m.email}</span>
-                  {!m.healthy && <span className="text-xs text-bad">unhealthy</span>}
+                  {!m.healthy && (
+                    <span className={`text-xs ${m.note === "not connected" ? "text-bad" : "text-wait"}`} title={m.reason ?? undefined}>
+                      {m.note}
+                    </span>
+                  )}
                 </label>
               ))}
             </div>

@@ -4,6 +4,7 @@ import { Fragment, useCallback, useEffect, useMemo, useState, useTransition } fr
 import { useRouter } from "next/navigation";
 import { approveLead, approveAllUnflagged, rejectLead, rewriteDraft, redraftLead, pushAllApproved, pushCampaign } from "@/app/leads/actions";
 import { htmlToText } from "@/lib/merge";
+import { describePush } from "@/lib/pushResult";
 import type { QueueDraft, QueueLead } from "@/lib/approvals";
 
 type Edits = Record<number, { subject: string; body: string; baseSubject: string; baseBody: string }>;
@@ -15,6 +16,7 @@ export function ApprovalQueue({
   approvedCount,
   draftingCount,
   showClient,
+  hideSend = false,
 }: {
   leads: QueueLead[];
   clientId: number | null;
@@ -22,6 +24,8 @@ export function ApprovalQueue({
   approvedCount: number;
   draftingCount: number;
   showClient: boolean;
+  /** The page shows its own send panel (a campaign's Approvals tab), so this list doesn't repeat the button. */
+  hideSend?: boolean;
 }) {
   const router = useRouter();
   const [done, setDone] = useState<Set<number>>(new Set());
@@ -127,11 +131,7 @@ export function ApprovalQueue({
     setBusy("push");
     start(async () => {
       const r = campaignId ? { ...(await pushCampaign(campaignId)), errors: [] as string[] } : await pushAllApproved(clientId);
-      setMessage(
-        `${r.pushed} contacts are now being sent to.` +
-          (r.skipped ? ` ${r.skipped} couldn't be added (see their row on the Contacts tab).` : "") +
-          (r.errors.length ? ` Problems: ${r.errors.join("; ")}` : ""),
-      );
+      setMessage(describePush(r) + (r.errors.length ? ` Problems: ${r.errors.join("; ")}` : ""));
       setBusy("");
       router.refresh();
     });
@@ -170,9 +170,16 @@ export function ApprovalQueue({
             {busy === "bulk" ? "Approving…" : `Approve all ${unflagged} without a note`}
           </button>
         )}
-        <button className="btn-go" disabled={approvedCount === 0 || busy === "push"} onClick={push}>
-          {busy === "push" ? "Sending…" : `Send to ${approvedCount} approved`}
-        </button>
+        {!hideSend && (
+          <button
+            className="btn-go"
+            disabled={approvedCount === 0 || busy === "push"}
+            onClick={push}
+            title="Hands approved contacts to the sender. Anyone held by a paused mail filter or still in another campaign stays back, and the result says so."
+          >
+            {busy === "push" ? "Sending…" : `Send approved (${approvedCount})`}
+          </button>
+        )}
         </div>
       </div>
       {message && <div className="rounded-md border border-line bg-card px-3 py-2 text-sm">{message}</div>}

@@ -1,5 +1,5 @@
 import "server-only";
-import { get, run, logActivity } from "./db";
+import { all, get, run, logActivity } from "./db";
 import { requireClient } from "./clients";
 import { instantly, type CampaignSchedule } from "./instantly";
 import { campaignState } from "./connection";
@@ -60,6 +60,20 @@ function parse(row: CampaignDbRow): Campaign {
     accounts: j(row.accounts, []),
     hold_gateways: j(row.hold_gateways ?? '["mimecast"]', ["mimecast"] as Gateway[]),
   };
+}
+
+/** A client's mailboxes for the "Send from" list, each saying in a few words why it's out if it is. */
+export async function formMailboxes(clientId: number) {
+  const rows = await all<{ email: string; status: number; auto_paused_at: string | null; auto_paused_reason: string | null }>(
+    "SELECT email, status, auto_paused_at, auto_paused_reason FROM mailboxes WHERE client_id = ? ORDER BY email",
+    clientId,
+  );
+  return rows.map((m) => ({
+    email: m.email,
+    healthy: m.status === 1,
+    note: m.status === 1 ? "" : m.auto_paused_at ? "paused: too many bounces" : m.status === 2 ? "paused" : "not connected",
+    reason: m.auto_paused_reason,
+  }));
 }
 
 export async function getCampaign(id: number): Promise<Campaign | undefined> {

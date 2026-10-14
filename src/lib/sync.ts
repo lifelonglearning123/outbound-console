@@ -11,6 +11,7 @@ import { runVerificationActions } from "./verifyReport";
 import { syncMeetings } from "./meetings";
 import { linkPendingLeads, logEmailsToGhl, noteCampaignsInGhl, pullTaggedContacts } from "./ghlsync";
 import { detectMailDomains } from "./mailhost";
+import { sendWaiting } from "./push";
 
 const day = (offset = 0) => new Date(Date.now() - offset * 86400_000).toISOString().slice(0, 10);
 
@@ -324,6 +325,8 @@ export async function syncClient(clientId: number): Promise<{ ok: boolean; messa
     ["ghl conversations", () => logEmailsToGhl(client)],
     ["ghl campaign notes", () => noteCampaignsInGhl(client)],
     ["mail servers", () => detectMailDomains()],
+    // Contacts that waited for another campaign's sequence go out once it's over (after "leads" refreshed statuses).
+    ["waiting sends", () => sendWaiting(clientId)],
   ];
   const errors: string[] = [];
   for (const [name, fn] of steps) {

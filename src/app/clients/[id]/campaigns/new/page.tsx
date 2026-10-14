@@ -1,7 +1,6 @@
 import { requireClientAccess } from "@/lib/auth";
-import { all } from "@/lib/db";
 import { saveCampaign } from "@/app/campaigns/actions";
-import { DEFAULT_SCHEDULE, DEFAULT_STEPS } from "@/lib/campaigns";
+import { DEFAULT_SCHEDULE, DEFAULT_STEPS, formMailboxes } from "@/lib/campaigns";
 import { CampaignForm } from "@/components/CampaignForm";
 import { requireClient } from "@/lib/clients";
 import { listTags } from "@/lib/ghl";
@@ -9,7 +8,7 @@ import { listTags } from "@/lib/ghl";
 export default async function NewCampaignPage({ params }: PageProps<"/clients/[id]/campaigns/new">) {
   const id = Number((await params).id);
   await requireClientAccess(id); // only admins and this client's own logins
-  const mailboxes = await all<{ email: string; status: number }>("SELECT email, status FROM mailboxes WHERE client_id = ? ORDER BY email", id);
+  const mailboxes = await formMailboxes(id);
   // Tags from the client's GHL for the campaign's "GHL tag" suggestions (null = GHL not connected).
   const ghlClient = await requireClient(id);
   let ghlTags: string[] | null = null;
@@ -29,9 +28,9 @@ export default async function NewCampaignPage({ params }: PageProps<"/clients/[i
       steps={DEFAULT_STEPS}
       schedule={DEFAULT_SCHEDULE}
       dailyLimit={30}
-      accounts={mailboxes.filter((m) => m.status === 1).map((m) => m.email)}
+      accounts={mailboxes.filter((m) => m.healthy).map((m) => m.email)}
       stopOnReply
-      mailboxes={mailboxes.map((m) => ({ email: m.email, healthy: m.status === 1 }))}
+      mailboxes={mailboxes}
       managed
       submitLabel="Create campaign"
       holdAfter={null}

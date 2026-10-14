@@ -12,6 +12,8 @@ import { contactsWithTagPage, listTags } from "@/lib/ghl";
 import { portalCheck } from "@/lib/checkTags";
 import { runWriter, rewriteStep } from "@/lib/writer";
 import { pushApproved, pullBackHeld } from "@/lib/push";
+import { NO_PUSH, addPushes } from "@/lib/pushResult";
+import { CONTACT_GROUPS } from "@/lib/stages";
 import { detectMailDomains, GATEWAY_LABEL, type Gateway } from "@/lib/mailhost";
 import { linkPendingLeads } from "@/lib/ghlsync";
 import { queueVerification, runVerifier, PASSED } from "@/lib/verify";
@@ -268,6 +270,38 @@ export async function pushCampaign(campaignId: number) {
   return r;
 }
 
+/** Contacts that can still be taken out of a campaign: not handed to the sender, not already removed. */
+const REMOVABLE = "pushed_at IS NULL AND instantly_lead_id IS NULL AND stage <> 'removed'";
+
+/** Remove the ticked contacts from a campaign (marked removed, never deleted, so their history stays). */
+export async function removeSelected(campaignId: number, form: FormData) {
+  const c = await requireCampaign(campaignId);
+  await requireClientAccess(c.client_id);
+  const ids = form.getAll("ids").map(Number).filter(Number.isInteger);
+  if (ids.length === 0) return;
+  const n = (await run(
+    `UPDATE leads SET stage = 'removed', stage_message = 'Removed from the campaign by hand'
+     WHERE campaign_id = ? AND ${REMOVABLE} AND id = ANY(?)`,
+    campaignId, ids,
+  )).changes;
+  if (n) await logActivity(c.client_id, "import", `Removed ${n} contacts from "${c.name}" by hand`);
+  revalidatePath("/", "layout");
+}
+
+/** Remove every not-yet-sent contact in one list group (e.g. all invalid ones) from a campaign. */
+export async function removeGroup(campaignId: number, groupKey: string) {
+  const c = await requireCampaign(campaignId);
+  await requireClientAccess(c.client_id);
+  const group = CONTACT_GROUPS.find((g) => g.key === groupKey);
+  if (!group) throw new Error("Unknown group");
+  const n = (await run(
+    `UPDATE leads SET stage = 'removed', stage_message = ? WHERE campaign_id = ? AND ${REMOVABLE} AND ${group.where}`,
+    `Removed from the campaign (${group.label.toLowerCase()})`, campaignId,
+  )).changes;
+  if (n) await logActivity(c.client_id, "import", `Removed ${n} "${group.label}" contacts from "${c.name}"`);
+  revalidatePath("/", "layout");
+}
+
 /** Take contacts behind the campaign's held mail filters back out of Instantly before they're emailed; they stay approved and held. */
 export async function takeBackHeld(campaignId: number) {
   await requireClientAccess(await clientOfCampaign(campaignId));
@@ -290,11 +324,6 @@ export async function setGatewayHold(campaignId: number, gateway: Gateway, hold:
   revalidatePath("/", "layout");
 }
 
-/** Form-action version of pushCampaign for the campaign's Approve tab. */
-export async function sendApproved(campaignId: number) {
-  await pushCampaign(campaignId);
-}
-
 /** Push approved leads for every campaign that has some. Used by the approvals page button. */
 export async function pushAllApproved(clientId: number | null) {
   if (clientId) await requireClientAccess(clientId);
@@ -304,21 +333,18 @@ export async function pushAllApproved(clientId: number | null) {
      WHERE l.stage = 'approved' AND c.instantly_campaign_id IS NOT NULL ${clientId ? "AND l.client_id = ?" : ""}`,
     ...(clientId ? [clientId] : []),
   );
-  let pushed = 0;
-  let skipped = 0;
+  let total = NO_PUSH;
   const errors: string[] = [];
   for (const r of rows) {
     try {
-      const res = await pushApproved(r.campaign_id);
-      pushed += res.pushed;
-      skipped += res.skipped;
+      total = addPushes(total, await pushApproved(r.campaign_id));
     } catch (e) {
       errors.push((e as Error).message);
     }
   }
   after(runWriter); // leads missing newly released steps were sent back to the writer
   revalidatePath("/", "layout");
-  return { pushed, skipped, errors };
+  return { ...total, errors };
 }
 
 /**

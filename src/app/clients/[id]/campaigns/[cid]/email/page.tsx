@@ -1,7 +1,6 @@
 import { requireClientAccess } from "@/lib/auth";
 import { notFound } from "next/navigation";
-import { all } from "@/lib/db";
-import { getCampaign, liveSteps, pushedLeadCount } from "@/lib/campaigns";
+import { formMailboxes, getCampaign, liveSteps, pushedLeadCount } from "@/lib/campaigns";
 import { saveCampaign } from "@/app/campaigns/actions";
 import { CampaignForm } from "@/components/CampaignForm";
 import { requireClient } from "@/lib/clients";
@@ -15,7 +14,7 @@ export default async function CampaignEmailPage({ params }: PageProps<"/clients/
   const c = await getCampaign(Number(cid));
   if (!c || c.client_id !== clientId) notFound();
 
-  const mailboxes = await all<{ email: string; status: number }>("SELECT email, status FROM mailboxes WHERE client_id = ? ORDER BY email", clientId);
+  const mailboxes = await formMailboxes(clientId);
   const client = await requireClient(clientId);
   let ghlTags: string[] | null = null;
   if (client.ghl_location_id && client.ghl_token) {
@@ -38,7 +37,7 @@ export default async function CampaignEmailPage({ params }: PageProps<"/clients/
         dailyLimit={c.daily_limit}
         accounts={c.accounts}
         stopOnReply={c.stop_on_reply === 1}
-        mailboxes={mailboxes.map((m) => ({ email: m.email, healthy: m.status === 1 }))}
+        mailboxes={mailboxes}
         managed={c.managed === 1}
         submitLabel="Save changes"
         holdAfter={c.hold_after}

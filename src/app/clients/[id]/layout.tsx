@@ -2,6 +2,7 @@ import { requireClientAccess } from "@/lib/auth";
 import { notFound } from "next/navigation";
 import { getClient } from "@/lib/clients";
 import { ConnectionBadge } from "@/components/ConnectionBadge";
+import { WorkspaceAlerts } from "@/components/WorkspaceAlerts";
 
 export async function generateMetadata({ params }: { params: Promise<{ id: string }> }) {
   const client = await getClient(Number((await params).id));
@@ -11,7 +12,7 @@ export async function generateMetadata({ params }: { params: Promise<{ id: strin
 /** The client's workspace. Its sections (Campaigns, Approvals, Replies, Stats, Settings) live in the sidebar. */
 export default async function ClientLayout({ children, params }: LayoutProps<"/clients/[id]">) {
   const id = Number((await params).id);
-  await requireClientAccess(id); // only admins and this client's own logins
+  const user = await requireClientAccess(id); // only admins and this client's own logins
   const client = await getClient(id);
   if (!client) notFound();
 
@@ -26,6 +27,7 @@ export default async function ClientLayout({ children, params }: LayoutProps<"/c
         </div>
         <ConnectionBadge client={client} />
       </header>
+      <WorkspaceAlerts client={client} isAdmin={user.role === "admin"} />
       <div>{children}</div>
     </div>
   );
