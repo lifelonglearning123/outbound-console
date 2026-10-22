@@ -36,7 +36,7 @@ export default async function MailboxesPage() {
         </label>
         <div>
           <label className="label" htmlFor="bounce">Max bounce rate (7 days)</label>
-          <div className="flex items-center gap-1"><input id="bounce" name="bounce" type="number" step="0.5" defaultValue={rules.bouncePct} className="field w-20" />%</div>
+          <div className="flex items-center gap-1"><input id="bounce" name="bounce" type="number" step="0.25" defaultValue={rules.bouncePct} className="field w-20" />%</div>
         </div>
         <div>
           <label className="label" htmlFor="min_sent">Only after</label>
@@ -47,7 +47,10 @@ export default async function MailboxesPage() {
           <input id="warmup" name="warmup" type="number" defaultValue={rules.minWarmupScore} className="field w-20" />
         </div>
         <button className="btn">Save rules</button>
-        <p className="w-full text-xs text-muted">Auto-pause never resumes a mailbox by itself; you decide when it&apos;s safe.</p>
+        <p className="w-full text-xs text-muted">
+          Auto-pause never resumes a mailbox by itself; you decide when it&apos;s safe. For reference, Instantly pauses a whole
+          campaign once it has sent 100 emails with over 5% bouncing.
+        </p>
       </form>
       )}
 

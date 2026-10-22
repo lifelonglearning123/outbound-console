@@ -23,8 +23,8 @@ export async function setMailboxRunning(clientId: number, email: string, running
 export async function saveHealthRules(form: FormData) {
   await requireAdmin();
   await setSetting("health_auto_pause", form.get("auto") ? "1" : "0");
-  await setSetting("health_bounce_pct", String(Math.max(0.5, Number(form.get("bounce") || 3))));
-  await setSetting("health_min_sent", String(Math.max(1, Number(form.get("min_sent") || 20))));
+  await setSetting("health_bounce_pct", String(Math.max(0.5, Number(form.get("bounce") || 4.25))));
+  await setSetting("health_min_sent", String(Math.max(1, Number(form.get("min_sent") || 85))));
   await setSetting("health_min_warmup", String(Math.max(0, Number(form.get("warmup") || 70))));
   await logActivity(null, "settings", "Updated mailbox health rules");
   revalidatePath("/mailboxes");

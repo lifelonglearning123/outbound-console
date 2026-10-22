@@ -36,10 +36,12 @@ function newestPart(text: string): string {
 
 export type HealthRules = { bouncePct: number; minSent: number; minWarmupScore: number };
 
+// Bounce defaults sit 15% inside Instantly's own auto-pause (a campaign over 5% bounces after 100 sends),
+// so we act slightly before Instantly would, without pausing a mailbox over one or two unlucky bounces.
 export async function healthRules(): Promise<HealthRules> {
   return {
-    bouncePct: Number(await getSetting("health_bounce_pct", "3")),
-    minSent: Number(await getSetting("health_min_sent", "20")),
+    bouncePct: Number(await getSetting("health_bounce_pct", "4.25")),
+    minSent: Number(await getSetting("health_min_sent", "85")),
     minWarmupScore: Number(await getSetting("health_min_warmup", "70")),
   };
 }
