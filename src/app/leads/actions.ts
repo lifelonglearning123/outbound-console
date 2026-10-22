@@ -12,7 +12,8 @@ import { contactsWithTagPage, listTags } from "@/lib/ghl";
 import { runWriter, rewriteStep } from "@/lib/writer";
 import { pushApproved, pullBackHeld } from "@/lib/push";
 import { NO_PUSH, addPushes } from "@/lib/pushResult";
-import { describeFilters, readFilters, removableIds } from "@/lib/people";
+import { describeFilters, matchingIds, readFilters, removableIds } from "@/lib/people";
+import { cleanTag, queuePortalTag, retryPortalTags, runPortalTagging } from "@/lib/portalTags";
 import { detectMailDomains, GATEWAY_LABEL, type Gateway } from "@/lib/mailhost";
 import { jobTitleField, linkPendingLeads, portalLead } from "@/lib/ghlsync";
 import { queueVerification, runVerifier, PASSED } from "@/lib/verify";
@@ -287,6 +288,34 @@ export async function removeMatching(campaignId: number, query: string) {
     `Removed from the campaign (${which})`, campaignId, ids,
   )).changes;
   if (n) await logActivity(c.client_id, "import", `Removed ${n} contacts from "${c.name}" (${which})`);
+  revalidatePath("/", "layout");
+}
+
+/**
+ * Add a tag in the Nexus Portal to everyone a people list's filters match (a campaign's, or all the client's).
+ * Queued and applied in the background; contacts not in the portal yet are added to it first.
+ */
+export async function tagMatching(clientId: number, campaignId: number | null, query: string, form: FormData) {
+  await requireClientAccess(clientId);
+  if (campaignId && (await clientOfCampaign(campaignId)) !== clientId) throw new Error("Campaign not found");
+  const tag = cleanTag(String(form.get("tag") ?? ""));
+  if (!tag) throw new Error("Type the tag to add first.");
+  const client = await requireClient(clientId);
+  if (!client.ghl_location_id || !client.ghl_token) throw new Error(`Connect the ${PORTAL} in Settings first.`);
+  const filters = readFilters(new URLSearchParams(query));
+  const n = await queuePortalTag(clientId, await matchingIds({ clientId, campaignId }, filters), tag);
+  if (n) {
+    const which = Object.keys(filters).length ? ` (${describeFilters(filters)})` : "";
+    await logActivity(clientId, "ghl", `Tagging ${n} contacts "${tag}" in the ${PORTAL}${which}`);
+    after(runPortalTagging);
+  }
+  revalidatePath("/", "layout");
+}
+
+/** Try the client's failed portal tags again. */
+export async function retryTagging(clientId: number) {
+  await requireClientAccess(clientId);
+  if (await retryPortalTags(clientId)) after(runPortalTagging);
   revalidatePath("/", "layout");
 }
 

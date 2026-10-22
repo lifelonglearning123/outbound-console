@@ -105,6 +105,20 @@ ALTER TABLE campaigns ALTER COLUMN hold_gateways SET DEFAULT '["mimecast"]';
 -- A note on the portal contact for each campaign that starts emailing it, so the portal keeps the campaign history.
 ALTER TABLE leads ADD COLUMN IF NOT EXISTS ghl_noted_at TEXT;
 ALTER TABLE leads ADD COLUMN IF NOT EXISTS ghl_note_error TEXT;
+-- Tags added to contacts in the Nexus Portal from a people list, one row per contact and tag (lowercase, as the
+-- portal keeps them). Applied by a background job (portalTags.ts): queued | done | error.
+CREATE TABLE IF NOT EXISTS lead_tags (
+  id SERIAL PRIMARY KEY,
+  client_id INTEGER NOT NULL REFERENCES clients(id),
+  lead_id INTEGER NOT NULL REFERENCES leads(id) ON DELETE CASCADE,
+  tag TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'queued',
+  error TEXT,
+  queued_at TEXT NOT NULL DEFAULT ${NOW_TEXT},
+  done_at TEXT,
+  UNIQUE (lead_id, tag)
+);
+CREATE INDEX IF NOT EXISTS lead_tags_status ON lead_tags(status, client_id);
 
 CREATE TABLE IF NOT EXISTS drafts (
   id SERIAL PRIMARY KEY,

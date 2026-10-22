@@ -8,6 +8,7 @@ import { triageNewReplies } from "./triage";
 import { runWriter } from "./writer";
 import { runVerifier } from "./verify";
 import { runVerificationActions } from "./verifyReport";
+import { runPortalTagging } from "./portalTags";
 import { syncMeetings } from "./meetings";
 import { fillJobTitles, linkPendingLeads, logEmailsToGhl, noteCampaignsInGhl, pullTaggedContacts } from "./ghlsync";
 import { detectMailDomains } from "./mailhost";
@@ -363,5 +364,6 @@ async function syncEveryClient() {
     await runWriter(); // pick up any drafting left over from a restart
     await runVerifier(); // and any email checks still queued or pending
     await runVerificationActions(); // and Nexus Portal tagging / deletions queued from the Verification page
+    await runPortalTagging(); // and tags added from a people list
   }
 }

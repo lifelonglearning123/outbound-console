@@ -79,13 +79,13 @@ const SENIORITY_SQL = `CASE
     WHEN l.title ~* '\\m(manager|lead|leader|supervisor)\\M' THEN 'manager'
     ELSE 'other' END`;
 
-const FILTER_KEYS = ["q", "status", "check", "host", "sender", "source", "ptag", "reply", "seniority", "title", "from", "to"] as const;
+const FILTER_KEYS = ["q", "status", "check", "host", "sender", "source", "ptag", "tag", "reply", "seniority", "title", "from", "to"] as const;
 export type FilterKey = (typeof FILTER_KEYS)[number];
 export type PeopleFilters = Partial<Record<FilterKey, string>>;
 
 const FILTER_LABEL: Record<FilterKey, string> = {
   q: "Search", status: "Status", check: "Address check", host: "Email host", sender: "Sent from", source: "Came from",
-  ptag: "Check tag", reply: "Reply", seniority: "Seniority", title: "Job title", from: "Emailed from", to: "Emailed until",
+  ptag: "Check tag", tag: "Tagged here", reply: "Reply", seniority: "Seniority", title: "Job title", from: "Emailed from", to: "Emailed until",
 };
 const FIXED: Partial<Record<FilterKey, Option[]>> = { status: STATUSES, check: CHECKS, host: HOSTS, ptag: PORTAL_TAGS, reply: REPLIES, seniority: SENIORITY };
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
@@ -147,7 +147,8 @@ function facts(s: PeopleScope): string {
   return `SELECT l.id, l.campaign_id, c.name campaign, l.email, l.first_name, l.last_name, l.company, NULLIF(trim(l.title), '') title,
       l.stage, l.stage_message, l.verification, l.instantly_status, l.created_at, l.last_open_at, l.ghl_contact_id, l.fields,
       COALESCE(l.source_ref, l.source) source, md.provider, md.gateway,
-      COALESCE(o.first_sent, l.last_sent_at) first_sent, COALESCE(o.last_sent, l.last_sent_at) last_sent, COALESCE(o.steps_sent, 0) steps_sent, o.sender,
+      COALESCE(o.first_sent, l.last_sent_at) first_sent, COALESCE(o.last_sent, l.last_sent_at) last_sent, COALESCE(o.steps_sent, 0) steps_sent,
+      o.sent_steps, o.sender, tg.tags added_tags,
       r.replied_at, r.reply_tag, COALESCE(r.interested, false) interested, mt.meeting_at,
       (l.pushed_at IS NOT NULL OR l.instantly_lead_id IS NOT NULL) handed,
       (o.first_sent IS NOT NULL OR l.last_sent_at IS NOT NULL OR COALESCE(l.instantly_status, 0) IN (3, -1)) emailed,
@@ -161,13 +162,15 @@ function facts(s: PeopleScope): string {
     FROM leads l JOIN campaigns c ON c.id = l.campaign_id
     LEFT JOIN mail_domains md ON md.domain = split_part(l.email, '@', 2)
     LEFT JOIN (SELECT lead_id, MIN(sent_at) first_sent, MAX(sent_at) last_sent, COUNT(DISTINCT step) steps_sent,
-        (array_agg(account_email ORDER BY sent_at))[1] sender
+        array_agg(DISTINCT step ORDER BY step) FILTER (WHERE step IS NOT NULL) sent_steps, (array_agg(account_email ORDER BY sent_at))[1] sender
       FROM emails WHERE client_id = @clientId AND direction = 'out' AND lead_id IS NOT NULL GROUP BY lead_id) o ON o.lead_id = l.id
     LEFT JOIN (SELECT lead_id, MIN(sent_at) FILTER (WHERE interest IS DISTINCT FROM 'ooo') replied_at,
         (array_agg(COALESCE(interest, 'other') ORDER BY sent_at DESC))[1] reply_tag,
         bool_or(interest = 'interested') interested, bool_or(interest = 'unsubscribe') unsubscribed
       FROM emails WHERE client_id = @clientId AND direction = 'in' AND lead_id IS NOT NULL GROUP BY lead_id) r ON r.lead_id = l.id
     LEFT JOIN (SELECT lead_id, MIN(booked_at) meeting_at FROM meetings WHERE client_id = @clientId GROUP BY lead_id) mt ON mt.lead_id = l.id
+    LEFT JOIN (SELECT lead_id, string_agg(tag, ', ' ORDER BY tag) tags FROM lead_tags WHERE client_id = @clientId AND status <> 'error'
+      GROUP BY lead_id) tg ON tg.lead_id = l.id
     WHERE l.client_id = @clientId ${s.campaignId ? "AND l.campaign_id = @campaignId" : ""}`;
 }
 
@@ -182,6 +185,7 @@ function conditions(f: PeopleFilters, except?: FilterKey): string[] {
   if (on("sender")) c.push(f.sender!.startsWith("@") ? "f.sender ILIKE @senderLike" : "f.sender = @sender");
   if (on("source")) c.push("f.source = @source");
   if (on("ptag")) c.push("f.ptag = @ptag");
+  if (on("tag")) c.push("EXISTS (SELECT 1 FROM lead_tags t WHERE t.lead_id = f.id AND t.tag = @tag AND t.status <> 'error')");
   if (on("reply")) c.push("COALESCE(f.reply_tag, 'none') = @reply");
   if (on("seniority")) c.push("f.seniority = @seniority");
   if (f.title) c.push("lower(f.title) = lower(@title)");
@@ -209,7 +213,7 @@ export type Person = {
   company: string | null; title: string | null; stage: string; stage_message: string | null; verification: string | null;
   instantly_status: number | null; created_at: string; last_open_at: string | null; ghl_contact_id: string | null; fields: string;
   source: string; provider: Provider | null; gateway: Gateway | null; first_sent: string | null; last_sent: string | null;
-  steps_sent: number; sender: string | null; replied_at: string | null; reply_tag: string | null; interested: boolean;
+  steps_sent: number; sent_steps: number[] | null; sender: string | null; added_tags: string | null; replied_at: string | null; reply_tag: string | null; interested: boolean;
   meeting_at: string | null; handed: boolean; emailed: boolean; bounced: boolean; unsubscribed: boolean; check_key: string;
   host: string; ptag: string; seniority: string;
 };
@@ -258,6 +262,11 @@ export async function allPeople(s: PeopleScope, f: PeopleFilters, sort: Sort): P
   return all<Person>(`WITH f AS (${facts(s)}) SELECT f.* FROM f WHERE ${where(conditions(f))} ORDER BY ${ORDER(sort)}`, params(s, f));
 }
 
+/** Everyone the filters match, for acting on the whole list (tagging them in the portal). */
+export async function matchingIds(s: PeopleScope, f: PeopleFilters): Promise<number[]> {
+  return (await all<{ id: number }>(`WITH f AS (${facts(s)}) SELECT f.id FROM f WHERE ${where(conditions(f))}`, params(s, f))).map((r) => r.id);
+}
+
 /** The matching contacts that haven't been handed to the sender, so can still be taken out of the campaign. */
 export async function removableIds(s: PeopleScope, f: PeopleFilters): Promise<number[]> {
   return (await all<{ id: number }>(
@@ -291,6 +300,8 @@ export async function peopleFacets(s: PeopleScope, f: PeopleFilters): Promise<Fa
        CROSS JOIN LATERAL (VALUES ${STATUSES.map((x) => `('${x.value}', ${x.where})`).join(", ")}) st(val, hit)
      WHERE st.hit AND ${where(conditions(f, "status"))} GROUP BY 2`,
     ...FACETS.map((x) => `SELECT '${x.key}' facet, ${x.expr} val, COUNT(*) n FROM f WHERE ${where(conditions(f, x.key))} GROUP BY 2`),
+    `SELECT 'tag' facet, t.tag val, COUNT(DISTINCT f.id) n FROM f JOIN lead_tags t ON t.lead_id = f.id AND t.status <> 'error'
+     WHERE ${where(conditions(f, "tag"))} GROUP BY 2`,
   ];
   const rows = await all<{ facet: FilterKey; val: string | null; n: number }>(
     `WITH f AS MATERIALIZED (${facts(s)}) ${parts.join(" UNION ALL ")}`,
@@ -319,6 +330,7 @@ export async function peopleFacets(s: PeopleScope, f: PeopleFilters): Promise<Fa
     { key: "seniority", label: "Seniority", options: fixed(SENIORITY, counts("seniority")) },
     { key: "source", label: "Came from", options: byCount(counts("source"), sourceLabel) },
     { key: "ptag", label: "Check tag", options: fixed(PORTAL_TAGS, counts("ptag")) },
+    { key: "tag", label: "Tagged here", options: byCount(counts("tag"), (t) => t) },
   ];
 }
 

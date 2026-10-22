@@ -57,14 +57,14 @@ export async function GET(req: NextRequest, ctx: RouteContext<"/clients/[id]/peo
     [
       "Email", "First name", "Last name", "Job title", "Seniority", "Company", "Campaign", "Status", "Reply", "Replied at", "Interested",
       "Meeting booked", "Opened", "Last opened", "Bounced", "Unsubscribed", "Emails sent", "First emailed", "Last emailed", "Sent from",
-      "Address check", "Nexus Portal check tag", "Email host", "Mail filter", "Came from", "Added", "Nexus Portal contact ID",
+      "Address check", "Nexus Portal check tag", "Tags added here", "Email host", "Mail filter", "Came from", "Added", "Nexus Portal contact ID",
       ...extra.map((k) => k[0].toUpperCase() + k.slice(1)),
     ],
     people.map((p, i) => [
       p.email, p.first_name, p.last_name, p.title, seniorityLabel(p.seniority), p.company, p.campaign, personState(p).label,
       p.reply_tag ? INTEREST_LABELS[p.reply_tag] ?? p.reply_tag : "", when(p.replied_at), yes(p.interested), when(p.meeting_at),
       yes(p.emailed && p.last_open_at), when(p.last_open_at), yes(p.bounced), yes(p.unsubscribed), p.emailed ? p.steps_sent || 1 : 0,
-      when(p.first_sent), when(p.last_sent), p.sender, checkOption(p.check_key)?.label ?? p.check_key, portalTagLabel(p.ptag),
+      when(p.first_sent), when(p.last_sent), p.sender, checkOption(p.check_key)?.label ?? p.check_key, portalTagLabel(p.ptag), p.added_tags,
       p.provider ? PROVIDER_LABEL[p.provider] : "", p.gateway ? GATEWAY_LABEL[p.gateway] : "", sourceLabel(p.source), when(p.created_at),
       p.ghl_contact_id, ...extra.map((k) => fields[i][k] ?? ""),
     ]),

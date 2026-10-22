@@ -3,7 +3,7 @@ import { notFound } from "next/navigation";
 import Link from "next/link";
 import { after } from "next/server";
 import { all, get, getSetting } from "@/lib/db";
-import { getCampaign } from "@/lib/campaigns";
+import { getCampaign, liveSteps } from "@/lib/campaigns";
 import { requireClient } from "@/lib/clients";
 import { verifyLeads, writeEmails } from "@/app/leads/actions";
 import { runVerifier, uncheckedCount } from "@/lib/verify";
@@ -175,7 +175,7 @@ export default async function CampaignContactsPage({ params, searchParams }: Pag
           basePath={base}
           title="Everyone in this campaign"
           removable
-          steps={c.steps.length}
+          sequence={{ steps: c.steps.length, live: liveSteps(c), delays: c.steps.map((s) => s.delay_days) }}
           emptyText="No contacts yet. Add some above, from the Nexus Portal, a CSV file or by typing them in."
         />
       </section>

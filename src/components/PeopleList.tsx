@@ -1,18 +1,26 @@
 import Link from "next/link";
+import { after } from "next/server";
 import { getSetting } from "@/lib/db";
 import { requireClient, type Client } from "@/lib/clients";
-import { dateTime } from "@/lib/format";
+import { dateTime, toDate } from "@/lib/format";
 import { otherCampaigns, type OtherCampaign } from "@/lib/leads";
 import {
   checkOption, defaultDir, describeFilters, hostLabel, listPeople, nonPeopleParams, peopleFacets, personName, personState, readFilters,
-  readSort, sortParams, sourceLabel, type Facet, type PeopleScope, type SortKey,
+  readSort, sortParams, sourceLabel, type Facet, type PeopleScope, type Person, type SortKey,
 } from "@/lib/people";
-import { removeMatching, removeSelected } from "@/app/leads/actions";
+import { portalTagStatus, runPortalTagging } from "@/lib/portalTags";
+import { PORTAL } from "@/lib/verifyReport";
+import { removeMatching, removeSelected, retryTagging, tagMatching } from "@/app/leads/actions";
+import { AutoRefresh } from "@/components/AutoRefresh";
 import { ConfirmButton } from "@/components/ConfirmButton";
 import { PeopleFilters } from "@/components/PeopleFilters";
+import { SubmitButton } from "@/components/SubmitButton";
 
 const n = (v: number) => v.toLocaleString("en-GB");
 const PAGE = 100;
+
+/** A campaign's sequence: how many emails, how many are released (the rest are on hold), and the days between them. */
+type Sequence = { steps: number; live: number; delays: number[] };
 
 /**
  * A list of people to search, filter, sort, page through and download: a campaign's on its Contacts tab, a
@@ -24,7 +32,7 @@ export async function PeopleList({
   basePath,
   title,
   removable = false,
-  steps = 1,
+  sequence,
   emptyText = "No contacts yet.",
 }: {
   scope: PeopleScope;
@@ -34,18 +42,21 @@ export async function PeopleList({
   title: string;
   /** A campaign's Contacts tab: contacts not yet with the sender can be ticked, or matched by the filters, and removed. */
   removable?: boolean;
-  /** Emails in the campaign's sequence, to show how far each person has got. */
-  steps?: number;
+  /** A campaign's sequence, to show how far each person has got through it. */
+  sequence?: Sequence;
   emptyText?: string;
 }) {
   const filters = readFilters(sp);
   const sort = readSort(sp);
   const page = Math.max(1, Math.floor(Number(sp.page)) || 1);
-  const [facets, list, client] = await Promise.all([
+  const [facets, list, client, tagging] = await Promise.all([
     peopleFacets(scope, filters),
     listPeople(scope, filters, sort, page, PAGE),
     requireClient(scope.clientId),
+    portalTagStatus(scope.clientId),
   ]);
+  if (tagging.queued > 0) after(runPortalTagging); // keep the portal tagging going while someone is watching
+  const portal = Boolean(client.ghl_location_id && client.ghl_token);
   const elsewhere: Map<string, OtherCampaign[]> = scope.campaignId
     ? await otherCampaigns(scope.clientId, scope.campaignId, list.rows.map((r) => r.email))
     : new Map();
@@ -142,18 +153,22 @@ export async function PeopleList({
                 <td className={`px-3 py-2 text-xs font-medium ${check?.tone ?? "text-muted"}`}>{check?.label ?? r.check_key}</td>
                 <td className={`px-3 py-2 text-xs ${r.gateway ? "font-medium text-wait" : "text-muted"}`}>{hostLabel(r.host)}</td>
                 <td className="px-3 py-2 text-xs">
+                  {sequence && sequence.steps > 1 && r.handed && <SequenceProgress p={r} seq={sequence} />}
                   {r.emailed ? (
                     <>
                       <div>{dateTime(r.first_sent) || "Yes"}</div>
                       {r.sender && <div className="break-all text-muted">from {r.sender}</div>}
-                      {steps > 1 && <div className="text-muted">{n(r.steps_sent)} of {steps} emails</div>}
+                      {!sequence && r.steps_sent > 1 && <div className="text-muted">{n(r.steps_sent)} emails</div>}
                     </>
                   ) : (
-                    <span className="text-muted">–</span>
+                    !(sequence && sequence.steps > 1 && r.handed) && <span className="text-muted">–</span>
                   )}
                 </td>
                 {!scope.campaignId && <td className="px-3 py-2 text-xs">{r.campaign}</td>}
-                <td className="px-3 py-2 text-xs text-muted">{sourceLabel(r.source)}</td>
+                <td className="px-3 py-2 text-xs text-muted">
+                  <div>{sourceLabel(r.source)}</div>
+                  {r.added_tags && <div className="text-ink">Tagged {r.added_tags}</div>}
+                </td>
               </tr>
             );
           })}
@@ -173,6 +188,46 @@ export async function PeopleList({
         )}
       </div>
       {note && <p className="text-xs text-muted">{note}</p>}
+      {portal && list.total > 0 && (
+        <form
+          action={tagMatching.bind(null, scope.clientId, scope.campaignId, new URLSearchParams(values).toString())}
+          className="flex flex-wrap items-center gap-2 text-xs"
+        >
+          <label htmlFor="portal-tag" className="text-muted">
+            Tag {active ? "these" : "all"} {n(list.total)} in the {PORTAL}:
+          </label>
+          <input
+            id="portal-tag"
+            name="tag"
+            list="portal-tag-names"
+            required
+            maxLength={100}
+            placeholder="e.g. webinar invite"
+            className="field"
+            style={{ width: "13rem" }}
+          />
+          <datalist id="portal-tag-names">
+            {(facets.find((f) => f.key === "tag")?.options ?? []).map((o) => <option key={o.value} value={o.value} />)}
+          </datalist>
+          <ConfirmButton
+            className="btn text-xs"
+            message={`Add this tag to ${n(list.total)} contacts in the ${PORTAL}${active ? ` (${describeFilters(filters)})` : ""}? Contacts not in the portal yet are added to it first. Tagging never removes anything.`}
+          >
+            Add tag
+          </ConfirmButton>
+        </form>
+      )}
+      <AutoRefresh active={tagging.queued > 0} everyMs={5000} />
+      {tagging.queued > 0 && <p className="text-xs text-info">Tagging {n(tagging.queued)} contacts in the {PORTAL}…</p>}
+      {tagging.failed > 0 && (
+        <form action={retryTagging.bind(null, scope.clientId)} className="flex flex-wrap items-center gap-2 text-xs text-bad">
+          <span>
+            {n(tagging.failed)} contacts couldn&apos;t be tagged in the {PORTAL}
+            {tagging.lastError ? `: ${tagging.lastError}` : ""}.
+          </span>
+          <SubmitButton className="btn text-xs" pendingLabel="Retrying…">Try again</SubmitButton>
+        </form>
+      )}
 
       <PeopleFilters
         basePath={basePath}
@@ -221,6 +276,53 @@ export async function PeopleList({
           )}
         </div>
       </PeopleFilters>
+    </div>
+  );
+}
+
+/** One dot per email in the sequence (sent, next, not yet, on hold), and when the next one is due. */
+function SequenceProgress({ p, seq }: { p: Person; seq: Sequence }) {
+  const sent = new Set(p.sent_steps ?? []);
+  const stopped = p.bounced || p.unsubscribed || p.instantly_status === -3;
+  // "Completed" in Instantly only means finished when there's no hold still to come.
+  const done = Boolean(p.replied_at) || stopped || (p.instantly_status === 3 && seq.live >= seq.steps);
+  const next = done ? null : (Array.from({ length: seq.live }, (_, i) => i + 1).find((s) => !sent.has(s)) ?? null);
+  const onHold = !done && next === null && seq.live < seq.steps;
+  const name = (s: number) => (s === 1 ? "Email 1" : `Follow-up ${s}`);
+  const due =
+    next && next > 1 && p.last_sent
+      ? `due ~${dateTime(new Date(toDate(p.last_sent).getTime() + (seq.delays[next - 2] ?? 0) * 86400_000).toISOString())}`
+      : next === 1
+        ? "queued"
+        : "";
+  return (
+    <div className="mb-1 flex flex-col gap-0.5">
+      <div className="flex items-center gap-1">
+        {Array.from({ length: seq.steps }, (_, i) => i + 1).map((s) => (
+          <span
+            key={s}
+            title={`${name(s)}: ${sent.has(s) ? "sent" : s === next ? "next" : s > seq.live ? "on hold" : "not sent"}`}
+            className={`flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-medium ${
+              sent.has(s)
+                ? "bg-go text-white"
+                : s === next
+                  ? "border-2 border-go text-go"
+                  : s > seq.live
+                    ? "border border-dashed border-wait text-wait"
+                    : "border border-line text-muted"
+            }`}
+          >
+            {s}
+          </span>
+        ))}
+      </div>
+      {onHold ? (
+        <div className="text-wait">On hold after email {seq.live}</div>
+      ) : next ? (
+        <div className="text-muted">Next: {name(next)} {due}</div>
+      ) : done && !p.replied_at && !stopped ? (
+        <div className="text-muted">Sequence finished</div>
+      ) : null}
     </div>
   );
 }
