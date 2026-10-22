@@ -1,3 +1,4 @@
+import Link from "next/link";
 import type { Headline, StepRow } from "@/lib/report";
 import { pct } from "@/lib/format";
 
@@ -126,6 +127,32 @@ export function FunnelBars({ h }: { h: Headline }) {
         </div>
       ))}
       <p className="text-xs text-muted">Percentages are of leads contacted.</p>
+    </div>
+  );
+}
+
+/** Ordered stages (emailed → opened → replied…) as bars against the largest; each row opens the people at that stage. */
+export function StageBars({ stages }: { stages: { label: string; n: number; href: string; note?: string }[] }) {
+  const max = Math.max(1, ...stages.map((s) => s.n));
+  return (
+    <div className="flex flex-col gap-0.5">
+      {stages.map((s) => (
+        <Link
+          key={s.label}
+          href={s.href}
+          className="grid grid-cols-[120px_1fr_100px] items-center gap-3 rounded px-1 py-1.5 text-sm hover:bg-paper sm:grid-cols-[140px_1fr_120px]"
+          title={`${s.label}: ${s.n.toLocaleString("en-GB")}${s.note ? ` (${s.note})` : ""}. Click to see them.`}
+        >
+          <span className="text-muted">{s.label}</span>
+          <div className="h-4 rounded-r bg-paper">
+            <div className="h-4 rounded-r" style={{ width: `${s.n ? Math.max(1.5, (s.n / max) * 100) : 0}%`, background: BLUE }} />
+          </div>
+          <span className="num text-right text-ink">
+            {s.n.toLocaleString("en-GB")}
+            {s.note && <span className="ml-1 text-xs text-muted">{s.note}</span>}
+          </span>
+        </Link>
+      ))}
     </div>
   );
 }

@@ -9,13 +9,12 @@ import { requireCampaign } from "@/lib/campaigns";
 import { importLeads, logImport, type LeadFields, type ImportResult } from "@/lib/leads";
 import { addImports } from "@/lib/importResult";
 import { contactsWithTagPage, listTags } from "@/lib/ghl";
-import { portalCheck } from "@/lib/checkTags";
 import { runWriter, rewriteStep } from "@/lib/writer";
 import { pushApproved, pullBackHeld } from "@/lib/push";
 import { NO_PUSH, addPushes } from "@/lib/pushResult";
-import { CONTACT_GROUPS } from "@/lib/stages";
+import { describeFilters, readFilters, removableIds } from "@/lib/people";
 import { detectMailDomains, GATEWAY_LABEL, type Gateway } from "@/lib/mailhost";
-import { linkPendingLeads } from "@/lib/ghlsync";
+import { jobTitleField, linkPendingLeads, portalLead } from "@/lib/ghlsync";
 import { queueVerification, runVerifier, PASSED } from "@/lib/verify";
 import { queueTagging, queueDeletion, runVerificationActions, writeVerificationSummary, GHL_TAGS, OUTCOME_LABEL, PORTAL, type Outcome } from "@/lib/verifyReport";
 import { approveAndSend, type BatchGroup } from "@/lib/progress";
@@ -89,22 +88,8 @@ export async function ghlContactsPage(clientId: number, tag: string, page: numbe
   if (!c.ghl_location_id || !c.ghl_token) return { leads: [], total: 0, error: "Nexus Portal not set up" };
   try {
     const { contacts, total } = await contactsWithTagPage({ locationId: c.ghl_location_id, token: c.ghl_token }, tag, page);
-    const leads: LeadFields[] = contacts.map((ct) => ({
-      email: ct.email ?? "",
-      first_name: ct.firstNameRaw ?? ct.firstName ?? null,
-      last_name: ct.lastNameRaw ?? ct.lastName ?? null,
-      company: ct.companyName ?? null,
-      phone: ct.phone ?? null,
-      website: ct.website ?? null,
-      ghl_contact_id: ct.id,
-      check: portalCheck(ct.tags),
-      fields: Object.fromEntries(
-        Object.entries(ct).filter(
-          ([k, v]) => typeof v === "string" && v && ["city", "state", "country", "source", "address1"].includes(k),
-        ) as [string, string][],
-      ),
-    }));
-    return { leads, total };
+    const titleField = await jobTitleField(c);
+    return { leads: contacts.map((ct) => portalLead(ct, titleField)), total };
   } catch (e) {
     return { leads: [], total: 0, error: (e as Error).message };
   }
@@ -288,17 +273,20 @@ export async function removeSelected(campaignId: number, form: FormData) {
   revalidatePath("/", "layout");
 }
 
-/** Remove every not-yet-sent contact in one list group (e.g. all invalid ones) from a campaign. */
-export async function removeGroup(campaignId: number, groupKey: string) {
+/** Remove every not-yet-sent contact the contacts list's current filters match (e.g. all invalid ones) from a campaign. */
+export async function removeMatching(campaignId: number, query: string) {
   const c = await requireCampaign(campaignId);
   await requireClientAccess(c.client_id);
-  const group = CONTACT_GROUPS.find((g) => g.key === groupKey);
-  if (!group) throw new Error("Unknown group");
+  const filters = readFilters(new URLSearchParams(query));
+  if (Object.keys(filters).length === 0) throw new Error("Pick a filter first, so only the contacts you mean are removed.");
+  const ids = await removableIds({ clientId: c.client_id, campaignId }, filters);
+  if (ids.length === 0) return;
+  const which = describeFilters(filters);
   const n = (await run(
-    `UPDATE leads SET stage = 'removed', stage_message = ? WHERE campaign_id = ? AND ${REMOVABLE} AND ${group.where}`,
-    `Removed from the campaign (${group.label.toLowerCase()})`, campaignId,
+    `UPDATE leads SET stage = 'removed', stage_message = ? WHERE campaign_id = ? AND ${REMOVABLE} AND id = ANY(?)`,
+    `Removed from the campaign (${which})`, campaignId, ids,
   )).changes;
-  if (n) await logActivity(c.client_id, "import", `Removed ${n} "${group.label}" contacts from "${c.name}"`);
+  if (n) await logActivity(c.client_id, "import", `Removed ${n} contacts from "${c.name}" (${which})`);
   revalidatePath("/", "layout");
 }
 

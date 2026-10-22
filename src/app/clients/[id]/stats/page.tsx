@@ -1,13 +1,15 @@
 import { requireClientAccess } from "@/lib/auth";
 import { getClient } from "@/lib/clients";
 import Link from "next/link";
-import { buildReport, leadList, LEAD_FILTERS, RANGES } from "@/lib/report";
+import { buildReport, RANGES } from "@/lib/report";
 import { requireClient } from "@/lib/clients";
-import { ago, dateTime, pct } from "@/lib/format";
+import { ago, pct } from "@/lib/format";
 import { ACCOUNT_STATUS } from "@/lib/instantly";
-import { INTEREST_LABELS } from "@/lib/triage";
+import { breakdown, DIMENSIONS, nonPeopleParams, peopleHref, totals, type Dimension } from "@/lib/people";
 import { TrendChart } from "@/components/stats/TrendChart";
 import { FunnelBars, HBars, HeadlineTiles, ReplyHeatmap, StepPerformance } from "@/components/stats/Parts";
+import { Breakdown } from "@/components/Breakdown";
+import { PeopleList } from "@/components/PeopleList";
 
 function Section({ title, note, children, className = "" }: { title: string; note?: string; children: React.ReactNode; className?: string }) {
   return (
@@ -32,15 +34,17 @@ export default async function StatsPage({ params, searchParams }: PageProps<"/cl
   const sp = await searchParams;
   const rangeKey = typeof sp.range === "string" ? sp.range : "30d";
   const campaignId = Number(sp.campaign) || null;
-  const leadFilter = typeof sp.leads === "string" ? sp.leads : "interested_no_meeting";
+  const dim: Dimension = DIMENSIONS.find((d) => d.key === sp.by)?.key ?? "host";
   const client = await requireClient(clientId);
   const r = await buildReport(clientId, rangeKey, campaignId);
-  const leads = await leadList({ clientId, campaignId }, leadFilter);
+  // The breakdown follows the date range: people first emailed in it, and what has happened to them since.
+  const emailedInRange = { from: r.range.from, to: r.range.to };
+  const rows = await breakdown({ clientId, campaignId }, dim, emailedInRange);
   const rules = { bounce: 0.03 };
 
   const href = (patch: Record<string, string | number | null>) => {
     const q = new URLSearchParams();
-    const next = { range: r.range.key, campaign: campaignId, leads: leadFilter, ...patch };
+    const next = { range: r.range.key, campaign: campaignId, by: dim === "host" ? null : dim, ...patch };
     for (const [k, v] of Object.entries(next)) if (v) q.set(k, String(v));
     return `/clients/${clientId}/stats?${q}`;
   };
@@ -138,56 +142,31 @@ export default async function StatsPage({ params, searchParams }: PageProps<"/cl
       </Section>
 
       <Section
-        title="Leads"
-        note="Everyone emailed from this console so far (not limited to the date range). Campaigns built directly in Instantly don't list individual leads here."
+        title="Who responds"
+        note={`People first emailed ${fmtRange(r.range.from, r.range.to)}, and what has happened to them since. Click a row to list them below.`}
       >
-        <div className="flex flex-wrap gap-1.5">
-          {LEAD_FILTERS.map((f) => (
-            <Link key={f.key} href={href({ leads: f.key })} className={chip(leadFilter === f.key)} scroll={false}>{f.label}</Link>
-          ))}
-        </div>
-        <table className="w-full text-sm [&_td]:px-2 [&_th]:px-2 [&_td:first-child]:pl-0 [&_th:first-child]:pl-0">
-          <thead className="text-left text-xs uppercase tracking-wide text-muted">
-            <tr>
-              <th className="py-1.5 font-medium">Lead</th>
-              <th className="font-medium">Campaign</th>
-              <th className="text-right font-medium">Emails sent</th>
-              <th className="font-medium">Last email</th>
-              <th className="font-medium">Reply</th>
-              <th className="font-medium">Meeting</th>
-            </tr>
-          </thead>
-          <tbody>
-            {leads.length === 0 && (
-              <tr><td colSpan={6} className="py-3 text-muted">No leads match.</td></tr>
-            )}
-            {leads.slice(0, 300).map((l) => (
-              <tr key={l.id} className="border-t border-line">
-                <td className="py-1.5">
-                  <div className="font-medium">{l.name}</div>
-                  <div className="text-xs text-muted">{l.company ?? l.email}</div>
-                </td>
-                <td className="text-xs">{l.campaign}</td>
-                <td className="num text-right">{l.steps_sent}</td>
-                <td className="text-xs text-muted">{dateTime(l.last_sent)}</td>
-                <td className="text-xs">
-                  {l.replied_at ? (
-                    <Link href={`/clients/${clientId}/replies?f=all`} className="hover:underline">
-                      {INTEREST_LABELS[l.interest ?? "other"] ?? "Replied"} · {dateTime(l.replied_at)}
-                    </Link>
-                  ) : [-1, -2].includes(l.status ?? 0) ? (
-                    <span className="text-bad">{l.status === -1 ? "Bounced" : "Unsubscribed"}</span>
-                  ) : (
-                    <span className="text-muted">–</span>
-                  )}
-                </td>
-                <td className="text-xs">{l.meeting_at ? <span className="text-go">✓ {dateTime(l.meeting_at)}</span> : <span className="text-muted">–</span>}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-        {leads.length > 300 && <p className="text-xs text-muted">Showing the first 300 of {leads.length}.</p>}
+        <Breakdown
+          dim={dim}
+          rows={rows}
+          total={totals(rows)}
+          dimHref={(d) => href({ by: d === "host" ? null : d })}
+          people={(f) => peopleHref(`/clients/${clientId}/stats`, nonPeopleParams(sp), { ...emailedInRange, ...f })}
+          exportHref={`/clients/${clientId}/people/export?${new URLSearchParams({ by: dim, ...emailedInRange, ...(campaignId ? { campaign: String(campaignId) } : {}) })}`}
+        />
       </Section>
+
+      <section id="people" className="flex scroll-mt-16 flex-col gap-2">
+        <PeopleList
+          scope={{ clientId, campaignId }}
+          sp={sp}
+          basePath={`/clients/${clientId}/stats`}
+          title={campaignId ? "People in this campaign" : "People in all campaigns"}
+        />
+        <p className="text-xs text-muted">
+          Everyone added from this console, whatever the date range above; set the Emailed dates to narrow it. Campaigns built directly in
+          Instantly don&apos;t list individual people here.
+        </p>
+      </section>
 
       <p className="text-xs text-muted">
         Opens: {r.now.opened.toLocaleString("en-GB")} unique opens ({pct(r.now.opened, r.now.sent)} of emails sent). Treat these loosely: Apple Mail

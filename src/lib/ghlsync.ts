@@ -1,8 +1,10 @@
 import "server-only";
-import { all, get, run, logActivity } from "./db";
+import { all, get, run, logActivity, getSetting, setSetting } from "./db";
 import type { Client } from "./clients";
-import { addNote, contactsWithTag, emailDnd, getContact, logEmail, upsertContact, type GhlContact, type GhlCreds } from "./ghl";
-import { importLeads, type LeadRow } from "./leads";
+import {
+  addNote, contactsWithTag, emailDnd, getContact, listCustomFields, logEmail, upsertContact, type GhlContact, type GhlCreds, type GhlCustomField,
+} from "./ghl";
+import { importLeads, type LeadFields, type LeadRow } from "./leads";
 import { portalCheck } from "./checkTags";
 import { toHtml } from "./merge";
 
@@ -14,6 +16,88 @@ import { toHtml } from "./merge";
 
 export function ghlCreds(client: Client): GhlCreds | null {
   return client.ghl_location_id && client.ghl_token ? { locationId: client.ghl_location_id, token: client.ghl_token } : null;
+}
+
+// ---------- Job titles ----------
+
+// The portal has no standard job title; agencies add a custom field for it. Found by name, best match first.
+const TITLE_FIELD = [/^job\s*title$/i, /job\s*title/i, /^(title|position|role|job role|job)$/i];
+const titleFields = new Map<number, { at: number; field: GhlCustomField | null }>();
+
+/**
+ * The client's portal field that holds job titles, or null. Remembered for ten minutes (an import asks once per
+ * page of contacts), and what was found is saved so the contacts list can say where titles come from.
+ */
+export async function jobTitleField(client: Client): Promise<GhlCustomField | null> {
+  const creds = ghlCreds(client);
+  if (!creds) return null;
+  const cached = titleFields.get(client.id);
+  if (cached && Date.now() - cached.at < 10 * 60_000) return cached.field;
+  let field: GhlCustomField | null = null;
+  try {
+    const fields = (await listCustomFields(creds)).filter((f) => !f.model || f.model === "contact");
+    const keyName = (f: GhlCustomField) => (f.fieldKey ?? "").replace(/^contact\./, "").replace(/_/g, " ");
+    field = TITLE_FIELD.map((re) => fields.find((f) => re.test(f.name) || re.test(keyName(f)))).find(Boolean) ?? null;
+    await setSetting(`ghl_title_field_${client.id}`, JSON.stringify(field ? { name: field.name } : { none: true }));
+  } catch (e) {
+    await setSetting(`ghl_title_field_${client.id}`, JSON.stringify({ error: (e as Error).message }));
+  }
+  titleFields.set(client.id, { at: Date.now(), field });
+  return field;
+}
+
+function contactTitle(ct: GhlContact, field: GhlCustomField | null): string | null {
+  const custom = field ? ct.customFields?.find((f) => f.id === field.id)?.value : undefined;
+  const title = [custom, ct.jobTitle, ct.title].find((v) => typeof v === "string" && v.trim());
+  return typeof title === "string" ? title.trim() : null;
+}
+
+/** A portal contact as a lead to import. */
+export function portalLead(ct: GhlContact, titleField: GhlCustomField | null): LeadFields {
+  return {
+    email: String(ct.email ?? ""),
+    first_name: ct.firstNameRaw ?? ct.firstName ?? null,
+    last_name: ct.lastNameRaw ?? ct.lastName ?? null,
+    company: ct.companyName ?? null,
+    title: contactTitle(ct, titleField),
+    phone: ct.phone ?? null,
+    website: ct.website ?? null,
+    ghl_contact_id: ct.id,
+    check: portalCheck(ct.tags),
+    fields: Object.fromEntries(
+      Object.entries(ct).filter(([k, v]) => typeof v === "string" && v && ["city", "state", "country", "source", "address1"].includes(k)) as [string, string][],
+    ),
+  };
+}
+
+/**
+ * Job titles for portal contacts imported before titles were read: one pass over each portal tag they came from.
+ * At most once a day per client, so contacts that really have no title don't cost a pass every sync.
+ */
+export async function fillJobTitles(client: Client) {
+  const creds = ghlCreds(client);
+  if (!creds) return;
+  const key = `titles_filled_${client.id}`;
+  const last = await getSetting(key, "");
+  if (last && Date.now() - Date.parse(last) < 86400_000) return;
+  const tags = (await all<{ tag: string }>(
+    `SELECT DISTINCT substr(source_ref, 6) tag FROM leads
+     WHERE client_id = ? AND source = 'ghl' AND title IS NULL AND ghl_contact_id IS NOT NULL AND source_ref LIKE 'tag: %'`,
+    client.id,
+  )).map((r) => r.tag);
+  const field = tags.length ? await jobTitleField(client) : null;
+  let filled = 0;
+  for (const tag of field ? tags : []) {
+    const rows = (await contactsWithTag(creds, tag)).map((ct) => ({ id: ct.id, title: contactTitle(ct, field) })).filter((r) => r.title);
+    if (rows.length === 0) continue;
+    filled += (await run(
+      `UPDATE leads l SET title = x.title FROM jsonb_to_recordset(?::jsonb) AS x(id text, title text)
+       WHERE l.client_id = ? AND l.ghl_contact_id = x.id AND l.title IS NULL`,
+      JSON.stringify(rows), client.id,
+    )).changes;
+  }
+  if (filled) await logActivity(client.id, "ghl", `Filled in ${filled} job titles from the Nexus Portal field "${field!.name}"`);
+  await setSetting(key, new Date().toISOString());
 }
 
 /** Create or match the lead's GHL contact. Returns the contact id. */
@@ -71,9 +155,9 @@ export async function refreshFromGhl(client: Client, lead: LeadRow): Promise<boo
   }
   await run(
     `UPDATE leads SET first_name = COALESCE(?, first_name), last_name = COALESCE(?, last_name), company = COALESCE(?, company),
-       phone = COALESCE(?, phone), website = COALESCE(?, website), ghl_synced_at = datetime('now') WHERE id = ?`,
-    c.firstNameRaw ?? c.firstName ?? null, c.lastNameRaw ?? c.lastName ?? null, c.companyName ?? null, c.phone ?? null,
-    c.website ?? null, lead.id,
+       title = COALESCE(?, title), phone = COALESCE(?, phone), website = COALESCE(?, website), ghl_synced_at = datetime('now') WHERE id = ?`,
+    c.firstNameRaw ?? c.firstName ?? null, c.lastNameRaw ?? c.lastName ?? null, c.companyName ?? null,
+    contactTitle(c, await jobTitleField(client)), c.phone ?? null, c.website ?? null, lead.id,
   );
   return true;
 }
@@ -87,6 +171,7 @@ export async function pullTaggedContacts(client: Client): Promise<number> {
     client.id,
   );
   let total = 0;
+  const titleField = campaigns.length ? await jobTitleField(client) : null;
   for (const c of campaigns) {
     const contacts: GhlContact[] = (await contactsWithTag(creds, c.ghl_tag)).filter((x) => x.email && !emailDnd(x));
     // Only contacts not yet in this campaign. importLeads turns away anyone who replied, bounced or unsubscribed
@@ -102,16 +187,7 @@ export async function pullTaggedContacts(client: Client): Promise<number> {
       c.id,
       "ghl",
       `tag: ${c.ghl_tag}`,
-      fresh.map((x) => ({
-        email: String(x.email),
-        first_name: x.firstNameRaw ?? x.firstName ?? null,
-        last_name: x.lastNameRaw ?? x.lastName ?? null,
-        company: x.companyName ?? null,
-        phone: x.phone ?? null,
-        website: x.website ?? null,
-        ghl_contact_id: x.id,
-        check: portalCheck(x.tags),
-      })),
+      fresh.map((x) => portalLead(x, titleField)),
       false, // contacts waiting on another campaign come round on every sync; only real joins are logged, below
     );
     await run(

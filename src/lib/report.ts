@@ -24,9 +24,14 @@ const iso = (d: Date) => d.toISOString().slice(0, 10);
 
 export function rangeFor(key: string | undefined, now = new Date()): Range {
   const r = RANGES.find((x) => x.key === key) ?? RANGES[1];
+  return { ...lastDays(r.days, now), key: r.key, label: r.label };
+}
+
+/** The last `days` days up to today, for a chart that picks its own span (a campaign's life so far). */
+export function lastDays(days: number, now = new Date()): Range {
   const to = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
-  const from = new Date(to.getTime() - (r.days - 1) * 86400_000);
-  return { from: iso(from), to: iso(to), days: r.days, key: r.key, label: r.label };
+  const from = new Date(to.getTime() - (days - 1) * 86400_000);
+  return { from: iso(from), to: iso(to), days, key: `${days}d`, label: `Last ${days} days` };
 }
 
 function previous(r: Range): Range {
@@ -85,7 +90,7 @@ async function headline(s: Scope, r: Range): Promise<Headline> {
 
 export type Day = { date: string; sent: number; replied: number; positive: number };
 
-async function daily(s: Scope, r: Range): Promise<Day[]> {
+export async function daily(s: Scope, r: Range): Promise<Day[]> {
   const p = { clientId: s.clientId, campaignId: s.campaignId ?? 0, from: r.from, to: r.to, toEnd: `${r.to}T23:59:59.999Z` };
   const base = new Map(
     (await all<{ date: string; sent: number; replied: number }>(
@@ -183,54 +188,6 @@ async function replyTimes(s: Scope, r: Range): Promise<number[][]> {
     if (wd !== undefined && Number.isFinite(hr)) grid[wd][hr]++;
   }
   return grid;
-}
-
-export type LeadRow = {
-  id: number;
-  name: string;
-  email: string;
-  company: string | null;
-  campaign: string;
-  steps_sent: number;
-  last_sent: string | null;
-  replied_at: string | null;
-  interest: string | null;
-  meeting_at: string | null;
-  status: number | null;
-};
-
-export const LEAD_FILTERS = [
-  { key: "all", label: "Everyone contacted" },
-  { key: "interested_no_meeting", label: "Interested, no meeting yet" },
-  { key: "meeting", label: "Meeting booked" },
-  { key: "replied", label: "Replied" },
-  { key: "no_reply", label: "No reply yet" },
-  { key: "bounced", label: "Bounced / unsubscribed" },
-] as const;
-
-export async function leadList(s: Scope, filter: string): Promise<LeadRow[]> {
-  const rows = (await all<LeadRow & { first_name: string | null; last_name: string | null }>(
-    // Wrapped so the ORDER BY can use the computed columns (Postgres won't use aliases inside expressions).
-    `SELECT * FROM (SELECT l.id, l.first_name, l.last_name, l.email, l.company, c.name campaign, l.instantly_status status, l.pushed_at,
-       (SELECT COUNT(DISTINCT e.step) FROM emails e WHERE e.lead_id = l.id AND e.direction = 'out') steps_sent,
-       (SELECT MAX(e.sent_at) FROM emails e WHERE e.lead_id = l.id AND e.direction = 'out') last_sent,
-       (SELECT MIN(e.sent_at) FROM emails e WHERE e.lead_id = l.id AND e.direction = 'in') replied_at,
-       (SELECT e.interest FROM emails e WHERE e.lead_id = l.id AND e.direction = 'in' ORDER BY e.sent_at DESC LIMIT 1) interest,
-       (SELECT MIN(m.booked_at) FROM meetings m WHERE m.lead_id = l.id) meeting_at
-     FROM leads l JOIN campaigns c ON c.id = l.campaign_id
-     WHERE l.client_id = @clientId ${camp(s, "l.campaign_id")} AND l.instantly_lead_id IS NOT NULL) x
-     ORDER BY COALESCE(meeting_at, replied_at, last_sent, pushed_at) DESC LIMIT 1000`,
-    { clientId: s.clientId, campaignId: s.campaignId ?? 0 },
-  )).map((l) => ({ ...l, name: [l.first_name, l.last_name].filter(Boolean).join(" ") || l.email }));
-  const keep: Record<string, (l: LeadRow) => boolean> = {
-    all: () => true,
-    interested_no_meeting: (l) => l.interest === "interested" && !l.meeting_at,
-    meeting: (l) => !!l.meeting_at,
-    replied: (l) => !!l.replied_at,
-    no_reply: (l) => !l.replied_at && !l.meeting_at && ![-1, -2].includes(l.status ?? 0),
-    bounced: (l) => [-1, -2].includes(l.status ?? 0) || l.interest === "unsubscribe",
-  };
-  return rows.filter(keep[filter] ?? keep.all);
 }
 
 export type MeetingRow = { name: string; company: string | null; campaign: string; booked_at: string; starts_at: string | null; source: string };

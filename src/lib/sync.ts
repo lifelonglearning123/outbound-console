@@ -9,7 +9,7 @@ import { runWriter } from "./writer";
 import { runVerifier } from "./verify";
 import { runVerificationActions } from "./verifyReport";
 import { syncMeetings } from "./meetings";
-import { linkPendingLeads, logEmailsToGhl, noteCampaignsInGhl, pullTaggedContacts } from "./ghlsync";
+import { fillJobTitles, linkPendingLeads, logEmailsToGhl, noteCampaignsInGhl, pullTaggedContacts } from "./ghlsync";
 import { detectMailDomains } from "./mailhost";
 import { sendWaiting } from "./push";
 
@@ -324,6 +324,7 @@ export async function syncClient(clientId: number): Promise<{ ok: boolean; messa
     ["ghl tags", async () => {
       if (await pullTaggedContacts(client)) void await runWriter();
     }],
+    ["ghl job titles", () => fillJobTitles(client)],
     ["ghl conversations", () => logEmailsToGhl(client)],
     ["ghl campaign notes", () => noteCampaignsInGhl(client)],
     ["mail servers", () => detectMailDomains()],

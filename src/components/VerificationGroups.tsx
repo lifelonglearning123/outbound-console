@@ -145,7 +145,7 @@ function GroupCard({
       ) : null}
       {campaignId && count > 0 && outcome !== "verified" && (
         // Campaign-level actions (remove from this campaign) live on the list below, filtered to this group.
-        <a href={`?group=${outcome}#all-contacts`} className="text-sm underline">
+        <a href={`?check=${outcome}#people`} className="text-sm underline">
           {outcome === "invalid" ? "Already set aside, never emailed. See them or remove them from this campaign" : "See them, or remove them from this campaign"} →
         </a>
       )}

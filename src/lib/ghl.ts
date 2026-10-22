@@ -69,6 +69,14 @@ export type GhlContact = {
   [k: string]: unknown;
 };
 
+export type GhlCustomField = { id: string; name: string; fieldKey?: string; model?: string };
+
+/** The location's custom fields. A job title lives in one of these (named by the agency), not on the contact itself. */
+export async function listCustomFields(creds: GhlCreds): Promise<GhlCustomField[]> {
+  const r = await ghl<{ customFields: GhlCustomField[] }>(creds, `/locations/${creds.locationId}/customFields`);
+  return r.customFields ?? [];
+}
+
 export const CONTACTS_PAGE = 100;
 
 /** One page (1-based) of the contacts carrying `tag`, with the total across all pages. */
