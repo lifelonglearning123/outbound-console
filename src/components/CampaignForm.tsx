@@ -19,8 +19,13 @@ type Props = {
   dailyLimit: number;
   accounts: string[];
   stopOnReply: boolean;
-  /** `note` says in a few words why an unhealthy mailbox is out ("paused: too many bounces"); `reason` is the detail. */
-  mailboxes: { email: string; healthy: boolean; note: string; reason: string | null }[];
+  /**
+   * `note` says in a few words why a mailbox is out or how ready it is ("resting: back in about 2 days", "warming up,
+   * day 9…"); `reason` is the detail. `provider` is who hosts it, for ESP matching.
+   */
+  mailboxes: { email: string; healthy: boolean; ready: boolean; note: string; reason: string | null; provider: "google" | "microsoft" | "other" | null }[];
+  /** Instantly's ESP matching for this campaign. */
+  matchEsp?: boolean;
   managed: boolean;
   submitLabel: string;
   holdAfter: number | null;
@@ -39,6 +44,11 @@ export function CampaignForm(p: Props) {
   // uid keeps each step's editor attached to the right step when steps are removed.
   const [steps, setSteps] = useState<(Step & { uid: number })[]>(() => p.steps.map((s, i) => ({ ...s, uid: i })));
   const [hold, setHold] = useState<number>(p.holdAfter ?? 0);
+  // Which mailboxes are ticked, to warn about ones that aren't ready and to judge ESP matching.
+  const [chosen, setChosen] = useState<string[]>(p.accounts);
+  const notReady = p.mailboxes.filter((m) => chosen.includes(m.email) && (!m.healthy || !m.ready));
+  const providers = new Set(p.mailboxes.filter((m) => chosen.includes(m.email)).map((m) => m.provider ?? "other"));
+  const oneProvider = providers.size === 1 ? [...providers][0] : null;
   const effectiveHold = p.lockedLive ? (steps.length > p.lockedLive ? p.lockedLive : 0) : hold && hold < steps.length ? hold : 0;
   const update = (i: number, patch: Partial<Step>) => setSteps(steps.map((s, j) => (j === i ? { ...s, ...patch } : s)));
 
@@ -280,10 +290,16 @@ export function CampaignForm(p: Props) {
             <div className="grid grid-cols-2 gap-1">
               {p.mailboxes.map((m) => (
                 <label key={m.email} className="flex items-center gap-2 text-sm">
-                  <input type="checkbox" name="accounts" value={m.email} defaultChecked={p.accounts.includes(m.email)} />
+                  <input
+                    type="checkbox"
+                    name="accounts"
+                    value={m.email}
+                    defaultChecked={p.accounts.includes(m.email)}
+                    onChange={(e) => setChosen(e.target.checked ? [...chosen, m.email] : chosen.filter((x) => x !== m.email))}
+                  />
                   <span className="font-mono text-xs">{m.email}</span>
-                  {!m.healthy && (
-                    <span className={`text-xs ${m.note === "not connected" ? "text-bad" : "text-wait"}`} title={m.reason ?? undefined}>
+                  {m.note && (
+                    <span className={`text-xs ${m.note === "not connected" ? "text-bad" : m.healthy ? "text-info" : "text-wait"}`} title={m.reason ?? undefined}>
                       {m.note}
                     </span>
                   )}
@@ -291,6 +307,26 @@ export function CampaignForm(p: Props) {
               ))}
             </div>
           )}
+          {notReady.length > 0 && (
+            <p className="mt-2 text-xs text-wait">
+              Not ready to send yet: {notReady.map((m) => `${m.email} (${m.note || "not ready"})`).join(", ")}. Resting mailboxes join the campaign
+              by themselves once they&apos;re healthy; the others send as soon as Instantly can use them.
+            </p>
+          )}
+        </div>
+        <div>
+          <label className={`flex items-start gap-2 text-sm ${oneProvider && !p.matchEsp ? "text-muted" : ""}`}>
+            <input type="checkbox" name="match_esp" defaultChecked={p.matchEsp} className="mt-0.5" />
+            <span>
+              Pair like with like: Google mailboxes write to Google recipients, Microsoft to Microsoft (Instantly&apos;s ESP matching)
+              {oneProvider && (
+                <span className="block text-xs text-wait">
+                  Every mailbox chosen here is {oneProvider === "other" ? "the same kind" : oneProvider === "google" ? "Google" : "Microsoft"}, so turning this
+                  on would hold back every contact on a different provider. Leave it off unless you add mailboxes of the other kind.
+                </span>
+              )}
+            </span>
+          </label>
         </div>
       </section>
 

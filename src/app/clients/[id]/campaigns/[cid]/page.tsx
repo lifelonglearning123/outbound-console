@@ -14,6 +14,9 @@ import { daily, lastDays } from "@/lib/report";
 import { Breakdown } from "@/components/Breakdown";
 import { StageBars } from "@/components/stats/Parts";
 import { TrendChart } from "@/components/stats/TrendChart";
+import { SendingDiagnostics } from "@/components/SendingDiagnostics";
+import { mailboxHealth } from "@/lib/mailboxHealth";
+import type { SendingStatus } from "@/lib/instantly";
 
 const n = (v: number) => v.toLocaleString("en-GB");
 
@@ -72,6 +75,11 @@ export default async function CampaignSendingPage({ params, searchParams }: Page
             ? { href: `${base}/approve`, text: `${n(p.unconfirmed)} unconfirmed contacts could be sent in small batches.` }
             : null;
   const highBounce = t.emailed > 0 && t.bounced / t.emailed > 0.03;
+  let diag: SendingStatus | null = null;
+  try {
+    diag = c.sending_diag ? (JSON.parse(c.sending_diag) as SendingStatus) : null;
+  } catch {}
+  const boxes = (await mailboxHealth(clientId)).filter((m) => c.accounts.includes(m.email));
 
   return (
     <div className="flex flex-col gap-6">
@@ -86,6 +94,10 @@ export default async function CampaignSendingPage({ params, searchParams }: Page
         <div className="card border-wait/40 bg-wait-soft/40 p-4 text-sm">
           {n(p.sending)} contacts are approved and loaded, but sending hasn&apos;t been started. Use <strong>Start sending</strong> above.
         </div>
+      )}
+
+      {(c.status === "active" || diag) && (
+        <SendingDiagnostics diag={diag} at={c.sending_diag_at} boxes={boxes} mailboxesHref={`/clients/${clientId}/mailboxes`} />
       )}
 
       {hold && <HoldPanel campaignId={c.id} clientId={clientId} status={hold} stepProblems={stepProblems} />}

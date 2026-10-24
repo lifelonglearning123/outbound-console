@@ -1,17 +1,22 @@
 import { clientScope, requireUser } from "@/lib/auth";
 import { all } from "@/lib/db";
 import { dateTime } from "@/lib/format";
+import { UndoWhy } from "@/components/UndoWhy";
 
 const TONE: Record<string, string> = {
   error: "text-bad", auto_pause: "text-bad", unsubscribe: "text-bad",
   push: "text-go", ghl: "text-go", resume: "text-go", reply: "text-wait",
+  rest: "text-wait", return: "text-go", ramp: "text-info", domain: "text-wait", warmup: "text-go",
 };
 
 export const metadata = { title: "Activity" };
 
 export default async function ActivityPage() {
   const u = await requireUser();
-  const rows = await all<{ id: number; kind: string; message: string; at: string; client: string | null }>(
+  const rows = await all<{
+    id: number; kind: string; message: string; at: string; client: string | null; client_id: number | null;
+    subject: string | null; undo: string | null; undone_at: string | null;
+  }>(
     `SELECT a.*, c.name client FROM activity a LEFT JOIN clients c ON c.id = a.client_id
      WHERE TRUE ${clientScope(u, "a.client_id")} ORDER BY a.id DESC LIMIT 400`,
   );
@@ -19,7 +24,10 @@ export default async function ActivityPage() {
     <div className="flex flex-col gap-5">
       <header>
         <h1 className="text-2xl font-semibold tracking-tight">Activity</h1>
-        <p className="text-sm text-muted">Everything the console and the sync did, newest first.</p>
+        <p className="text-sm text-muted">
+          Everything the console and the sync did, newest first. Automatic actions on a mailbox or a company can be undone here, and
+          &ldquo;Why?&rdquo; opens the evidence.
+        </p>
       </header>
       <div className="card overflow-hidden">
         <table className="w-full text-sm">
@@ -31,6 +39,7 @@ export default async function ActivityPage() {
                 <td className="w-36 px-3 py-2 text-xs">{r.client ?? "—"}</td>
                 <td className={`w-24 px-3 py-2 text-xs font-medium ${TONE[r.kind] ?? "text-muted"}`}>{r.kind.replace("_", " ")}</td>
                 <td className="px-3 py-2">{r.message}</td>
+                <td className="px-3 py-2 text-right"><UndoWhy a={r} /></td>
               </tr>
             ))}
           </tbody>

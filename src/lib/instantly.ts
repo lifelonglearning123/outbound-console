@@ -194,6 +194,38 @@ export type Account = {
   warmup_status: number;
   stat_warmup_score: number | null;
   daily_limit: number | null;
+  provider_code?: number | null;
+  timestamp_warmup_start?: string | null;
+  status_message?: { code?: string; command?: string; response?: string; e_message?: string; responseCode?: number } | null;
+};
+
+/** POST /accounts/warmup-analytics: per mailbox and day (only days with warmup activity), plus a recent total. */
+export type WarmupAnalytics = {
+  email_date_data?: Record<string, Record<string, { sent?: number; landed_inbox?: number; landed_spam?: number; received?: number }>>;
+  aggregate_data?: Record<string, { sent?: number; received?: number; landed_inbox?: number; landed_spam?: number; health_score?: number }>;
+};
+
+/** POST /accounts/test/vitals: DNS records per sending domain. */
+export type DomainVitals = { domain: string; allPass: boolean; mx: boolean; spf: boolean; dkim: boolean; dmarc: boolean; indeterminate?: string[] };
+
+/** GET /campaigns/{id}/sending-status (docs/instantly-api.md). Most of `diagnostics` is missing outside sending hours. */
+export type SendingStatus = {
+  summary: { status: string; status_message: string; issue_started_at?: string | null; last_healthy_send_at?: string | null } | null;
+  diagnostics: {
+    status?: string;
+    last_updated?: string;
+    issue_tracking?: { current_status_code?: string; issue_first_seen_at?: string | null; last_healthy_send_at?: string | null };
+    accounts_summary?: {
+      total_connected?: number; available?: number;
+      unavailable?: { daily_limit_hit?: number; slow_ramp_limit_hit?: number; disconnected?: number; global_gap_not_met?: number };
+    };
+    campaign_daily_limit?: { limit?: number | null; sent?: number; limit_hit?: boolean };
+    schedule_status?: { in_schedule?: boolean };
+    follow_ups_waiting?: { count?: number; earliest_wait_time_seconds?: number | null };
+    leads_status?: { no_leads_ready?: boolean; account_unavailable_skips?: number; delay_not_met_skips?: number };
+    esp_routing_status?: { enabled?: boolean; waiting_for_match?: boolean };
+    domain_limiter?: { active?: boolean; domains_at_limit?: number };
+  } | null;
 };
 
 export type Email = {
@@ -291,12 +323,7 @@ export function instantly(key: string) {
     pause: (id: string) => call<Campaign>(key, "POST", `/campaigns/${id}/pause`),
     addVariables: (id: string, variables: string[]) =>
       call<Campaign>(key, "POST", `/campaigns/${id}/variables`, { body: { variables } }),
-    sendingStatus: (id: string) =>
-      call<{ summary: { status: string; status_message: string } | null; diagnostics: Record<string, unknown> | null }>(
-        key,
-        "GET",
-        `/campaigns/${id}/sending-status`,
-      ),
+    sendingStatus: (id: string) => call<SendingStatus>(key, "GET", `/campaigns/${id}/sending-status`),
     campaignDaily: (campaignId: string, start: string, end: string) =>
       call<CampaignDaily[]>(key, "GET", "/campaigns/analytics/daily", {
         query: { campaign_id: campaignId, start_date: start, end_date: end },
@@ -337,6 +364,15 @@ export function instantly(key: string) {
       }),
     pauseAccount: (email: string) => call<Account>(key, "POST", `/accounts/${encodeURIComponent(email)}/pause`),
     resumeAccount: (email: string) => call<Account>(key, "POST", `/accounts/${encodeURIComponent(email)}/resume`),
+    /** Change a mailbox's settings; used for its daily sending limit (read back on the returned account). */
+    patchAccount: (email: string, body: { daily_limit?: number }) =>
+      call<Account>(key, "PATCH", `/accounts/${encodeURIComponent(email)}`, { body }),
+    /** Turn warmup on; Instantly runs it as a background job. */
+    enableWarmup: (emails: string[]) => call(key, "POST", "/accounts/warmup/enable", { body: { emails } }),
+    /** At most 100 mailboxes per call. Covers about the last week. */
+    warmupAnalytics: (emails: string[]) => call<WarmupAnalytics>(key, "POST", "/accounts/warmup-analytics", { body: { emails } }),
+    vitals: (emails: string[]) =>
+      call<{ success_list?: DomainVitals[]; failure_list?: DomainVitals[] }>(key, "POST", "/accounts/test/vitals", { body: { accounts: emails } }),
     accountDaily: (emails: string[], start: string, end: string) =>
       call<AccountDaily[]>(key, "GET", "/accounts/analytics/daily", {
         query: { emails, start_date: start, end_date: end },

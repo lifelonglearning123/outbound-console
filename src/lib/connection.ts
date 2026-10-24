@@ -22,14 +22,21 @@ export async function upsertMailboxes(clientId: number, accounts: Account[]) {
   await run(`DELETE FROM mailboxes WHERE client_id = ? AND ${notIn("email", emails.length)}`, clientId, ...emails);
   await run(`DELETE FROM mailbox_daily WHERE client_id = ? AND ${notIn("email", emails.length)}`, clientId, ...emails);
   for (const a of accounts) {
+    const sm = a.status_message;
+    const message = a.status < 0 && sm ? sm.e_message || sm.response || sm.code || null : null;
     await run(
-      `INSERT INTO mailboxes (client_id, email, status, warmup_status, warmup_score, daily_limit, last_synced_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?)
+      `INSERT INTO mailboxes (client_id, email, status, warmup_status, warmup_score, daily_limit, last_synced_at,
+         status_message, warmup_started_at, provider_code)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(client_id, email) DO UPDATE SET status = excluded.status, warmup_status = excluded.warmup_status,
-         warmup_score = excluded.warmup_score, daily_limit = excluded.daily_limit, last_synced_at = excluded.last_synced_at`,
+         warmup_score = excluded.warmup_score, daily_limit = excluded.daily_limit, last_synced_at = excluded.last_synced_at,
+         status_message = excluded.status_message, warmup_started_at = excluded.warmup_started_at, provider_code = excluded.provider_code`,
       clientId, a.email, a.status, a.warmup_status, a.stat_warmup_score, a.daily_limit, now,
+      message, a.timestamp_warmup_start ?? null, a.provider_code ?? null,
     );
   }
+  // Mailboxes resumed in Instantly by hand are no longer "paused by the console".
+  await run("UPDATE mailboxes SET auto_paused_at = NULL, auto_paused_reason = NULL WHERE client_id = ? AND status = 1 AND auto_paused_at IS NOT NULL", clientId);
 }
 
 /**
@@ -49,16 +56,19 @@ export async function upsertCampaigns(clientId: number, campaigns: Campaign[]) {
     await run("UPDATE emails SET campaign_id = NULL WHERE campaign_id = ?", g.id);
     await run("DELETE FROM campaigns WHERE id = ?", g.id);
   }
+  // Resting mailboxes are out of Instantly's list but still chosen for the campaign, so they go back into it.
+  const rests = await all<{ campaign_id: number; email: string }>("SELECT campaign_id, email FROM mailbox_rests WHERE client_id = ?", clientId);
   for (const c of campaigns) {
     const existing = await get<{ id: number }>(
       "SELECT id FROM campaigns WHERE client_id = ? AND instantly_campaign_id = ?",
       clientId, c.id,
     );
     if (existing) {
+      const chosen = [...new Set([...(c.email_list ?? []), ...rests.filter((r) => r.campaign_id === existing.id).map((r) => r.email)])];
       await run(
         `UPDATE campaigns SET name = ?, status = ?, instantly_status = ?, daily_limit = COALESCE(?, daily_limit),
            accounts = ?, last_synced_at = ? WHERE id = ?`,
-        c.name, campaignState(c.status), c.status, c.daily_limit, JSON.stringify(c.email_list ?? []), now, existing.id,
+        c.name, campaignState(c.status), c.status, c.daily_limit, JSON.stringify(chosen), now, existing.id,
       );
     } else {
       const sched = c.campaign_schedule?.schedules?.[0];

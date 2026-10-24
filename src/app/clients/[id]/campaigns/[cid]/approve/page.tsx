@@ -12,6 +12,7 @@ import { ApprovalQueue } from "@/components/ApprovalQueue";
 import { AutoRefresh } from "@/components/AutoRefresh";
 import { SubmitButton } from "@/components/SubmitButton";
 import { htmlToText, toHtml } from "@/lib/merge";
+import { unconfirmedSuggestion } from "@/lib/deliverability";
 
 const n = (v: number) => v.toLocaleString("en-GB");
 
@@ -32,7 +33,8 @@ export default async function CampaignApprovePage({ params, searchParams }: Page
   const base = `/clients/${clientId}/campaigns/${c.id}`;
   const waiting = b.groups.verified + b.groups.catch_all;
   const split = await approvedBreakdown(c.id);
-  const sendable = { ...split, held: split.held.map((h) => ({ ...h, label: GATEWAY_LABEL[h.gateway] })) };
+  const sendable = { ...split, held: split.held.map((h) => ({ ...h, label: GATEWAY_LABEL[h.gateway] ?? h.gateway })) };
+  const unconfirmed = b.groups.catch_all ? await unconfirmedSuggestion(clientId, b.groups.catch_all) : null;
 
   if (!b.fixed || eachOne) {
     const leads = await reviewQueue(clientId, 200, c.id);
@@ -40,7 +42,7 @@ export default async function CampaignApprovePage({ params, searchParams }: Page
       <div className="flex flex-col gap-3">
         {b.fixed && <Link href={`${base}/approve`} className="text-sm underline">← Back to approving in one go</Link>}
         <AutoRefresh active={counts.drafting > 0 && leads.length === 0} />
-        <SendPanel campaignId={c.id} contactsHref={`${base}/contacts`} b={sendable} />
+        <SendPanel campaignId={c.id} contactsHref={`${base}/contacts`} mailboxesHref={`/clients/${clientId}/mailboxes`} b={sendable} />
         <ApprovalQueue leads={leads} clientId={clientId} campaignId={c.id} approvedCount={counts.approved} draftingCount={counts.drafting} showClient={false} hideSend />
       </div>
     );
@@ -54,7 +56,7 @@ export default async function CampaignApprovePage({ params, searchParams }: Page
     <div className="flex flex-col gap-6">
       <AutoRefresh active={counts.drafting > 0} />
 
-      <SendPanel campaignId={c.id} contactsHref={`${base}/contacts`} b={sendable} />
+      <SendPanel campaignId={c.id} contactsHref={`${base}/contacts`} mailboxesHref={`/clients/${clientId}/mailboxes`} b={sendable} />
 
       {waiting === 0 ? (
         <div className="card p-8 text-center text-sm text-muted">
@@ -102,6 +104,7 @@ export default async function CampaignApprovePage({ params, searchParams }: Page
               tone="text-wait"
               note="Their company accepts every address, so some may bounce. Send a few at a time and watch the bounce figure on the Sending tab."
               batch
+              suggestion={unconfirmed ? { size: unconfirmed.size, text: unconfirmed.text } : undefined}
             />
             {b.checking > 0 && (
               <p className="text-xs text-muted">{n(b.checking)} more contacts are still being checked and will appear here once they pass.</p>
@@ -120,7 +123,7 @@ export default async function CampaignApprovePage({ params, searchParams }: Page
 }
 
 function Group({
-  campaignId, group, title, count, tone, note, primary, batch,
+  campaignId, group, title, count, tone, note, primary, batch, suggestion,
 }: {
   campaignId: number;
   group: "verified" | "catch_all";
@@ -130,17 +133,21 @@ function Group({
   note: string;
   primary?: boolean;
   batch?: boolean;
+  /** For unconfirmed contacts: how many to send at once, from how the client's earlier ones bounced. */
+  suggestion?: { size: number; text: string };
 }) {
   if (count === 0) return null;
   const action = approveGroupAndSend.bind(null, campaignId, group);
+  const size = suggestion ? Math.max(1, Math.min(suggestion.size || 10, count)) : Math.min(30, count);
   return (
     <div className="card flex flex-col gap-2 p-4">
       <div className={`font-medium ${tone}`}>{title} · <span className="num">{n(count)}</span></div>
       <p className="text-sm text-muted">{note}</p>
+      {suggestion && <p className={`text-sm ${suggestion.size === 0 ? "text-bad" : "text-info"}`}>{suggestion.text}</p>}
       {batch ? (
         <form action={action} className="flex items-center gap-2">
           <SubmitButton pendingLabel="Approving…">Approve and send the next</SubmitButton>
-          <input name="limit" type="number" min={1} max={count} defaultValue={Math.min(30, count)} className="field w-20" aria-label="How many" />
+          <input name="limit" type="number" min={1} max={count} defaultValue={size} className="field w-20" aria-label="How many" />
         </form>
       ) : (
         <form action={action}>

@@ -271,4 +271,65 @@ CREATE TABLE IF NOT EXISTS user_clients (
   client_id INTEGER NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
   PRIMARY KEY (user_id, client_id)
 );
+
+-- Mailbox health (mailboxHealth.ts). The console never pauses a mailbox in Instantly by itself, because that stops its
+-- warmup too: it rests it instead (takes it out of the client's campaigns, warmup keeps running) and puts it back once
+-- it's healthy, easing its daily limit up over two weeks.
+ALTER TABLE mailboxes ADD COLUMN IF NOT EXISTS rested_at TEXT;
+ALTER TABLE mailboxes ADD COLUMN IF NOT EXISTS rest_reason TEXT;
+ALTER TABLE mailboxes ADD COLUMN IF NOT EXISTS rest_kind TEXT;         -- bounce | warmup | paused (brought back) | manual
+ALTER TABLE mailboxes ADD COLUMN IF NOT EXISTS healthy_since TEXT;     -- while resting: since when it has looked healthy again
+ALTER TABLE mailboxes ADD COLUMN IF NOT EXISTS returned_at TEXT;       -- bounces before this don't count against it
+ALTER TABLE mailboxes ADD COLUMN IF NOT EXISTS health_note TEXT;       -- why the health rules couldn't act (e.g. a campaign's only mailbox)
+ALTER TABLE mailboxes ADD COLUMN IF NOT EXISTS ramp_target INTEGER;    -- easing in: the daily limit it is working up to
+ALTER TABLE mailboxes ADD COLUMN IF NOT EXISTS ramp_started_at TEXT;
+ALTER TABLE mailboxes ADD COLUMN IF NOT EXISTS status_message TEXT;    -- Instantly's last error on the mailbox
+ALTER TABLE mailboxes ADD COLUMN IF NOT EXISTS warmup_started_at TEXT;
+ALTER TABLE mailboxes ADD COLUMN IF NOT EXISTS provider_code INTEGER;
+-- Which campaigns a resting mailbox was taken out of, so it goes back into the same ones.
+CREATE TABLE IF NOT EXISTS mailbox_rests (
+  client_id INTEGER NOT NULL REFERENCES clients(id),
+  email TEXT NOT NULL,
+  campaign_id INTEGER NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
+  removed_at TEXT NOT NULL,
+  PRIMARY KEY (client_id, email, campaign_id)
+);
+-- Instantly's warmup results per mailbox and day: warmup emails sent, and where they landed.
+CREATE TABLE IF NOT EXISTS warmup_daily (
+  client_id INTEGER NOT NULL REFERENCES clients(id),
+  email TEXT NOT NULL,
+  date TEXT NOT NULL,
+  sent INTEGER NOT NULL DEFAULT 0,
+  inbox INTEGER NOT NULL DEFAULT 0,
+  spam INTEGER NOT NULL DEFAULT 0,
+  received INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (client_id, email, date)
+);
+-- DNS records of each sending domain, from Instantly's account vitals test.
+CREATE TABLE IF NOT EXISTS domain_checks (
+  domain TEXT PRIMARY KEY,
+  mx BOOLEAN, spf BOOLEAN, dkim BOOLEAN, dmarc BOOLEAN, all_pass BOOLEAN,
+  checked_at TEXT NOT NULL
+);
+-- Companies (recipient domains) a client stops sending to, across all its campaigns, with the reason.
+CREATE TABLE IF NOT EXISTS problem_domains (
+  client_id INTEGER NOT NULL REFERENCES clients(id),
+  domain TEXT NOT NULL,
+  reason TEXT NOT NULL,
+  auto INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL DEFAULT ${NOW_TEXT},
+  cleared_at TEXT,                      -- sending resumed by hand; kept so the sync doesn't add it again
+  PRIMARY KEY (client_id, domain)
+);
+-- Instantly's own explanation of why an active campaign is or isn't sending (GET /campaigns/{id}/sending-status).
+ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS sending_diag TEXT;
+ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS sending_diag_at TEXT;
+-- Instantly's ESP matching: send from a Google mailbox to Google recipients, Microsoft to Microsoft.
+ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS match_esp INTEGER NOT NULL DEFAULT 0;
+-- A contact sent as a test past a held mail filter.
+ALTER TABLE leads ADD COLUMN IF NOT EXISTS probe INTEGER NOT NULL DEFAULT 0;
+-- Automatic actions say what they acted on and how to undo them (the Activity page shows Undo and Why?).
+ALTER TABLE activity ADD COLUMN IF NOT EXISTS subject TEXT;
+ALTER TABLE activity ADD COLUMN IF NOT EXISTS undo TEXT;
+ALTER TABLE activity ADD COLUMN IF NOT EXISTS undone_at TEXT;
 `;

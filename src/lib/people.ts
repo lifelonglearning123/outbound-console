@@ -433,6 +433,14 @@ export async function breakdown(s: PeopleScope, dim: Dimension, f: PeopleFilters
   }
 }
 
+/** People split by two dimensions at once (say their email host by the domain that wrote to them), for a table. */
+export async function crossBreakdown(s: PeopleScope, a: Dimension, b: Dimension, f: PeopleFilters = {}) {
+  return all<Counts & { a: string | null; b: string | null }>(
+    `WITH f AS (${facts(s)}) SELECT ${DIMENSION_SQL[a]} a, ${DIMENSION_SQL[b]} b, ${COUNTS} FROM f WHERE ${where(conditions(f))} GROUP BY 1, 2`,
+    params(s, f),
+  );
+}
+
 // ---------- Links ----------
 
 /** A link to a people list showing these filters, carrying the page's own params (Stats' range and campaign). */

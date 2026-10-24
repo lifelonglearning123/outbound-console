@@ -31,7 +31,7 @@ export default async function OverviewPage() {
        (SELECT COALESCE(SUM(sent),0) FROM daily_stats d WHERE d.client_id = c.id AND d.date = ?) sent_today,
        (SELECT COUNT(*) FROM emails e WHERE e.client_id = c.id AND e.direction = 'in' AND e.sent_at >= ?) replies_7d,
        (SELECT COUNT(*) FROM emails e WHERE e.client_id = c.id AND e.direction = 'in' AND e.interest = 'interested' AND e.sent_at >= ?) interested_7d,
-       (SELECT COUNT(*) FROM mailboxes m WHERE m.client_id = c.id AND (m.status != 1 OR m.auto_paused_at IS NOT NULL)) mailboxes_bad
+       (SELECT COUNT(*) FROM mailboxes m WHERE m.client_id = c.id AND (m.status != 1 OR m.rested_at IS NOT NULL)) mailboxes_bad
      FROM clients c WHERE c.archived = 0 ORDER BY lower(c.name)`,
     today, week, week,
   );
@@ -41,6 +41,7 @@ export default async function OverviewPage() {
     approved: rows.reduce((a, r) => a + r.approved, 0),
     replies: (await get<{ n: number }>("SELECT COUNT(*) n FROM emails WHERE direction = 'in' AND is_unread = 1 AND (interest IS NULL OR interest IN ('interested','not_now','other'))"))?.n ?? 0,
     paused: (await get<{ n: number }>("SELECT COUNT(*) n FROM mailboxes WHERE auto_paused_at IS NOT NULL AND status != 1"))?.n ?? 0,
+    resting: (await get<{ n: number }>("SELECT COUNT(*) n FROM mailboxes WHERE rested_at IS NOT NULL AND status = 1"))?.n ?? 0,
     idle: await all<{ id: number; client_id: number; name: string; not_sending: string }>(
       "SELECT id, client_id, name, not_sending FROM campaigns WHERE status = 'active' AND not_sending IS NOT NULL",
     ),
@@ -61,7 +62,8 @@ export default async function OverviewPage() {
     attention.review > 0 && { href: "/approvals", tone: "wait", text: `${attention.review} leads waiting for email approval` },
     attention.approved > 0 && { href: "/approvals", tone: "go", text: `${attention.approved} approved leads not yet sent to Instantly` },
     attention.replies > 0 && { href: "/inbox", tone: "wait", text: `${attention.replies} unread replies need a look` },
-    attention.paused > 0 && { href: "/mailboxes", tone: "bad", text: `${attention.paused} mailboxes auto-paused for health` },
+    attention.paused > 0 && { href: "/mailboxes", tone: "bad", text: `${attention.paused} mailboxes paused by the old health rules have stopped warming up: bring them back` },
+    attention.resting > 0 && { href: "/mailboxes", tone: "wait", text: `${attention.resting} mailboxes resting out of campaigns while they recover` },
     ...attention.idle.map((c) => ({ href: `/clients/${c.client_id}/campaigns/${c.id}`, tone: "wait", text: `"${c.name}" is active but not sending: ${c.not_sending}` })),
     ...attention.broken.map((c) => ({ href: `/clients/${c.id}/settings`, tone: "bad", text: `${c.name}: ${c.key_message ?? "Instantly connection problem"}` })),
   ].filter(Boolean) as { href: string; tone: string; text: string }[];
@@ -106,7 +108,7 @@ export default async function OverviewPage() {
                 <th className="px-3 py-2 text-right font-medium">Sent today</th>
                 <th className="px-3 py-2 text-right font-medium">Replies 7d</th>
                 <th className="px-3 py-2 text-right font-medium">Interested 7d</th>
-                <th className="px-3 py-2 text-right font-medium">Mailbox issues</th>
+                <th className="px-3 py-2 text-right font-medium">Mailboxes out</th>
               </tr>
             </thead>
             <tbody>

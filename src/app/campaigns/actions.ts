@@ -15,6 +15,7 @@ import { INSTANTLY_TIMEZONES } from "@/lib/timezones";
 import { requireClient } from "@/lib/clients";
 import { instantly } from "@/lib/instantly";
 import { sanitizeEmailHtml } from "@/lib/merge";
+import { sendList } from "@/lib/mailboxHealth";
 
 export async function pauseCampaign(id: number) {
   await requireClientAccess(await clientOfCampaign(id));
@@ -68,6 +69,7 @@ function readForm(form: FormData) {
     daily_limit: Math.max(1, Number(form.get("daily_limit") || 30)),
     accounts: JSON.stringify(form.getAll("accounts").map(String)),
     stop_on_reply: form.get("stop_on_reply") ? 1 : 0,
+    match_esp: form.get("match_esp") ? 1 : 0,
     hold_after: holdAfter,
     step_count: steps.length,
     ghl_tag: String(form.get("ghl_tag") ?? "").trim() || null,
@@ -91,18 +93,21 @@ export async function saveCampaign(clientId: number, campaignId: number | null, 
     }
     if (!existing.managed) {
       // External campaigns: only the controls we can safely change from here.
-      await run("UPDATE campaigns SET daily_limit = @daily_limit, accounts = @accounts, schedule = @schedule WHERE id = @id", { ...fields, id });
+      await run(
+        "UPDATE campaigns SET daily_limit = @daily_limit, accounts = @accounts, schedule = @schedule, match_esp = @match_esp WHERE id = @id",
+        { ...fields, id },
+      );
     } else {
       await run(
         `UPDATE campaigns SET name = @name, steps = @steps, schedule = @schedule, daily_limit = @daily_limit,
-           accounts = @accounts, stop_on_reply = @stop_on_reply, hold_after = @hold_after, ghl_tag = @ghl_tag WHERE id = @id`,
+           accounts = @accounts, stop_on_reply = @stop_on_reply, hold_after = @hold_after, ghl_tag = @ghl_tag, match_esp = @match_esp WHERE id = @id`,
         { ...fields, id },
       );
     }
   } else {
     id = (await run(
-      `INSERT INTO campaigns (client_id, name, steps, schedule, daily_limit, accounts, stop_on_reply, hold_after, ghl_tag)
-       VALUES (@clientId, @name, @steps, @schedule, @daily_limit, @accounts, @stop_on_reply, @hold_after, @ghl_tag)`,
+      `INSERT INTO campaigns (client_id, name, steps, schedule, daily_limit, accounts, stop_on_reply, hold_after, ghl_tag, match_esp)
+       VALUES (@clientId, @name, @steps, @schedule, @daily_limit, @accounts, @stop_on_reply, @hold_after, @ghl_tag, @match_esp)`,
       { ...fields, clientId },
     )).id;
     await logActivity(clientId, "campaign", `Created campaign "${fields.name}"`);
@@ -115,8 +120,9 @@ export async function saveCampaign(clientId: number, campaignId: number | null, 
     const client = await requireClient(clientId);
     await instantly(client.instantly_api_key!).patchCampaign(c.instantly_campaign_id, {
       daily_limit: c.daily_limit,
-      email_list: c.accounts,
+      email_list: await sendList(clientId, c.id, c.accounts),
       campaign_schedule: toInstantlySchedule(c.schedule),
+      match_lead_esp: c.match_esp === 1,
     });
     await logActivity(clientId, "campaign", `Updated schedule and limits for "${c.name}"`);
   }

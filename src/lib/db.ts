@@ -121,8 +121,15 @@ export async function tx<T>(fn: () => Promise<T>): Promise<T> {
   }
 }
 
-export async function logActivity(clientId: number | null, kind: string, message: string) {
-  await run("INSERT INTO activity (client_id, kind, message) VALUES (?, ?, ?)", clientId, kind, message);
+/**
+ * `subject` is what an automatic action acted on (a mailbox address, a domain); `undo` names the action that reverses
+ * it (see undoActivity), so the Activity page can offer Undo and Why? beside it.
+ */
+export async function logActivity(clientId: number | null, kind: string, message: string, opts: { subject?: string; undo?: string } = {}) {
+  await run(
+    "INSERT INTO activity (client_id, kind, message, subject, undo) VALUES (?, ?, ?, ?, ?)",
+    clientId, kind, message, opts.subject ?? null, opts.undo ?? null,
+  );
 }
 
 export async function getSetting(key: string, fallback: string): Promise<string> {

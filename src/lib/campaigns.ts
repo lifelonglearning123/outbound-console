@@ -1,11 +1,12 @@
 import "server-only";
-import { all, get, run, logActivity } from "./db";
+import { get, run, logActivity } from "./db";
 import { requireClient } from "./clients";
 import { instantly, type CampaignSchedule } from "./instantly";
 import { campaignState } from "./connection";
 import { DEFAULT_TIMEZONE } from "./timezones";
 import type { Gateway } from "./mailhost";
 import { htmlToText } from "./merge";
+import { mailboxHealth, sendList } from "./mailboxHealth";
 
 // mode "fixed" = the client wrote this email (subject/body with merge fields); otherwise the AI writes it from `instructions`.
 export type Step = { delay_days: number; instructions: string; mode?: "ai" | "fixed"; subject?: string; body?: string };
@@ -29,6 +30,9 @@ export type Campaign = {
   release_to: number | null;   // while releasing a hold: how many steps will be live once applied
   ghl_tag: string | null;      // contacts with this Nexus Portal tag join the campaign automatically
   hold_gateways: Gateway[];    // mail filters this campaign doesn't send to (mailhost.ts); managed on the Contacts page
+  match_esp: number;           // Instantly's ESP matching: Google mailboxes write to Google recipients, Microsoft to Microsoft
+  sending_diag: string | null; // Instantly's sending-status for the campaign (JSON), refreshed by the sync while active
+  sending_diag_at: string | null;
   last_synced_at: string | null;
   created_at: string;
 };
@@ -62,19 +66,32 @@ function parse(row: CampaignDbRow): Campaign {
   };
 }
 
-/** A client's mailboxes for the "Send from" list, each saying in a few words why it's out if it is. */
+/**
+ * A client's mailboxes for the "Send from" list: whether each can send now, and in a few words why not or how ready it
+ * is (resting, easing in, still warming up), so a mailbox that isn't ready isn't added without knowing.
+ */
 export async function formMailboxes(clientId: number) {
-  const rows = await all<{ email: string; status: number; auto_paused_at: string | null; auto_paused_reason: string | null }>(
-    "SELECT email, status, auto_paused_at, auto_paused_reason FROM mailboxes WHERE client_id = ? ORDER BY email",
-    clientId,
-  );
-  return rows.map((m) => ({
+  return (await mailboxHealth(clientId)).sort((a, b) => a.email.localeCompare(b.email)).map((m) => ({
     email: m.email,
-    healthy: m.status === 1,
-    note: m.status === 1 ? "" : m.auto_paused_at ? "paused: too many bounces" : m.status === 2 ? "paused" : "not connected",
-    reason: m.auto_paused_reason,
+    healthy: m.state.key === "sending" || m.state.key === "easing",
+    ready: m.readiness.ready,
+    note:
+      m.state.key === "resting"
+        ? `resting${m.rest?.returnsInDays ? `: back in about ${m.rest.returnsInDays} ${m.rest.returnsInDays === 1 ? "day" : "days"}` : ""}`
+        : m.state.key === "error"
+          ? "not connected"
+          : m.state.key === "paused" || m.state.key === "maintenance"
+            ? "paused"
+            : m.state.key === "easing"
+              ? `easing in: ${m.ramp?.limit ?? "–"} a day`
+              : m.readiness.ready
+                ? ""
+                : m.readiness.label.toLowerCase(),
+    reason: m.detail,
+    provider: m.provider,
   }));
 }
+
 
 export async function getCampaign(id: number): Promise<Campaign | undefined> {
   const row = await get<CampaignDbRow>("SELECT * FROM campaigns WHERE id = ?", id);
@@ -107,7 +124,7 @@ export const liveSteps = (c: Pick<Campaign, "steps" | "hold_after">) => Math.min
 export const writeTarget = (c: Pick<Campaign, "steps" | "hold_after" | "release_to">) =>
   Math.min(c.release_to ?? liveSteps(c), c.steps.length);
 
-function toInstantlyBody(c: Campaign, live = liveSteps(c)) {
+function toInstantlyBody(c: Campaign, emailList: string[], live = liveSteps(c)) {
   return {
     name: c.name,
     campaign_schedule: toInstantlySchedule(c.schedule),
@@ -121,8 +138,9 @@ function toInstantlyBody(c: Campaign, live = liveSteps(c)) {
         })),
       },
     ],
-    email_list: c.accounts,
+    email_list: emailList,
     daily_limit: c.daily_limit,
+    match_lead_esp: c.match_esp === 1,
     stop_on_reply: c.stop_on_reply === 1,
     stop_on_auto_reply: false,
     link_tracking: false,
@@ -139,7 +157,8 @@ export async function syncCampaignToInstantly(id: number) {
   const client = await requireClient(c.client_id);
   if (!client.instantly_api_key) throw new Error("Client has no Instantly key");
   const api = instantly(client.instantly_api_key);
-  const body = toInstantlyBody(c);
+  // Resting mailboxes stay chosen here but out of Instantly's list until they're healthy again (mailboxHealth.ts).
+  const body = toInstantlyBody(c, await sendList(c.client_id, c.id, c.accounts));
 
   const remote = c.instantly_campaign_id
     ? await api.patchCampaign(c.instantly_campaign_id, body)

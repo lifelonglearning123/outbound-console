@@ -38,6 +38,7 @@ export default async function CampaignEmailPage({ params }: PageProps<"/clients/
         accounts={c.accounts}
         stopOnReply={c.stop_on_reply === 1}
         mailboxes={mailboxes}
+        matchEsp={c.match_esp === 1}
         managed={c.managed === 1}
         submitLabel="Save changes"
         holdAfter={c.hold_after}

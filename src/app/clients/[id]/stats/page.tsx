@@ -10,6 +10,10 @@ import { TrendChart } from "@/components/stats/TrendChart";
 import { FunnelBars, HBars, HeadlineTiles, ReplyHeatmap, StepPerformance } from "@/components/stats/Parts";
 import { Breakdown } from "@/components/Breakdown";
 import { PeopleList } from "@/components/PeopleList";
+import { mailboxAnchor } from "@/components/MailboxBoard";
+import { healthRules, mailboxHealth } from "@/lib/mailboxHealth";
+
+const STATE_TONE: Record<string, string> = { go: "text-go", wait: "text-wait", bad: "text-bad", info: "text-info", muted: "text-muted" };
 
 function Section({ title, note, children, className = "" }: { title: string; note?: string; children: React.ReactNode; className?: string }) {
   return (
@@ -40,7 +44,9 @@ export default async function StatsPage({ params, searchParams }: PageProps<"/cl
   // The breakdown follows the date range: people first emailed in it, and what has happened to them since.
   const emailedInRange = { from: r.range.from, to: r.range.to };
   const rows = await breakdown({ clientId, campaignId }, dim, emailedInRange);
-  const rules = { bounce: 0.03 };
+  const healthRulesNow = await healthRules();
+  const health = new Map((await mailboxHealth(clientId, { rules: healthRulesNow })).map((m) => [m.email, m]));
+  const rules = { bounce: healthRulesNow.bouncePct / 100 };
 
   const href = (patch: Record<string, string | number | null>) => {
     const q = new URLSearchParams();
@@ -103,7 +109,7 @@ export default async function StatsPage({ params, searchParams }: PageProps<"/cl
 
       <Section
         title="Mailbox health"
-        note={`${client.name}'s sending mailboxes in this period. Bounce rate above 3% hurts every mailbox on the domain.`}
+        note={`${client.name}'s sending mailboxes in this period. A mailbox over ${healthRulesNow.bouncePct}% bounces (Instantly's own line) rests until it's healthy; warmup, DNS and what the console did are on the Mailboxes page.`}
       >
         <table className="w-full text-sm [&_td]:px-2 [&_th]:px-2 [&_td:first-child]:pl-0 [&_th:first-child]:pl-0">
           <thead className="text-left text-xs uppercase tracking-wide text-muted">
@@ -120,12 +126,14 @@ export default async function StatsPage({ params, searchParams }: PageProps<"/cl
           <tbody>
             {r.mailboxes.map((m) => {
               const bounce = m.sent ? m.bounced / m.sent : 0;
+              const h = health.get(m.email);
               return (
                 <tr key={m.email} className="border-t border-line">
-                  <td className="py-1.5 font-mono text-xs">{m.email}</td>
-                  <td className={m.status === 1 ? "text-go" : "text-bad"}>
-                    {ACCOUNT_STATUS[m.status ?? 0] ?? "–"}
-                    {m.auto_paused_reason && <span className="ml-1 text-xs">({m.auto_paused_reason})</span>}
+                  <td className="py-1.5 font-mono text-xs">
+                    <Link href={`/clients/${clientId}/mailboxes#${mailboxAnchor(m.email)}`} className="hover:underline">{m.email}</Link>
+                  </td>
+                  <td className={h ? STATE_TONE[h.state.tone] : m.status === 1 ? "text-go" : "text-bad"} title={h?.detail ?? undefined}>
+                    {h?.state.label ?? ACCOUNT_STATUS[m.status ?? 0] ?? "–"}
                   </td>
                   <td className="num text-right">{m.sent}</td>
                   <td className="num text-right">{m.replied}</td>
@@ -133,7 +141,9 @@ export default async function StatsPage({ params, searchParams }: PageProps<"/cl
                   <td className={`num text-right ${bounce > rules.bounce ? "font-semibold text-bad" : ""}`}>
                     {bounce > rules.bounce && "⚠ "}{pct(m.bounced, m.sent)}
                   </td>
-                  <td className={`num text-right ${m.warmup_score !== null && m.warmup_score < 70 ? "text-bad" : ""}`}>{m.warmup_score ?? "–"}</td>
+                  <td className={`num text-right ${h?.warmupProblem ? "text-bad" : ""}`}>
+                    {h && !h.warmup.active ? <span className="text-xs text-muted">no data</span> : m.warmup_score ?? "–"}
+                  </td>
                 </tr>
               );
             })}

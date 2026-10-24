@@ -22,6 +22,7 @@ const sections = (isAdmin: boolean) => [
   { href: "/approvals", label: "Approvals" },
   { href: "/replies", label: "Replies" },
   { href: "/stats", label: "Stats" },
+  { href: "/mailboxes", label: "Mailboxes" },
   // Settings hold the API keys, so only admins see them.
   ...(isAdmin ? [{ href: "/settings", label: "Settings" }] : []),
 ];

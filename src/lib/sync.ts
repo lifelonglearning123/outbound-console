@@ -11,8 +11,10 @@ import { runVerificationActions } from "./verifyReport";
 import { runPortalTagging } from "./portalTags";
 import { syncMeetings } from "./meetings";
 import { fillJobTitles, linkPendingLeads, logEmailsToGhl, noteCampaignsInGhl, pullTaggedContacts } from "./ghlsync";
-import { detectMailDomains } from "./mailhost";
+import { detectMailDomains, reclassifyMailDomains } from "./mailhost";
 import { sendWaiting } from "./push";
+import { checkDomains, enforceHealth, syncWarmup } from "./mailboxHealth";
+import { flagProblemDomains } from "./deliverability";
 
 const day = (offset = 0) => new Date(Date.now() - offset * 86400_000).toISOString().slice(0, 10);
 
@@ -33,18 +35,6 @@ function stripHtml(html: string): string {
 function newestPart(text: string): string {
   const cut = text.search(/\n\s*(On [^\n]{5,120}\n?[^\n]{0,80}wrote:|-----Original Message-----|From: .+\nSent: )/i);
   return (cut > 0 ? text.slice(0, cut) : text).trim();
-}
-
-export type HealthRules = { bouncePct: number; minSent: number; minWarmupScore: number };
-
-// Bounce defaults sit 15% inside Instantly's own auto-pause (a campaign over 5% bounces after 100 sends),
-// so we act slightly before Instantly would, without pausing a mailbox over one or two unlucky bounces.
-export async function healthRules(): Promise<HealthRules> {
-  return {
-    bouncePct: Number(await getSetting("health_bounce_pct", "4.25")),
-    minSent: Number(await getSetting("health_min_sent", "85")),
-    minWarmupScore: Number(await getSetting("health_min_warmup", "70")),
-  };
 }
 
 /** Instantly labels steps "0_0_0" (sequence_step_variant, zero-based); older payloads use a plain number. */
@@ -195,12 +185,18 @@ async function syncStats(clientId: number, api: InstantlyClient) {
     });
     if (c.status === "active") {
       try {
+        // Instantly's own account of why it is or isn't sending, kept whole for the campaign's Sending tab.
         const s = await api.sendingStatus(c.instantly_campaign_id);
         const st = s.summary?.status;
-        await run("UPDATE campaigns SET not_sending = ? WHERE id = ?", st && st !== "healthy" ? s.summary?.status_message ?? st : null, c.id);
+        await run(
+          "UPDATE campaigns SET not_sending = ?, sending_diag = ?, sending_diag_at = ? WHERE id = ?",
+          st && st !== "healthy" ? s.summary?.status_message ?? st : null, JSON.stringify(s), new Date().toISOString(), c.id,
+        );
       } catch {
         // Diagnostics are nice-to-have; ignore failures.
       }
+    } else {
+      await run("UPDATE campaigns SET sending_diag = NULL WHERE id = ? AND sending_diag IS NOT NULL", c.id);
     }
   }
 
@@ -252,35 +248,6 @@ async function syncLeads(clientId: number, api: InstantlyClient) {
   }
 }
 
-/** Pause mailboxes that break the health rules (bounce rate, warmup score). Only ever pauses; never auto-resumes. */
-async function enforceHealth(clientId: number, api: InstantlyClient) {
-  if (await getSetting("health_auto_pause", "1") !== "1") return;
-  const rules = await healthRules();
-  const boxes = await all<{ email: string; status: number; warmup_score: number | null; sent_7d: number; bounced_7d: number; auto_paused_at: string | null }>(
-    "SELECT * FROM mailboxes WHERE client_id = ? AND status = 1",
-    clientId,
-  );
-  for (const b of boxes) {
-    let reason = "";
-    if (b.sent_7d >= rules.minSent && (b.bounced_7d / b.sent_7d) * 100 > rules.bouncePct) {
-      reason = `bounce rate ${((b.bounced_7d / b.sent_7d) * 100).toFixed(1)}% over 7 days (limit ${rules.bouncePct}%)`;
-    } else if (b.warmup_score !== null && b.warmup_score < rules.minWarmupScore) {
-      reason = `warmup health ${b.warmup_score} (minimum ${rules.minWarmupScore})`;
-    }
-    if (!reason) continue;
-    try {
-      await api.pauseAccount(b.email);
-      await run(
-        "UPDATE mailboxes SET status = 2, auto_paused_at = datetime('now'), auto_paused_reason = ? WHERE client_id = ? AND email = ?",
-        reason, clientId, b.email,
-      );
-      await logActivity(clientId, "auto_pause", `Paused ${b.email}: ${reason}`);
-    } catch (e) {
-      await logActivity(clientId, "error", `Wanted to pause ${b.email} (${reason}) but Instantly said: ${(e as Error).message}`);
-    }
-  }
-}
-
 export async function syncClient(clientId: number): Promise<{ ok: boolean; message: string }> {
   const client = await requireClient(clientId);
   if (!client.instantly_api_key || client.key_status === "error") return { ok: false, message: "Instantly not connected" };
@@ -317,7 +284,11 @@ export async function syncClient(clientId: number): Promise<{ ok: boolean; messa
     ["scheduled", () => syncScheduled(client, api)],
     ["stats", () => syncStats(clientId, api)],
     ["leads", () => syncLeads(clientId, api)],
+    ["warmup", () => syncWarmup(clientId, api)],
+    // Rest mailboxes that break the health rules, put recovered ones back, move easing-in limits along.
     ["health", () => enforceHealth(clientId, api)],
+    ["sending domains", () => checkDomains(clientId, { api })],
+    ["problem companies", () => flagProblemDomains(clientId)],
     ["replies", () => triageNewReplies(clientId)],
     ["meetings", () => syncMeetings(client)],
     // GHL is the source of truth for contacts: link new leads, pull newly tagged contacts, log emails.
@@ -328,7 +299,10 @@ export async function syncClient(clientId: number): Promise<{ ok: boolean; messa
     ["ghl job titles", () => fillJobTitles(client)],
     ["ghl conversations", () => logEmailsToGhl(client)],
     ["ghl campaign notes", () => noteCampaignsInGhl(client)],
-    ["mail servers", () => detectMailDomains()],
+    ["mail servers", async () => {
+      await reclassifyMailDomains();
+      await detectMailDomains();
+    }],
     // Contacts that waited for another campaign's sequence go out once it's over (after "leads" refreshed statuses).
     ["waiting sends", () => sendWaiting(clientId)],
   ];

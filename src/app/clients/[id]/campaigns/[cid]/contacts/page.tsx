@@ -14,7 +14,10 @@ import { AutoRefresh } from "@/components/AutoRefresh";
 import { SubmitButton } from "@/components/SubmitButton";
 import { detectMailDomains, GATEWAY_LABEL, uncheckedDomains, type Gateway } from "@/lib/mailhost";
 import { heldNotYetEmailed } from "@/lib/push";
-import { setGatewayHold, takeBackHeld } from "@/app/leads/actions";
+import { setGatewayHold, takeBackHeld, testFilter } from "@/app/leads/actions";
+import { filterEvidence } from "@/lib/deliverability";
+
+const ADVICE_TONE: Record<string, string> = { go: "text-go", wait: "text-wait", bad: "text-bad", info: "text-info", muted: "text-muted" };
 import { ConfirmButton } from "@/components/ConfirmButton";
 import { PeopleList } from "@/components/PeopleList";
 
@@ -53,6 +56,7 @@ export default async function CampaignContactsPage({ params, searchParams }: Pag
     c.id,
   );
   const pullable = await heldNotYetEmailed(c.id);
+  const evidence = gateways.length ? await filterEvidence(clientId) : [];
   const base = `/clients/${clientId}/campaigns/${c.id}/contacts`;
 
   return (
@@ -106,7 +110,8 @@ export default async function CampaignContactsPage({ params, searchParams }: Pag
             <p className="text-sm text-muted">
               Some companies put a security filter in front of their email. If a filter doesn&apos;t trust your sending domain, it refuses
               the email and that counts as a bounce. While a filter is paused, its contacts aren&apos;t sent to: they stay approved and go
-              out when you resume it.
+              out when you resume it. The advice comes from how each filter has done across all of {client.name}&apos;s campaigns; a
+              test sends 10 of its waiting contacts so the result shows within a day or two.
             </p>
           </header>
           <div className="card overflow-hidden">
@@ -124,32 +129,44 @@ export default async function CampaignContactsPage({ params, searchParams }: Pag
               <tbody>
                 {gateways.map((g) => {
                   const held = c.hold_gateways.includes(g.gateway);
+                  const ev = evidence.find((e) => e.gateway === g.gateway);
+                  const testable = held && Number(g.held) > 0 && ev && ev.advice.verdict !== "hold" && ev.advice.verdict !== "safe";
                   return (
-                    <tr key={g.gateway} className="border-t border-line">
-                      <td className="px-3 py-2 font-medium">{GATEWAY_LABEL[g.gateway]}</td>
+                    <tr key={g.gateway} className="border-t border-line align-top">
+                      <td className="px-3 py-2">
+                        <div className="font-medium">{GATEWAY_LABEL[g.gateway] ?? g.gateway}</div>
+                        {ev && <div className={`text-xs ${ADVICE_TONE[ev.advice.tone]}`}>{ev.advice.text}</div>}
+                      </td>
                       <td className="num px-3 py-2 text-right">{n(Number(g.contacts))}</td>
                       <td className="num px-3 py-2 text-right">{n(Number(g.emailed))}</td>
                       <td className={`num px-3 py-2 text-right ${Number(g.bounced) ? "font-semibold text-bad" : ""}`}>{n(Number(g.bounced))}</td>
                       <td className={`px-3 py-2 text-xs font-medium ${held ? "text-wait" : "text-go"}`}>
                         {held ? `Paused${Number(g.held) ? `: ${n(Number(g.held))} approved and waiting` : ""}` : "Sending normally"}
                       </td>
-                      <td className="px-3 py-2 text-right">
-                        <form action={setGatewayHold.bind(null, c.id, g.gateway, !held)}>
-                          {held ? (
-                            <ConfirmButton
-                              className="btn text-xs"
-                              message={
-                                Number(g.held)
-                                  ? `Resume sending to ${GATEWAY_LABEL[g.gateway]}? The ${n(Number(g.held))} approved contacts waiting behind it are handed to the sender straight away.`
-                                  : `Resume sending to ${GATEWAY_LABEL[g.gateway]}? Its contacts will be sent to as they're approved.`
-                              }
-                            >
-                              {Number(g.held) ? `Resume and send ${n(Number(g.held))}` : `Resume ${GATEWAY_LABEL[g.gateway]}`}
-                            </ConfirmButton>
-                          ) : (
-                            <SubmitButton className="btn text-xs" pendingLabel="Pausing…">Pause {GATEWAY_LABEL[g.gateway]}</SubmitButton>
+                      <td className="px-3 py-2">
+                        <div className="flex flex-wrap justify-end gap-1.5">
+                          {testable && (
+                            <form action={testFilter.bind(null, c.id, g.gateway)}>
+                              <SubmitButton className="btn text-xs" pendingLabel="Sending a test…">Send a test of {Math.min(10, Number(g.held))}</SubmitButton>
+                            </form>
                           )}
-                        </form>
+                          <form action={setGatewayHold.bind(null, c.id, g.gateway, !held)}>
+                            {held ? (
+                              <ConfirmButton
+                                className="btn text-xs"
+                                message={
+                                  Number(g.held)
+                                    ? `Resume sending to ${GATEWAY_LABEL[g.gateway]}? The ${n(Number(g.held))} approved contacts waiting behind it are handed to the sender straight away.`
+                                    : `Resume sending to ${GATEWAY_LABEL[g.gateway]}? Its contacts will be sent to as they're approved.`
+                                }
+                              >
+                                {Number(g.held) ? `Resume and send ${n(Number(g.held))}` : `Resume ${GATEWAY_LABEL[g.gateway]}`}
+                              </ConfirmButton>
+                            ) : (
+                              <SubmitButton className="btn text-xs" pendingLabel="Pausing…">Pause {GATEWAY_LABEL[g.gateway]}</SubmitButton>
+                            )}
+                          </form>
+                        </div>
                       </td>
                     </tr>
                   );

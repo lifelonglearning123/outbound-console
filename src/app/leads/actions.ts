@@ -10,7 +10,7 @@ import { importLeads, logImport, type LeadFields, type ImportResult } from "@/li
 import { addImports } from "@/lib/importResult";
 import { contactsWithTagPage, listTags } from "@/lib/ghl";
 import { runWriter, rewriteStep } from "@/lib/writer";
-import { pushApproved, pullBackHeld } from "@/lib/push";
+import { probeFilter, pushApproved, pullBackHeld } from "@/lib/push";
 import { NO_PUSH, addPushes } from "@/lib/pushResult";
 import { describeFilters, matchingIds, readFilters, removableIds } from "@/lib/people";
 import { cleanTag, queuePortalTag, retryPortalTags, runPortalTagging } from "@/lib/portalTags";
@@ -338,6 +338,16 @@ export async function setGatewayHold(campaignId: number, gateway: Gateway, hold:
     // Resumed: held contacts are still 'approved', so hand them to the sender after the response.
     after(() => pushApproved(campaignId));
   }
+  revalidatePath("/", "layout");
+}
+
+/** Send a test of 10 contacts past a held mail filter, to measure whether it refuses the client's mail. The rest stay held. */
+export async function testFilter(campaignId: number, gateway: Gateway) {
+  await requireClientAccess(await clientOfCampaign(campaignId));
+  if (!(gateway in GATEWAY_LABEL)) throw new Error("Unknown mail filter");
+  const c = await requireCampaign(campaignId);
+  const r = await probeFilter(campaignId, gateway, 10);
+  await logActivity(c.client_id, "push", `Testing ${GATEWAY_LABEL[gateway]}: sent ${r.pushed} of its held contacts in "${c.name}". Their bounces show within a day or two.`);
   revalidatePath("/", "layout");
 }
 

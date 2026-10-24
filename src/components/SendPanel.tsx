@@ -15,16 +15,21 @@ const n = (v: number) => v.toLocaleString("en-GB");
 export function SendPanel({
   campaignId,
   contactsHref,
+  mailboxesHref,
   b,
 }: {
   campaignId: number;
   contactsHref: string;
+  /** The client's Mailboxes page, where the problem companies list is. */
+  mailboxesHref: string;
   b: {
     approved: number;
     sendable: number;
     held: { gateway: string; label: string; n: number }[];
+    blocked: number;
     waiting: { campaign: string; n: number }[];
     stopped: number;
+    nomail: number;
   };
 }) {
   const [message, setMessage] = useState("");
@@ -54,7 +59,7 @@ export function SendPanel({
         </button>
       </div>
 
-      {(b.held.length > 0 || b.waiting.length > 0 || b.stopped > 0) && (
+      {(b.held.length > 0 || b.blocked > 0 || b.waiting.length > 0 || b.stopped > 0 || b.nomail > 0) && (
         <ul className="flex flex-col gap-1.5 border-t border-line pt-3">
           {b.held.map((h) => (
             <li key={h.gateway} className="flex flex-wrap items-baseline justify-between gap-2">
@@ -64,6 +69,15 @@ export function SendPanel({
               <Link href={`${contactsHref}#mail-filters`} className="text-xs underline">Change in Mail filters</Link>
             </li>
           ))}
+          {b.blocked > 0 && (
+            <li className="flex flex-wrap items-baseline justify-between gap-2">
+              <span>
+                <span className="num font-medium text-wait">{n(b.blocked)}</span> held: their company is on the problem companies list, because
+                other addresses there bounced.
+              </span>
+              <Link href={`${mailboxesHref}#problem-companies`} className="text-xs underline">Problem companies</Link>
+            </li>
+          )}
           {b.waiting.map((w) => (
             <li key={w.campaign}>
               <span className="num font-medium text-info">{n(w.n)}</span> waiting: still being emailed by &quot;{w.campaign}&quot;. They go out
@@ -74,6 +88,12 @@ export function SendPanel({
             <li>
               <span className="num font-medium text-bad">{n(b.stopped)}</span> won&apos;t be sent: they replied, bounced or unsubscribed in another
               campaign. The next send sets them aside.
+            </li>
+          )}
+          {b.nomail > 0 && (
+            <li>
+              <span className="num font-medium text-bad">{n(b.nomail)}</span> won&apos;t be sent: their domain has no mail server, so the email
+              could only bounce. The next send sets them aside.
             </li>
           )}
         </ul>
