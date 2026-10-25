@@ -1,7 +1,7 @@
 import { requireClientAccess } from "@/lib/auth";
 import { notFound } from "next/navigation";
 import Link from "next/link";
-import { getCampaign } from "@/lib/campaigns";
+import { getCampaign, isNexus, NEXUS_NOTICE } from "@/lib/campaigns";
 import { getClient } from "@/lib/clients";
 import { approvedBreakdown } from "@/lib/push";
 import { campaignProgress } from "@/lib/progress";
@@ -33,6 +33,8 @@ export default async function CampaignLayout({ children, params }: LayoutProps<"
   const split = await approvedBreakdown(c.id);
   const stuck = split.approved - split.sendable;
   const base = `/clients/${clientId}/campaigns/${c.id}`;
+  // Run from Nexus: Nexus writes and approves, so there is no copy or approval to open here.
+  const nexus = isNexus(c);
 
   // Each tile opens the place where that number can be acted on.
   const checkSub = [
@@ -47,11 +49,11 @@ export default async function CampaignLayout({ children, params }: LayoutProps<"
       sub: p.checking ? `checking ${n(p.checking)}` : checkSub,
       tone: p.invalid ? "text-wait" : p.checked ? "text-go" : "", href: `${base}/contacts`,
     },
-    { label: "Ready to send", value: p.ready, sub: p.unconfirmed ? `+ ${n(p.unconfirmed)} unconfirmed` : p.preparing ? `preparing ${n(p.preparing)}` : "", tone: p.ready ? "text-go" : "", href: `${base}/approve` },
+    { label: "Ready to send", value: p.ready, sub: p.unconfirmed ? `+ ${n(p.unconfirmed)} unconfirmed` : p.preparing ? `preparing ${n(p.preparing)}` : "", tone: p.ready ? "text-go" : "", href: nexus ? base : `${base}/approve` },
     {
       label: "Sending", value: p.sending,
       sub: split.sendable ? `${n(split.sendable)} ready to hand over` : stuck ? `${n(stuck)} held or waiting` : p.sent ? `${n(p.sent)} emails sent` : "",
-      tone: "", href: split.approved ? `${base}/approve` : base,
+      tone: "", href: split.approved && !nexus ? `${base}/approve` : base,
     },
     { label: "Replies", value: p.replies, sub: "", tone: "", href: `/clients/${clientId}/replies` },
   ];
@@ -66,6 +68,7 @@ export default async function CampaignLayout({ children, params }: LayoutProps<"
             <h2 className="text-xl font-semibold">{c.name}</h2>
             <StatusPill status={c.status} />
             {!c.managed && <span className="text-xs text-muted">set up outside the console, so its email is managed there</span>}
+            {nexus && <span className="text-xs text-muted">run from Nexus</span>}
           </div>
           <p className="text-sm text-muted">
             {c.status === "active" && c.not_sending ? (
@@ -84,6 +87,8 @@ export default async function CampaignLayout({ children, params }: LayoutProps<"
           <form action={resumeCampaign.bind(null, c.id)}><SubmitButton className="btn-go" pendingLabel="Starting…">{c.status === "draft" ? "Start sending" : "Resume sending"}</SubmitButton></form>
         ) : null)}
       </header>
+
+      {nexus && <p className="card p-3 text-sm text-muted">{NEXUS_NOTICE}</p>}
 
       <AutoRefresh active={p.preparing + p.checking + p.updatingPortal > 0} />
       <Working
@@ -106,12 +111,19 @@ export default async function CampaignLayout({ children, params }: LayoutProps<"
 
       <Tabs
         base={base}
-        tabs={[
-          { href: "/contacts", label: "Contacts" },
-          { href: "/email", label: c.managed ? "Email" : "Settings" },
-          { href: "/approve", label: "Approvals", count: p.ready },
-          { href: "", label: "Sending" },
-        ]}
+        tabs={
+          nexus
+            ? [
+                { href: "/contacts", label: "Contacts" },
+                { href: "", label: "Sending" },
+              ]
+            : [
+                { href: "/contacts", label: "Contacts" },
+                { href: "/email", label: c.managed ? "Email" : "Settings" },
+                { href: "/approve", label: "Approvals", count: p.ready },
+                { href: "", label: "Sending" },
+              ]
+        }
       />
       <div>{children}</div>
     </div>

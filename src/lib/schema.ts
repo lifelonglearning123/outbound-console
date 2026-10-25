@@ -332,4 +332,13 @@ ALTER TABLE leads ADD COLUMN IF NOT EXISTS probe INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE activity ADD COLUMN IF NOT EXISTS subject TEXT;
 ALTER TABLE activity ADD COLUMN IF NOT EXISTS undo TEXT;
 ALTER TABLE activity ADD COLUMN IF NOT EXISTS undone_at TEXT;
+-- Campaigns run from Nexus (docs/nexus-partner-api.md): Nexus writes, approves and answers; the console checks,
+-- holds filters and sends. source = 'console' | 'nexus'. The webhook is Instantly's, reporting the campaign's events
+-- to Nexus; only a hash of its token is kept, to notice when Nexus changes it.
+ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS source TEXT NOT NULL DEFAULT 'console';
+ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS nexus_campaign_id TEXT;
+CREATE UNIQUE INDEX IF NOT EXISTS campaigns_nexus_id ON campaigns (nexus_campaign_id) WHERE nexus_campaign_id IS NOT NULL;
+ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS nexus_webhook_id TEXT;
+ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS nexus_webhook_url TEXT;
+ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS nexus_webhook_token_hash TEXT;
 `;

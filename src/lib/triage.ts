@@ -55,6 +55,9 @@ export async function pushToGhl(emailId: string): Promise<string> {
     emailId,
   );
   if (!e) throw new Error("Email not found");
+  if (e.campaign_id && (await get<{ source: string }>("SELECT source FROM campaigns WHERE id = ?", e.campaign_id))?.source === "nexus") {
+    throw new Error("This reply belongs to a campaign run from Nexus, which records it in the portal itself.");
+  }
   const client = await requireClient(e.client_id);
   if (!client.ghl_location_id || !client.ghl_token) throw new Error("Nexus Portal not set up for this client");
   const creds = { locationId: client.ghl_location_id, token: client.ghl_token };
@@ -113,7 +116,11 @@ export async function applyInterest(emailId: string, interest: string, reason: s
   await run("UPDATE emails SET interest = ?, interest_reason = ? WHERE id = ?", interest, reason, emailId);
   const client = await requireClient(e.client_id);
   const api = client.instantly_api_key ? instantly(client.instantly_api_key) : null;
-  const campaign = e.campaign_id ? await get<{ instantly_campaign_id: string | null }>("SELECT instantly_campaign_id FROM campaigns WHERE id = ?", e.campaign_id) : undefined;
+  const campaign = e.campaign_id
+    ? await get<{ instantly_campaign_id: string | null; source: string }>("SELECT instantly_campaign_id, source FROM campaigns WHERE id = ?", e.campaign_id)
+    : undefined;
+  // Nexus reads and acts on its own campaigns' replies (opt-outs, interest, the portal record); the tag stays here only.
+  if (campaign?.source === "nexus") return;
 
   if (api && campaign?.instantly_campaign_id && interest in TO_INSTANTLY) {
     try {
@@ -160,7 +167,10 @@ export async function applyInterest(emailId: string, interest: string, reason: s
 /** Classify every inbound email that has no interest tag yet. */
 export async function triageNewReplies(clientId: number) {
   const rows = await all<{ id: string; subject: string; body_text: string }>(
-    "SELECT id, subject, body_text FROM emails WHERE client_id = ? AND direction = 'in' AND interest IS NULL ORDER BY sent_at LIMIT 50",
+    // Replies to Nexus campaigns are read by Nexus, not classified here.
+    `SELECT id, subject, body_text FROM emails e WHERE client_id = ? AND direction = 'in' AND interest IS NULL
+       AND NOT EXISTS (SELECT 1 FROM campaigns c WHERE c.id = e.campaign_id AND c.source = 'nexus')
+     ORDER BY sent_at LIMIT 50`,
     clientId,
   );
   for (const r of rows) {

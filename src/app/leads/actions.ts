@@ -5,7 +5,7 @@ import { revalidatePath } from "next/cache";
 import { after } from "next/server";
 import { all, get, run, tx, logActivity } from "@/lib/db";
 import { requireClient } from "@/lib/clients";
-import { requireCampaign } from "@/lib/campaigns";
+import { isNexus, NEXUS_NOTICE, requireCampaign } from "@/lib/campaigns";
 import { importLeads, logImport, type LeadFields, type ImportResult } from "@/lib/leads";
 import { addImports } from "@/lib/importResult";
 import { contactsWithTagPage, listTags } from "@/lib/ghl";
@@ -20,6 +20,14 @@ import { queueVerification, runVerifier, PASSED } from "@/lib/verify";
 import { queueTagging, queueDeletion, runVerificationActions, writeVerificationSummary, GHL_TAGS, OUTCOME_LABEL, PORTAL, type Outcome } from "@/lib/verifyReport";
 import { approveAndSend, type BatchGroup } from "@/lib/progress";
 
+// Nexus writes, approves and hands over its own campaigns' emails; the console only checks and sends them.
+async function refuseNexus(campaignId: number | null | undefined) {
+  if (campaignId && isNexus(await requireCampaign(campaignId))) throw new Error(NEXUS_NOTICE);
+}
+const campaignOfLead = async (leadId: number) => (await get<{ campaign_id: number | null }>("SELECT campaign_id FROM leads WHERE id = ?", leadId))?.campaign_id;
+const campaignOfDraft = async (draftId: number) =>
+  (await get<{ campaign_id: number | null }>("SELECT l.campaign_id FROM drafts d JOIN leads l ON l.id = d.lead_id WHERE d.id = ?", draftId))?.campaign_id;
+
 /** Add one lead typed in by hand, optionally sending it straight to the AI writer. */
 export async function addManualLead(
   clientId: number,
@@ -29,6 +37,7 @@ export async function addManualLead(
 ): Promise<ImportResult & { error?: string }> {
   await requireClientAccess(clientId);
   if ((await clientOfCampaign(campaignId)) !== clientId) throw new Error("Campaign not found");
+  await refuseNexus(campaignId);
   const c = await requireCampaign(campaignId);
   const r = await importLeads(clientId, campaignId, "manual", "typed in", [lead]);
   after(async () => linkPendingLeads(await requireClient(clientId))); // Nexus Portal is the source of truth: add the contact there
@@ -58,7 +67,7 @@ export async function importLeadChunk(
 ): Promise<ImportResult> {
   await requireClientAccess(clientId);
   if ((await clientOfCampaign(campaignId)) !== clientId) throw new Error("Campaign not found");
-  await requireCampaign(campaignId);
+  await refuseNexus(campaignId);
   const r = await importLeads(clientId, campaignId, source, sourceRef, leads, false);
   if (totals) {
     await logImport(clientId, source, sourceRef, addImports(totals, r));
@@ -142,6 +151,7 @@ export async function summariseVerification(clientId: number, campaignId: number
 /** One-click approval for a fixed-email campaign: approve a whole group of waiting contacts and start sending to them. */
 export async function approveGroupAndSend(campaignId: number, group: BatchGroup, form: FormData) {
   await requireClientAccess(await clientOfCampaign(campaignId));
+  await refuseNexus(campaignId);
   const limit = Number(form.get("limit")) || null;
   await approveAndSend(campaignId, group, limit);
   after(runWriter); // leads missing newly released steps were sent back to the writer
@@ -151,6 +161,7 @@ export async function approveGroupAndSend(campaignId: number, group: BatchGroup,
 /** Queue AI writing for all 'new' (and optionally 'error') leads in a campaign. Runs after the response. */
 export async function writeEmails(campaignId: number, includeErrors = false) {
   await requireClientAccess(await clientOfCampaign(campaignId));
+  await refuseNexus(campaignId);
   const c = await requireCampaign(campaignId);
   const n = (await run(
     `UPDATE leads SET stage = 'drafting', stage_message = NULL WHERE campaign_id = ? AND ${PASSED}
@@ -201,6 +212,7 @@ async function refreshLeadStage(leadId: number) {
 
 export async function saveDraft(draftId: number, subject: string, body: string) {
   await requireClientAccess(await clientOfDraft(draftId));
+  await refuseNexus(await campaignOfDraft(draftId));
   const d = await get<{ lead_id: number; subject: string; body: string }>("SELECT lead_id, subject, body FROM drafts WHERE id = ?", draftId);
   if (!d) throw new Error("Draft not found");
   const edited = d.subject !== subject || d.body !== body ? 1 : 0;
@@ -210,6 +222,7 @@ export async function saveDraft(draftId: number, subject: string, body: string) 
 /** Approve every step of a lead (after saving any edits the reviewer made). */
 export async function approveLead(leadId: number, edits: { id: number; subject: string; body: string }[] = []) {
   await requireClientAccess(await clientOfLead(leadId));
+  await refuseNexus(await campaignOfLead(leadId));
   if (!(await get(`SELECT 1 FROM leads WHERE id = ? AND ${PASSED}`, leadId))) throw new Error("This contact's address hasn't been checked yet, so it can't be approved.");
   await tx(async () => {
     for (const e of edits) {
@@ -227,6 +240,7 @@ export async function approveLead(leadId: number, edits: { id: number; subject: 
 
 export async function rejectLead(leadId: number) {
   await requireClientAccess(await clientOfLead(leadId));
+  await refuseNexus(await campaignOfLead(leadId));
   // For a lead already in Instantly this only rejects its new emails; it's removed from the campaign on release.
   await run("UPDATE drafts SET status = 'rejected', reviewed_at = datetime('now') WHERE lead_id = ? AND step >= ?", leadId, (await decisionScope(leadId)).fromStep);
   await refreshLeadStage(leadId);
@@ -235,12 +249,14 @@ export async function rejectLead(leadId: number) {
 
 export async function rewriteDraft(draftId: number, guidance: string) {
   await requireClientAccess(await clientOfDraft(draftId));
+  await refuseNexus(await campaignOfDraft(draftId));
   await rewriteStep(draftId, guidance);
   revalidatePath("/", "layout");
 }
 
 export async function redraftLead(leadId: number) {
   await requireClientAccess(await clientOfLead(leadId));
+  await refuseNexus(await campaignOfLead(leadId));
   const { extending, fromStep } = await decisionScope(leadId);
   await run("DELETE FROM drafts WHERE lead_id = ? AND step >= ?", leadId, fromStep);
   await run("UPDATE leads SET stage = ? WHERE id = ?", extending ? "extending" : "drafting", leadId);
@@ -250,6 +266,8 @@ export async function redraftLead(leadId: number) {
 
 export async function pushCampaign(campaignId: number) {
   await requireClientAccess(await clientOfCampaign(campaignId));
+  // Nexus decides when its people are handed over (one at a time, or all together).
+  await refuseNexus(campaignId);
   const r = await pushApproved(campaignId);
   after(runWriter); // leads missing newly released steps were sent back to the writer
   revalidatePath("/", "layout");
@@ -357,7 +375,7 @@ export async function pushAllApproved(clientId: number | null) {
   else await requireAdmin();
   const rows = await all<{ campaign_id: number }>(
     `SELECT DISTINCT l.campaign_id FROM leads l JOIN campaigns c ON c.id = l.campaign_id
-     WHERE l.stage = 'approved' AND c.instantly_campaign_id IS NOT NULL ${clientId ? "AND l.client_id = ?" : ""}`,
+     WHERE l.stage = 'approved' AND c.instantly_campaign_id IS NOT NULL AND c.source <> 'nexus' ${clientId ? "AND l.client_id = ?" : ""}`,
     ...(clientId ? [clientId] : []),
   );
   let total = NO_PUSH;
@@ -384,7 +402,7 @@ export async function approveAllUnflagged(clientId: number | null, campaignId: n
   if (campaignId && clientId && (await clientOfCampaign(campaignId)) !== clientId) throw new Error("Campaign not found");
   const ids = (await all<{ id: number }>(
     `SELECT l.id FROM leads l JOIN campaigns c ON c.id = l.campaign_id
-     WHERE l.stage IN ('review', 'extend_review') ${clientId ? "AND l.client_id = ?" : ""} ${campaignId ? "AND l.campaign_id = ?" : ""}
+     WHERE l.stage IN ('review', 'extend_review') AND c.source <> 'nexus' ${clientId ? "AND l.client_id = ?" : ""} ${campaignId ? "AND l.campaign_id = ?" : ""}
        AND l.${PASSED}
        AND NOT EXISTS (SELECT 1 FROM drafts d WHERE d.lead_id = l.id AND d.flags IS NOT NULL
                        AND (l.stage = 'review' OR d.step > COALESCE(c.hold_after, 0)))`,

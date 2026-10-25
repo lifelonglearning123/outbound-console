@@ -130,7 +130,12 @@ export async function pushApproved(campaignId: number, opts: { onlyWaiting?: boo
     const mine = drafts.filter((d) => d.lead_id === lead.id && d.step <= live);
     // A hold was released while this lead waited: write the steps it's missing, then it comes back for review.
     if (mine.length < live) {
-      await run("UPDATE leads SET stage = 'drafting' WHERE id = ?", lead.id);
+      // Nexus writes its own campaigns' emails: the contact waits for Nexus to send the rest of its words.
+      if (campaign.source === "nexus") {
+        await run("UPDATE leads SET stage = 'new', stage_message = 'Waiting for Nexus to send every email for this contact' WHERE id = ?", lead.id);
+      } else {
+        await run("UPDATE leads SET stage = 'drafting' WHERE id = ?", lead.id);
+      }
       continue;
     }
     // Belt and braces: re-check approval at the last moment.

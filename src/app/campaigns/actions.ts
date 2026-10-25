@@ -5,7 +5,7 @@ import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { run, logActivity } from "@/lib/db";
 import {
-  campaignStepProblems, liveSteps, pushedLeadCount, requireCampaign, setCampaignRunning, syncCampaignToInstantly,
+  campaignStepProblems, isNexus, liveSteps, NEXUS_NOTICE, pushedLeadCount, requireCampaign, setCampaignRunning, syncCampaignToInstantly,
   toInstantlySchedule, type Step,
 } from "@/lib/campaigns";
 import { applyRelease, cancelRelease, prepareRelease, retryFailed } from "@/lib/hold";
@@ -79,6 +79,7 @@ function readForm(form: FormData) {
 export async function saveCampaign(clientId: number, campaignId: number | null, form: FormData) {
   await requireClientAccess(clientId);
   if (campaignId && (await clientOfCampaign(campaignId)) !== clientId) throw new Error("Campaign not found");
+  if (campaignId && isNexus(await requireCampaign(campaignId))) throw new Error(NEXUS_NOTICE);
   const { step_count, ...fields } = readForm(form);
   let id = campaignId;
   if (id) {

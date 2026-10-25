@@ -3,7 +3,7 @@ import { notFound } from "next/navigation";
 import Link from "next/link";
 import { after } from "next/server";
 import { all, get, getSetting } from "@/lib/db";
-import { getCampaign, liveSteps } from "@/lib/campaigns";
+import { getCampaign, isNexus, liveSteps } from "@/lib/campaigns";
 import { requireClient } from "@/lib/clients";
 import { verifyLeads, writeEmails } from "@/app/leads/actions";
 import { runVerifier, uncheckedCount } from "@/lib/verify";
@@ -30,6 +30,8 @@ export default async function CampaignContactsPage({ params, searchParams }: Pag
   await requireClientAccess(clientId); // only admins and this client's own logins
   const c = await getCampaign(Number(cid));
   if (!c || c.client_id !== clientId) notFound();
+  // Run from Nexus: people arrive from Nexus, and Nexus writes and approves their emails.
+  const nexus = isNexus(c);
   const client = await requireClient(clientId);
   const sp = await searchParams;
   const errorCount = (await get<{ n: number }>("SELECT COUNT(*) n FROM leads WHERE campaign_id = ? AND stage = 'error' AND pushed_at IS NULL", c.id))?.n ?? 0;
@@ -73,14 +75,30 @@ export default async function CampaignContactsPage({ params, searchParams }: Pag
 
       {/* 2. Add */}
       <section className="grid grid-cols-1 gap-6 lg:grid-cols-[1fr_320px]">
-        <LeadImporter clientId={clientId} campaigns={[{ id: c.id, name: c.name }]} campaignId={c.id} ghlTag={c.ghl_tag} hasGhl={Boolean(client.ghl_location_id && client.ghl_token)} />
+        {nexus ? (
+          <div className="card flex flex-col gap-2 p-5 text-sm text-muted">
+            <h2 className="font-semibold text-ink">People come from Nexus</h2>
+            <p>Nexus adds people to this campaign, and every address is checked with Instantly as soon as it arrives.</p>
+            <p>Remove anyone you don&apos;t want emailed from the list below, or hold back a mail filter. Nexus writes each person&apos;s emails once their address passes, and they are only sent when Nexus hands them over.</p>
+          </div>
+        ) : (
+          <LeadImporter clientId={clientId} campaigns={[{ id: c.id, name: c.name }]} campaignId={c.id} ghlTag={c.ghl_tag} hasGhl={Boolean(client.ghl_location_id && client.ghl_token)} />
+        )}
         <div className="card flex flex-col gap-3 p-5">
           <h2 className="font-semibold">What happens next</h2>
+          {nexus ? (
+            <ol className="flex flex-col gap-2 text-sm text-muted">
+              <li><span className="font-medium text-ink">1. Checked.</span> Every address is checked with Instantly as soon as it arrives. Invalid ones are set aside.</li>
+              <li><span className="font-medium text-ink">2. Written in Nexus.</span> Contacts that pass get their emails from Nexus, reviewed there.</li>
+              <li><span className="font-medium text-ink">3. Sent.</span> Nexus hands them over; held filters and problem companies are still kept back here.</li>
+            </ol>
+          ) : (
           <ol className="flex flex-col gap-2 text-sm text-muted">
             <li><span className="font-medium text-ink">1. Checked.</span> Every address is checked with Instantly as soon as it arrives. Invalid ones are set aside.</li>
             <li><span className="font-medium text-ink">2. Prepared.</span> Contacts that pass get their copy of the email, with their name and company filled in.</li>
             <li><span className="font-medium text-ink">3. Ready to send.</span> Verified contacts wait for your go on the Approve tab; unconfirmed ones are your call.</li>
           </ol>
+          )}
           {verifyError && report.checking > 0 && <p className="text-sm text-bad">{verifyError}</p>}
           {report.credits && (
             <p className="text-xs text-muted">Check credits left: <span className="num">{Number(report.credits).toLocaleString("en-GB")}</span> (a quarter of a credit per contact)</p>
@@ -90,13 +108,13 @@ export default async function CampaignContactsPage({ params, searchParams }: Pag
               <SubmitButton pendingLabel="Starting…">Check {n(unchecked)} added before checks were automatic</SubmitButton>
             </form>
           )}
-          {(stuckNew > 0 || errorCount > 0) && (
+          {!nexus && (stuckNew > 0 || errorCount > 0) && (
             <div className="flex flex-wrap gap-2">
               {stuckNew > 0 && <form action={writeEmails.bind(null, c.id, false)}><SubmitButton pendingLabel="Starting…">Prepare {n(stuckNew)} emails</SubmitButton></form>}
               {errorCount > 0 && <form action={writeEmails.bind(null, c.id, true)}><SubmitButton pendingLabel="Starting…">Retry {n(errorCount)} that failed</SubmitButton></form>}
             </div>
           )}
-          {report.counts.verified > 0 && (
+          {!nexus && report.counts.verified > 0 && (
             <Link href={`/clients/${clientId}/campaigns/${c.id}/approve`} className="text-sm text-go underline">Go to Approve →</Link>
           )}
         </div>

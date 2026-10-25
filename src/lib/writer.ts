@@ -1,7 +1,7 @@
 import "server-only";
 import { all, get, run, tx, logActivity, withLock } from "./db";
 import { requireClient, type Brief } from "./clients";
-import { requireCampaign, writeTarget, type Step } from "./campaigns";
+import { IN_NEXUS_CAMPAIGN, isNexus, NEXUS_NOTICE, requireCampaign, writeTarget, type Step } from "./campaigns";
 import type { LeadRow } from "./leads";
 import { htmlToText, renderMerge, stripCodeFence } from "./merge";
 import { refreshFromGhl } from "./ghlsync";
@@ -129,6 +129,11 @@ async function writeForLead(leadId: number) {
   const extending = lead.stage === "extending";
   const client = await requireClient(lead.client_id);
   const campaign = await requireCampaign(lead.campaign_id);
+  // Nexus writes its own campaigns' emails; a lead that strayed into 'drafting' waits for Nexus instead.
+  if (isNexus(campaign)) {
+    await run("UPDATE leads SET stage = 'new', stage_message = NULL WHERE id = ? AND stage = 'drafting'", leadId);
+    return;
+  }
 
   // GHL is the source of truth: take the contact's current details (and respect its Do-Not-Disturb).
   if (!(await refreshFromGhl(client, lead))) return;
@@ -201,7 +206,10 @@ export async function runWriter() {
 async function writeAll() {
   {
     for (;;) {
-      const batch = await all<{ id: number; client_id: number; stage: string }>("SELECT id, client_id, stage FROM leads WHERE stage IN ('drafting','extending') ORDER BY id LIMIT ?", CONCURRENCY);
+      const batch = await all<{ id: number; client_id: number; stage: string }>(
+        `SELECT id, client_id, stage FROM leads l WHERE stage IN ('drafting','extending') AND NOT ${IN_NEXUS_CAMPAIGN("l")} ORDER BY id LIMIT ?`,
+        CONCURRENCY,
+      );
       if (batch.length === 0) break;
       const results = await Promise.allSettled(batch.map((l) => writeForLead(l.id)));
       for (const [i, r] of results.entries()) {
@@ -226,6 +234,7 @@ export async function rewriteStep(draftId: number, guidance: string) {
   const lead = (await get<LeadRow>("SELECT * FROM leads WHERE id = ?", d.lead_id))!;
   const client = await requireClient(lead.client_id);
   const campaign = await requireCampaign(lead.campaign_id!);
+  if (isNexus(campaign)) throw new Error(NEXUS_NOTICE);
   const others = await all<{ step: number; subject: string; body: string }>("SELECT step, subject, body FROM drafts WHERE lead_id = ? AND step != ? ORDER BY step", d.lead_id, d.step);
 
   const out = await llmJson<{ emails: { step: number; subject: string; body: string }[] }>({

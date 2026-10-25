@@ -35,7 +35,23 @@ export type Campaign = {
   sending_diag_at: string | null;
   last_synced_at: string | null;
   created_at: string;
+  source: "console" | "nexus"; // 'nexus': run from Nexus, which writes, approves and answers (nexus.ts)
+  nexus_campaign_id: string | null;
+  nexus_webhook_id: string | null;
+  nexus_webhook_url: string | null;
+  nexus_webhook_token_hash: string | null;
 };
+
+/** Run from Nexus: the console checks addresses and sends, but never writes, approves or answers for it. */
+export const isNexus = (c: Pick<Campaign, "source"> | null | undefined) => c?.source === "nexus";
+
+/** Said on every page of a Nexus campaign, and by every action it refuses. */
+export const NEXUS_NOTICE =
+  "Run from Nexus. The steps, the emails and replies are handled there. Contacts, address checks, mail filters, mailboxes and statistics work as usual here.";
+
+/** SQL: the lead (aliased `a`) is in a campaign run from Nexus. */
+export const IN_NEXUS_CAMPAIGN = (a: string) =>
+  `EXISTS (SELECT 1 FROM campaigns nc WHERE nc.id = ${a}.campaign_id AND nc.source = 'nexus')`;
 
 export const DEFAULT_STEPS: Step[] = [
   { delay_days: 3, instructions: "First touch. One specific observation about them, the problem we solve, one proof point, a soft question as the CTA. Under 90 words." },

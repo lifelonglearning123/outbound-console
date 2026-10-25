@@ -20,6 +20,7 @@ const leads = new Map(); // id -> lead
 const verifications = new Map(); // email -> verification result
 const emails = [];
 const sentCount = new Map();
+const webhooks = new Map(); // id -> webhook (the Nexus partner API registers one per campaign)
 
 function render(tpl, lead) {
   return tpl.replace(/\{\{(\w+)\}\}/g, (_, k) => {
@@ -164,7 +165,26 @@ const routes = [
     for (const l of leads.values()) if (l.email === body.lead_email) l.lt_interest_status = body.interest_value;
     return { message: "queued" };
   }],
+  ["GET", /^\/webhooks$/, (m, q) => page([...webhooks.values()].filter((w) => !q.get("campaign") || w.campaign === q.get("campaign")), q)],
+  ["POST", /^\/webhooks$/, (m, q, body) => {
+    if (!body.target_hook_url) throw Object.assign(new Error("target_hook_url is required"), { code: 400 });
+    const w = { id: randomUUID(), status: 1, timestamp_created: now(), campaign: null, event_type: null, headers: null, ...body };
+    webhooks.set(w.id, w);
+    return w;
+  }],
+  ["DELETE", /^\/webhooks\/([\w-]+)$/, (m) => {
+    const w = webhooks.get(m[1]);
+    if (!w) throw Object.assign(new Error("Resource not found"), { code: 404 });
+    webhooks.delete(m[1]);
+    return w;
+  }],
   ["GET", /^\/emails$/, (m, q) => {
+    // One lead's emails in one campaign (the partner API's reply lookup): no sending, newest first when asked.
+    if (q.get("lead")) {
+      const mine = emails.filter((e) => e.lead === q.get("lead") && (!q.get("campaign_id") || e.campaign_id === q.get("campaign_id")));
+      const sorted = [...mine].sort((a, b) => a.timestamp_created.localeCompare(b.timestamp_created));
+      return page(q.get("sort_order") === "desc" ? sorted.reverse() : sorted, q);
+    }
     if (q.get("scheduled_only") === "true") {
       const due = [];
       let t = Date.now() + 20 * 60_000;

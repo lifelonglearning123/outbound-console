@@ -2,7 +2,7 @@ import { requireClientAccess } from "@/lib/auth";
 import { notFound } from "next/navigation";
 import Link from "next/link";
 import { all, get } from "@/lib/db";
-import { campaignStepProblems, getCampaign, liveSteps } from "@/lib/campaigns";
+import { campaignStepProblems, getCampaign, isNexus, liveSteps } from "@/lib/campaigns";
 import { campaignProgress } from "@/lib/progress";
 import { approvedBreakdown } from "@/lib/push";
 import { AutoRefresh } from "@/components/AutoRefresh";
@@ -61,18 +61,21 @@ export default async function CampaignSendingPage({ params, searchParams }: Page
       )
     : [];
 
-  // Where the user should go next, when nothing is being sent yet.
+  // Where the user should go next, when nothing is being sent yet. A Nexus campaign's people are written,
+  // approved and handed over from Nexus, so its hints point at the contacts here and say Nexus is next.
+  const nexus = isNexus(c);
+  const approveHref = nexus ? `${base}/contacts` : `${base}/approve`;
   const next =
     p.contacts === 0
-      ? { href: `${base}/contacts`, text: "Add contacts to this campaign." }
+      ? { href: `${base}/contacts`, text: nexus ? "No contacts yet: Nexus adds them when the campaign starts there." : "Add contacts to this campaign." }
       : p.ready > 0 || split.sendable > 0
-        ? { href: `${base}/approve`, text: `${n(p.ready + split.sendable)} contacts are ready to send.` }
+        ? { href: approveHref, text: nexus ? `${n(p.ready + split.sendable)} contacts are waiting for Nexus to hand them over.` : `${n(p.ready + split.sendable)} contacts are ready to send.` }
         : split.approved > 0
-          ? { href: `${base}/approve`, text: `${n(split.approved)} approved contacts are held or waiting; see why.` }
+          ? { href: approveHref, text: `${n(split.approved)} approved contacts are held or waiting; see why.` }
         : p.checking > 0
           ? { href: `${base}/contacts`, text: `${n(p.checking)} addresses are still being checked.` }
-          : p.unconfirmed > 0
-            ? { href: `${base}/approve`, text: `${n(p.unconfirmed)} unconfirmed contacts could be sent in small batches.` }
+          : p.unconfirmed > 0 && !nexus
+            ? { href: approveHref, text: `${n(p.unconfirmed)} unconfirmed contacts could be sent in small batches.` }
             : null;
   const highBounce = t.emailed > 0 && t.bounced / t.emailed > 0.03;
   let diag: SendingStatus | null = null;

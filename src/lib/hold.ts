@@ -1,7 +1,7 @@
 import "server-only";
 import { all, get, run, tx, logActivity } from "./db";
 import { requireClient } from "./clients";
-import { requireCampaign, liveSteps, syncCampaignToInstantly, campaignStepProblems } from "./campaigns";
+import { requireCampaign, liveSteps, syncCampaignToInstantly, campaignStepProblems, isNexus, NEXUS_NOTICE } from "./campaigns";
 import { instantly } from "./instantly";
 import { copyVars } from "./push";
 import { campaignState } from "./connection";
@@ -50,6 +50,7 @@ export async function holdStatus(campaignId: number): Promise<HoldStatus> {
 /** Step 1: write the next emails for every lead that will receive them. */
 export async function prepareRelease(campaignId: number, upTo: number) {
   const c = await requireCampaign(campaignId);
+  if (isNexus(c)) throw new Error(NEXUS_NOTICE);
   const live = liveSteps(c);
   if (c.release_to) throw new Error("A release is already in progress");
   if (upTo <= live || upTo > c.steps.length) throw new Error(`Pick a step between ${live + 1} and ${c.steps.length}`);
@@ -97,6 +98,7 @@ export async function retryFailed(campaignId: number) {
 /** Step 3: put the approved emails and the new steps into Instantly. */
 export async function applyRelease(campaignId: number): Promise<string> {
   const c = await requireCampaign(campaignId);
+  if (isNexus(c)) throw new Error(NEXUS_NOTICE);
   if (!c.release_to || !c.instantly_campaign_id) throw new Error("Nothing to release");
   const s = await holdStatus(campaignId);
   if (s.writing || s.review || s.failed) {

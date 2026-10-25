@@ -37,6 +37,27 @@ function secret(): string {
 
 const sign = (payload: string) => createHmac("sha256", secret()).update(payload).digest("base64url");
 
+/** A signed token for a short-lived link (the one-time sign-in from Nexus): base64url JSON, a dot, its HMAC. */
+export function signToken(data: Record<string, unknown>): string {
+  const payload = Buffer.from(JSON.stringify(data)).toString("base64url");
+  return `${payload}.${sign(payload)}`;
+}
+
+/** The token's data when its signature holds, else null. Expiry is the caller's to check. */
+export function readToken<T>(token: string | null | undefined): T | null {
+  if (!token) return null;
+  const [payload, sig] = token.split(".");
+  if (!payload || !sig) return null;
+  const good = Buffer.from(sign(payload));
+  const given = Buffer.from(sig);
+  if (good.length !== given.length || !timingSafeEqual(good, given)) return null;
+  try {
+    return JSON.parse(Buffer.from(payload, "base64url").toString()) as T;
+  } catch {
+    return null;
+  }
+}
+
 export async function startSession(userId: number) {
   const payload = Buffer.from(JSON.stringify({ uid: userId, exp: Date.now() + MAX_AGE * 1000 })).toString("base64url");
   (await cookies()).set(COOKIE, `${payload}.${sign(payload)}`, {

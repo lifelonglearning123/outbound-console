@@ -105,7 +105,7 @@ export function readFilters(sp: Record<string, string | string[] | undefined> | 
 }
 
 export const sourceLabel = (v: string) =>
-  v.startsWith("tag: ") ? `Portal tag "${v.slice(5)}"` : v === "typed in" || v === "manual" ? "Typed in" : v === "ghl" ? "Nexus Portal" : v === "csv" ? "CSV file" : v;
+  v.startsWith("tag: ") ? `Portal tag "${v.slice(5)}"` : v === "typed in" || v === "manual" ? "Typed in" : v === "ghl" ? "Nexus Portal" : v === "csv" ? "CSV file" : v === "nexus" ? "A Nexus campaign" : v;
 
 /** The filters in words, for confirmations and the activity log. */
 export function describeFilters(f: PeopleFilters): string {

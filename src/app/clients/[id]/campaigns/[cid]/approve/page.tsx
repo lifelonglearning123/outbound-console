@@ -1,7 +1,7 @@
 import { requireClientAccess } from "@/lib/auth";
 import { notFound } from "next/navigation";
 import Link from "next/link";
-import { getCampaign } from "@/lib/campaigns";
+import { getCampaign, isNexus, NEXUS_NOTICE } from "@/lib/campaigns";
 import { batchInfo } from "@/lib/progress";
 import { reviewQueue, approvalCounts } from "@/lib/approvals";
 import { approveGroupAndSend } from "@/app/leads/actions";
@@ -26,6 +26,8 @@ export default async function CampaignApprovePage({ params, searchParams }: Page
   await requireClientAccess(clientId); // only admins and this client's own logins
   const c = await getCampaign(Number(cid));
   if (!c || c.client_id !== clientId) notFound();
+  // Nexus approves this campaign's emails and decides when people are handed over.
+  if (isNexus(c)) return <p className="text-sm text-muted">{NEXUS_NOTICE}</p>;
   const sp = await searchParams;
   const eachOne = sp.each === "1";
   const b = await batchInfo(c.id);

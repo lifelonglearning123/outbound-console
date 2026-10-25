@@ -155,7 +155,7 @@ type Earlier = {
 export async function importLeads(
   clientId: number,
   campaignId: number,
-  source: "csv" | "ghl" | "manual",
+  source: "csv" | "ghl" | "manual" | "nexus",
   sourceRef: string,
   leads: LeadFields[],
   log = true,
@@ -216,8 +216,12 @@ export async function importLeads(
     const prior = existing ? undefined : others.find((e) => e.verification === "verified" || e.verification === "catch_all");
     const portal = source === "ghl" && w.ghl ? l.check : null;
     if (prior) {
-      // Checked in an earlier campaign: keep that result and prepare the email straight away.
-      Object.assign(w, { verification: prior.verification, verified_at: prior.verified_at, tag: prior.ghl_verification_tag === "done" ? "done" : null, stage: "drafting" });
+      // Checked in an earlier campaign: keep that result and prepare the email straight away. Nexus writes its own
+      // campaigns' emails, so those contacts wait at 'new' for it instead.
+      Object.assign(w, {
+        verification: prior.verification, verified_at: prior.verified_at, tag: prior.ghl_verification_tag === "done" ? "done" : null,
+        stage: source === "nexus" ? "new" : "drafting",
+      });
       r.reused++;
     } else if (portal && w.verification === "queued") {
       // Already tagged with a result in the portal; a contact mid-check or already checked keeps its own result.

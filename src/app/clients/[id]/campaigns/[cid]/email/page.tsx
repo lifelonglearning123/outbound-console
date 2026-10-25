@@ -1,6 +1,6 @@
 import { requireClientAccess } from "@/lib/auth";
 import { notFound } from "next/navigation";
-import { formMailboxes, getCampaign, liveSteps, pushedLeadCount } from "@/lib/campaigns";
+import { formMailboxes, getCampaign, isNexus, liveSteps, NEXUS_NOTICE, pushedLeadCount } from "@/lib/campaigns";
 import { saveCampaign } from "@/app/campaigns/actions";
 import { CampaignForm } from "@/components/CampaignForm";
 import { requireClient } from "@/lib/clients";
@@ -13,6 +13,8 @@ export default async function CampaignEmailPage({ params }: PageProps<"/clients/
   await requireClientAccess(clientId); // only admins and this client's own logins
   const c = await getCampaign(Number(cid));
   if (!c || c.client_id !== clientId) notFound();
+  // Nexus writes this campaign's emails and keeps its steps; nothing to edit here.
+  if (isNexus(c)) return <p className="text-sm text-muted">{NEXUS_NOTICE}</p>;
 
   const mailboxes = await formMailboxes(clientId);
   const client = await requireClient(clientId);

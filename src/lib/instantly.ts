@@ -297,6 +297,15 @@ export type AddLeadsResult = {
   remaining_in_plan?: number;
 };
 
+/** POST /webhooks. status 1 is active, -1 disabled after delivery failures. */
+export type Webhook = {
+  id: string;
+  campaign: string | null;
+  target_hook_url: string;
+  event_type: string | null;
+  status?: number;
+};
+
 /** POST/GET /email-verification. `catch_all` is true/false, or "pending" while Instantly is still checking. */
 export type EmailVerification = {
   email: string;
@@ -399,6 +408,16 @@ export function instantly(key: string) {
     blockEmail: (email: string) => call(key, "POST", "/block-lists-entries", { body: { bl_value: email } }),
     reply: (body: { eaccount: string; reply_to_uuid: string; subject: string; body: { html?: string; text?: string } }) =>
       call<Email>(key, "POST", "/emails/reply", { body }),
+    /** The newest emails with one lead in one campaign, newest first, both directions. */
+    emailsWithLead: async (campaignId: string, leadEmail: string) =>
+      (await call<Page<Email>>(key, "GET", "/emails", {
+        query: { campaign_id: campaignId, lead: leadEmail, sort_order: "desc", limit: 10 },
+      })).items ?? [],
+
+    /** Have Instantly post the events of `campaign` (null: the whole workspace) to the url, with these headers. */
+    createWebhook: (body: { target_hook_url: string; event_type: string; campaign: string | null; name: string; headers: Record<string, string> }) =>
+      call<Webhook>(key, "POST", "/webhooks", { body }),
+    deleteWebhook: (id: string) => call<Webhook>(key, "DELETE", `/webhooks/${encodeURIComponent(id)}`),
   };
 }
 

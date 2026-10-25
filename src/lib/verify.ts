@@ -3,6 +3,7 @@ import { all, get, run, tx, logActivity, setSetting, withLock } from "./db";
 import { requireClient } from "./clients";
 import { instantly, InstantlyError, type EmailVerification } from "./instantly";
 import { runWriter } from "./writer";
+import { IN_NEXUS_CAMPAIGN } from "./campaigns";
 
 /**
  * Email verification through Instantly, before a lead can be approved and pushed.
@@ -107,7 +108,11 @@ async function verifyAll() {
           tallies.set(lead.client_id, t);
           if (outcome !== "invalid") {
             // Passed: prepare the email now, so the contact turns up as ready to send without another click.
-            advanced += (await run("UPDATE leads SET stage = 'drafting', stage_message = NULL WHERE id = ? AND stage = 'new'", lead.id)).changes;
+            // A Nexus campaign's contacts wait at 'new' for Nexus to send their words.
+            advanced += (await run(
+              `UPDATE leads l SET stage = 'drafting', stage_message = NULL WHERE l.id = ? AND l.stage = 'new' AND NOT ${IN_NEXUS_CAMPAIGN("l")}`,
+              lead.id,
+            )).changes;
           }
         }
         continue;
