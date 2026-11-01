@@ -50,6 +50,15 @@ export const FAQ: FaqSection[] = [
           ],
         ],
       },
+      {
+        id: "unable-to-verify",
+        question: "Why does a real email address, such as my own Yahoo address, show “Unable to verify”?",
+        answer: [
+          "It doesn't mean anything is wrong with the address, only that the check couldn't confirm it exists. The check asks the mail server whether the address exists, without sending anything, and it doesn't always get a clear answer.",
+          "This is common for two kinds of address: companies whose mail server accepts every address, and providers such as Yahoo, which reportedly don't give a straight answer, to stop spammers harvesting real addresses. So expect good Yahoo addresses to show this too.",
+          "These contacts can still be sent to. They wait under Unconfirmed, your call on the Approvals tab until you approve them. Sending is the real test: the email may arrive or it may bounce, so send a few at a time and watch the bounce figure on the Sending tab.",
+        ],
+      },
     ],
   },
   {
