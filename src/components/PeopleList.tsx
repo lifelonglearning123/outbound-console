@@ -5,12 +5,12 @@ import { requireClient, type Client } from "@/lib/clients";
 import { dateTime, toDate } from "@/lib/format";
 import { otherCampaigns, type OtherCampaign } from "@/lib/leads";
 import {
-  checkOption, defaultDir, describeFilters, hostLabel, listPeople, nonPeopleParams, peopleFacets, personName, personState, readFilters,
+  bouncedGroups, checkOption, defaultDir, describeFilters, hostLabel, listPeople, nonPeopleParams, peopleFacets, personName, personState, readFilters,
   readSort, sortParams, sourceLabel, type Facet, type PeopleScope, type Person, type SortKey,
 } from "@/lib/people";
-import { portalTagStatus, runPortalTagging } from "@/lib/portalTags";
+import { portalDeleteStatus, portalTagStatus, runPortalDeletions, runPortalTagging } from "@/lib/portalTags";
 import { PORTAL } from "@/lib/verifyReport";
-import { removeMatching, removeSelected, retryTagging, tagMatching } from "@/app/leads/actions";
+import { deleteBounced, removeMatching, removeSelected, retryDeletions, retryTagging, tagMatching } from "@/app/leads/actions";
 import { AutoRefresh } from "@/components/AutoRefresh";
 import { ConfirmButton } from "@/components/ConfirmButton";
 import { PeopleFilters } from "@/components/PeopleFilters";
@@ -49,14 +49,17 @@ export async function PeopleList({
   const filters = readFilters(sp);
   const sort = readSort(sp);
   const page = Math.max(1, Math.floor(Number(sp.page)) || 1);
-  const [facets, list, client, tagging] = await Promise.all([
+  const [facets, list, client, tagging, deleting] = await Promise.all([
     peopleFacets(scope, filters),
     listPeople(scope, filters, sort, page, PAGE),
     requireClient(scope.clientId),
     portalTagStatus(scope.clientId),
+    portalDeleteStatus(scope.clientId),
   ]);
   if (tagging.queued > 0) after(runPortalTagging); // keep the portal tagging going while someone is watching
+  if (deleting.queued > 0) after(runPortalDeletions);
   const portal = Boolean(client.ghl_location_id && client.ghl_token);
+  const bounced = portal && filters.status === "bounced" ? await bouncedGroups(scope, filters) : null;
   const elsewhere: Map<string, OtherCampaign[]> = scope.campaignId
     ? await otherCampaigns(scope.clientId, scope.campaignId, list.rows.map((r) => r.email))
     : new Map();
@@ -217,8 +220,62 @@ export async function PeopleList({
           </ConfirmButton>
         </form>
       )}
-      <AutoRefresh active={tagging.queued > 0} everyMs={5000} />
+      <AutoRefresh active={tagging.queued > 0 || deleting.queued > 0} everyMs={5000} />
       {tagging.queued > 0 && <p className="text-xs text-info">Tagging {n(tagging.queued)} contacts in the {PORTAL}…</p>}
+      {deleting.queued > 0 && <p className="text-xs text-info">Deleting {n(deleting.queued)} bounced contacts from the {PORTAL}…</p>}
+      {deleting.failed > 0 && (
+        <form action={retryDeletions.bind(null, scope.clientId)} className="flex flex-wrap items-center gap-2 text-xs text-bad">
+          <span>
+            {n(deleting.failed)} bounced contacts couldn&apos;t be deleted from the {PORTAL}
+            {deleting.lastError ? `: ${deleting.lastError}` : ""}.
+          </span>
+          <SubmitButton className="btn text-xs" pendingLabel="Retrying…">Try again</SubmitButton>
+        </form>
+      )}
+      {bounced && bounced.clear.length + bounced.unsure.length + bounced.filter + bounced.engaged > 0 && (
+        <div className="card flex flex-col gap-2 p-4 text-sm">
+          <div>
+            <h3 className="font-medium">Delete bounced contacts from the {PORTAL}</h3>
+            <p className="text-xs text-muted">
+              This can&apos;t be undone, and it also removes their history in the portal. The console keeps its record, so they stay suppressed and
+              the campaign figures don&apos;t change. <a href={exportHref} className="underline">Download this list first</a> to keep a copy.
+            </p>
+          </div>
+          {bounced.clear.length > 0 && (
+            <form action={deleteBounced.bind(null, scope.clientId, scope.campaignId, new URLSearchParams(values).toString(), "clear")} className="flex flex-wrap items-center gap-3">
+              <ConfirmButton
+                className="btn-bad text-xs"
+                message={`Permanently delete ${n(bounced.clear.length)} bounced contacts from the ${PORTAL}, including their history there? This can't be undone.`}
+              >
+                Delete {n(bounced.clear.length)} likely dead addresses
+              </ConfirmButton>
+              <span className="text-xs text-muted">Never passed an address check and not behind a mail filter.</span>
+            </form>
+          )}
+          {bounced.unsure.length > 0 && (
+            <form action={deleteBounced.bind(null, scope.clientId, scope.campaignId, new URLSearchParams(values).toString(), "unsure")} className="flex flex-wrap items-center gap-3">
+              <ConfirmButton
+                className="btn text-xs"
+                message={`Permanently delete ${n(bounced.unsure.length)} bounced contacts from the ${PORTAL}, including their history there? Some of these may be real people: they passed an address check or sit behind a mail filter. This can't be undone.`}
+              >
+                Delete {n(bounced.unsure.length)} that may be real
+              </ConfirmButton>
+              <span className="text-xs text-muted">
+                Passed an address check, or sit behind a mail filter, and still bounced. The person may have left, or the mail server may have refused the sender.
+              </span>
+            </form>
+          )}
+          {bounced.filter + bounced.engaged > 0 && (
+            <p className="text-xs text-muted">
+              Not offered:{" "}
+              {[
+                bounced.filter > 0 && `${n(bounced.filter)} with a checked address that a mail filter refused, who can be tried again`,
+                bounced.engaged > 0 && `${n(bounced.engaged)} who replied or booked a meeting`,
+              ].filter(Boolean).join(", and ")}.
+            </p>
+          )}
+        </div>
+      )}
       {tagging.failed > 0 && (
         <form action={retryTagging.bind(null, scope.clientId)} className="flex flex-wrap items-center gap-2 text-xs text-bad">
           <span>

@@ -1,7 +1,8 @@
 import "server-only";
 import { all, get } from "./db";
-import { GATEWAY_LABEL, PROVIDER_LABEL, type Gateway, type Provider } from "./mailhost";
+import { BEHIND_GATEWAY, GATEWAY_LABEL, PROVIDER_LABEL, type Gateway, type Provider } from "./mailhost";
 import { GHL_TAGS } from "./checkTags";
+import { DELETED_FROM_PORTAL, FILTER_BLOCKED } from "./leads";
 import { INTEREST_LABELS } from "./triage";
 import { contactStatus } from "./stages";
 
@@ -169,7 +170,7 @@ function facts(s: PeopleScope): string {
         bool_or(interest = 'interested') interested, bool_or(interest = 'unsubscribe') unsubscribed
       FROM emails WHERE client_id = @clientId AND direction = 'in' AND lead_id IS NOT NULL GROUP BY lead_id) r ON r.lead_id = l.id
     LEFT JOIN (SELECT lead_id, MIN(booked_at) meeting_at FROM meetings WHERE client_id = @clientId GROUP BY lead_id) mt ON mt.lead_id = l.id
-    LEFT JOIN (SELECT lead_id, string_agg(tag, ', ' ORDER BY tag) tags FROM lead_tags WHERE client_id = @clientId AND status <> 'error'
+    LEFT JOIN (SELECT lead_id, string_agg(tag, ', ' ORDER BY tag) tags FROM lead_tags WHERE client_id = @clientId AND status NOT IN ('error', 'gone')
       GROUP BY lead_id) tg ON tg.lead_id = l.id
     WHERE l.client_id = @clientId ${s.campaignId ? "AND l.campaign_id = @campaignId" : ""}`;
 }
@@ -185,7 +186,7 @@ function conditions(f: PeopleFilters, except?: FilterKey): string[] {
   if (on("sender")) c.push(f.sender!.startsWith("@") ? "f.sender ILIKE @senderLike" : "f.sender = @sender");
   if (on("source")) c.push("f.source = @source");
   if (on("ptag")) c.push("f.ptag = @ptag");
-  if (on("tag")) c.push("EXISTS (SELECT 1 FROM lead_tags t WHERE t.lead_id = f.id AND t.tag = @tag AND t.status <> 'error')");
+  if (on("tag")) c.push("EXISTS (SELECT 1 FROM lead_tags t WHERE t.lead_id = f.id AND t.tag = @tag AND t.status NOT IN ('error', 'gone'))");
   if (on("reply")) c.push("COALESCE(f.reply_tag, 'none') = @reply");
   if (on("seniority")) c.push("f.seniority = @seniority");
   if (f.title) c.push("lower(f.title) = lower(@title)");
@@ -275,6 +276,40 @@ export async function removableIds(s: PeopleScope, f: PeopleFilters): Promise<nu
   )).map((r) => r.id);
 }
 
+export type BouncedGroups = { clear: string[]; unsure: string[]; filter: number; engaged: number };
+
+/**
+ * The people a bounced list shows who are still in the portal, by what deleting them would mean. Worked out per person,
+ * across all their campaigns, because deleting removes them for all of them:
+ *   clear:   never passed a check and not behind a mail filter, so most likely a dead address;
+ *   unsure:  passed a check or sit behind a mail filter, and still bounced, so the server may have refused the sender;
+ *   filter:  a checked address behind a mail filter (FILTER_BLOCKED): real, and can be retried, so never offered;
+ *   engaged: replied or booked a meeting, so a real person whatever the bounce says, and never offered.
+ * Only a list filtered to bounced people has any, so a delete can never reach beyond them.
+ */
+export async function bouncedGroups(s: PeopleScope, f: PeopleFilters): Promise<BouncedGroups> {
+  const groups: BouncedGroups = { clear: [], unsure: [], filter: 0, engaged: 0 };
+  if (f.status !== "bounced") return groups;
+  const ids = await matchingIds(s, f);
+  if (ids.length === 0) return groups;
+  const people = await all<{ email: string; blocked: boolean; engaged: boolean; unsure: boolean }>(
+    `SELECT p.email, bool_or(${FILTER_BLOCKED("p")}) blocked,
+       bool_or(EXISTS (SELECT 1 FROM emails e WHERE e.client_id = p.client_id AND e.lead_email = p.email AND e.direction = 'in' AND e.interest IS DISTINCT FROM 'ooo')
+         OR EXISTS (SELECT 1 FROM meetings m WHERE m.lead_id = p.id)) engaged,
+       bool_or(COALESCE(p.verification, '') IN ('verified', 'catch_all') OR ${BEHIND_GATEWAY("p")}) unsure
+     FROM leads p
+     WHERE p.client_id = ? AND p.email IN (SELECT email FROM leads WHERE id = ANY(?)) AND NOT ${DELETED_FROM_PORTAL("p")}
+     GROUP BY p.email HAVING bool_or(p.ghl_contact_id IS NOT NULL) ORDER BY p.email`,
+    s.clientId, ids,
+  );
+  for (const p of people) {
+    if (p.engaged) groups.engaged++;
+    else if (p.blocked) groups.filter++;
+    else (p.unsure ? groups.unsure : groups.clear).push(p.email);
+  }
+  return groups;
+}
+
 // ---------- Filter options with counts ----------
 
 export type FacetOption = Option & { n: number };
@@ -300,7 +335,7 @@ export async function peopleFacets(s: PeopleScope, f: PeopleFilters): Promise<Fa
        CROSS JOIN LATERAL (VALUES ${STATUSES.map((x) => `('${x.value}', ${x.where})`).join(", ")}) st(val, hit)
      WHERE st.hit AND ${where(conditions(f, "status"))} GROUP BY 2`,
     ...FACETS.map((x) => `SELECT '${x.key}' facet, ${x.expr} val, COUNT(*) n FROM f WHERE ${where(conditions(f, x.key))} GROUP BY 2`),
-    `SELECT 'tag' facet, t.tag val, COUNT(DISTINCT f.id) n FROM f JOIN lead_tags t ON t.lead_id = f.id AND t.status <> 'error'
+    `SELECT 'tag' facet, t.tag val, COUNT(DISTINCT f.id) n FROM f JOIN lead_tags t ON t.lead_id = f.id AND t.status NOT IN ('error', 'gone')
      WHERE ${where(conditions(f, "tag"))} GROUP BY 2`,
   ];
   const rows = await all<{ facet: FilterKey; val: string | null; n: number }>(

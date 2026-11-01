@@ -350,4 +350,14 @@ CREATE TABLE IF NOT EXISTS suppressed_contacts (
   PRIMARY KEY (client_id, email)
 );
 ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS outcomes_read_at TEXT;
+-- People deleted from the Nexus Portal on purpose (portalTags.ts): queued, done or error. Kept for good, so nothing adds them back.
+CREATE TABLE IF NOT EXISTS portal_deletions (
+  client_id INTEGER NOT NULL REFERENCES clients(id),
+  email TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'queued',
+  error TEXT,
+  queued_at TEXT NOT NULL DEFAULT ${NOW_TEXT},
+  done_at TEXT,
+  PRIMARY KEY (client_id, email)
+);
 `;

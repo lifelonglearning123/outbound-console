@@ -81,6 +81,10 @@ export const STOPPED_OUTSIDE = (a: string) =>
      SELECT 1 FROM emails e WHERE e.client_id = ${a}.client_id AND e.lead_email = ${a}.email AND e.direction = 'in'
        AND e.interest IS DISTINCT FROM 'ooo'))`;
 
+/** Deleted from the Nexus Portal on purpose (portalTags.ts), so nothing may add them back. `a` needs client_id and email. */
+export const DELETED_FROM_PORTAL = (a: string) =>
+  `EXISTS (SELECT 1 FROM portal_deletions del WHERE del.client_id = ${a}.client_id AND del.email = ${a}.email)`;
+
 /**
  * Handed to Instantly and its sequence not over yet, so another campaign must wait. Over means completed (3),
  * skipped (-3), bounced (-1) or unsubscribed (-2), or that the campaign itself has completed: it sends nothing more.

@@ -8,7 +8,7 @@ import { triageNewReplies } from "./triage";
 import { runWriter } from "./writer";
 import { runVerifier } from "./verify";
 import { runVerificationActions } from "./verifyReport";
-import { runPortalTagging } from "./portalTags";
+import { queueBouncedTags, runPortalDeletions, runPortalTagging } from "./portalTags";
 import { syncMeetings } from "./meetings";
 import { fillJobTitles, linkPendingLeads, logEmailsToGhl, noteCampaignsInGhl, pullTaggedContacts } from "./ghlsync";
 import { detectMailDomains, reclassifyMailDomains } from "./mailhost";
@@ -335,6 +335,7 @@ export async function syncClient(clientId: number): Promise<{ ok: boolean; messa
       if (await pullTaggedContacts(client)) void await runWriter();
     }],
     ["ghl job titles", () => fillJobTitles(client)],
+    ["ghl bounce tags", () => queueBouncedTags(client)],
     ["ghl conversations", () => logEmailsToGhl(client)],
     ["ghl campaign notes", () => noteCampaignsInGhl(client)],
     ["mail servers", async () => {
@@ -377,5 +378,6 @@ async function syncEveryClient() {
     await runVerifier(); // and any email checks still queued or pending
     await runVerificationActions(); // and Nexus Portal tagging / deletions queued from the Verification page
     await runPortalTagging(); // and tags added from a people list
+    await runPortalDeletions(); // and bounced contacts being deleted from the Nexus Portal
   }
 }

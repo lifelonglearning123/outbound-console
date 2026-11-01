@@ -12,8 +12,10 @@ import { contactsWithTagPage, listTags } from "@/lib/ghl";
 import { runWriter, rewriteStep } from "@/lib/writer";
 import { probeFilter, pushApproved, pullBackHeld } from "@/lib/push";
 import { NO_PUSH, addPushes } from "@/lib/pushResult";
-import { describeFilters, matchingIds, readFilters, removableIds } from "@/lib/people";
-import { cleanTag, queuePortalTag, retryPortalTags, runPortalTagging } from "@/lib/portalTags";
+import { bouncedGroups, describeFilters, matchingIds, readFilters, removableIds } from "@/lib/people";
+import {
+  cleanTag, queuePortalDeletion, queuePortalTag, retryPortalDeletions, retryPortalTags, runPortalDeletions, runPortalTagging,
+} from "@/lib/portalTags";
 import { detectMailDomains, GATEWAY_LABEL, type Gateway } from "@/lib/mailhost";
 import { jobTitleField, linkPendingLeads, portalLead } from "@/lib/ghlsync";
 import { queueVerification, runVerifier, PASSED } from "@/lib/verify";
@@ -334,6 +336,32 @@ export async function tagMatching(clientId: number, campaignId: number | null, q
 export async function retryTagging(clientId: number) {
   await requireClientAccess(clientId);
   if (await retryPortalTags(clientId)) after(runPortalTagging);
+  revalidatePath("/", "layout");
+}
+
+/**
+ * Delete one group of a bounced list's people from the Nexus Portal. Who's in the group is worked out again here from
+ * the filters, not taken from the page. The console keeps its record, so they stay suppressed.
+ */
+export async function deleteBounced(clientId: number, campaignId: number | null, query: string, group: "clear" | "unsure") {
+  await requireClientAccess(clientId);
+  if (campaignId && (await clientOfCampaign(campaignId)) !== clientId) throw new Error("Campaign not found");
+  const client = await requireClient(clientId);
+  if (!client.ghl_location_id || !client.ghl_token) throw new Error(`Connect the ${PORTAL} in Settings first.`);
+  const filters = readFilters(new URLSearchParams(query));
+  const emails = (await bouncedGroups({ clientId, campaignId }, filters))[group];
+  const n = await queuePortalDeletion(clientId, emails);
+  if (n) {
+    await logActivity(clientId, "ghl", `Deleting ${n} bounced ${n === 1 ? "contact" : "contacts"} from the ${PORTAL} (${describeFilters(filters)})`);
+    after(runPortalDeletions);
+  }
+  revalidatePath("/", "layout");
+}
+
+/** Try the client's failed portal deletions again. */
+export async function retryDeletions(clientId: number) {
+  await requireClientAccess(clientId);
+  if (await retryPortalDeletions(clientId)) after(runPortalDeletions);
   revalidatePath("/", "layout");
 }
 

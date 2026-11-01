@@ -4,7 +4,7 @@ import type { Client } from "./clients";
 import {
   addNote, contactsWithTag, emailDnd, getContact, listCustomFields, logEmail, upsertContact, type GhlContact, type GhlCreds, type GhlCustomField,
 } from "./ghl";
-import { importLeads, type LeadFields, type LeadRow } from "./leads";
+import { DELETED_FROM_PORTAL, importLeads, type LeadFields, type LeadRow } from "./leads";
 import { portalCheck } from "./checkTags";
 import { toHtml } from "./merge";
 
@@ -100,11 +100,12 @@ export async function fillJobTitles(client: Client) {
   await setSetting(key, new Date().toISOString());
 }
 
-/** Create or match the lead's GHL contact. Returns the contact id. */
+/** Create or match the lead's GHL contact. Returns the contact id, or null if the person was deleted from the portal on purpose. */
 export async function linkLead(client: Client, lead: LeadRow): Promise<string | null> {
   const creds = ghlCreds(client);
   if (!creds) return null;
   if (lead.ghl_contact_id) return lead.ghl_contact_id;
+  if (await get("SELECT 1 FROM portal_deletions WHERE client_id = ? AND email = ?", client.id, lead.email)) return null;
   const id = await upsertContact(creds, {
     email: lead.email,
     firstName: lead.first_name,
@@ -121,7 +122,7 @@ export async function linkLead(client: Client, lead: LeadRow): Promise<string | 
 export async function linkPendingLeads(client: Client, limit = 100): Promise<number> {
   if (!ghlCreds(client)) return 0;
   const leads = await all<LeadRow>(
-    "SELECT * FROM leads WHERE client_id = ? AND ghl_contact_id IS NULL AND stage NOT IN ('removed') ORDER BY id LIMIT ?",
+    `SELECT * FROM leads WHERE client_id = ? AND ghl_contact_id IS NULL AND stage NOT IN ('removed') AND NOT ${DELETED_FROM_PORTAL("leads")} ORDER BY id LIMIT ?`,
     client.id, limit,
   );
   let n = 0;
@@ -209,7 +210,7 @@ export async function noteCampaignsInGhl(client: Client, limit = 40): Promise<nu
   if (!creds) return 0;
   const leads = await all<LeadRow & { campaign: string }>(
     `SELECT l.*, c.name campaign FROM leads l JOIN campaigns c ON c.id = l.campaign_id
-     WHERE l.client_id = ? AND l.pushed_at IS NOT NULL AND l.ghl_noted_at IS NULL AND l.ghl_note_error IS NULL
+     WHERE l.client_id = ? AND l.pushed_at IS NOT NULL AND l.ghl_noted_at IS NULL AND l.ghl_note_error IS NULL AND NOT ${DELETED_FROM_PORTAL("l")}
      ORDER BY l.pushed_at LIMIT ?`,
     client.id, limit,
   );
@@ -249,6 +250,7 @@ export async function logEmailsToGhl(client: Client, limit = 40): Promise<number
   }>(
     `SELECT id, lead_id, lead_email, direction, step, account_email, subject, body_text, sent_at FROM emails
      WHERE client_id = ? AND ghl_logged_at IS NULL AND ghl_log_error IS NULL AND sent_at >= ? AND lead_email IS NOT NULL
+       AND NOT EXISTS (SELECT 1 FROM portal_deletions del WHERE del.client_id = emails.client_id AND del.email = emails.lead_email)
      ORDER BY sent_at LIMIT ?`,
     client.id, since, limit,
   );
