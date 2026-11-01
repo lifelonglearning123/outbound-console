@@ -1,7 +1,7 @@
 import "server-only";
 import { all, get, run, tx, logActivity } from "./db";
 import { requireClient } from "./clients";
-import { requireCampaign, subjectVar, bodyVar, liveSteps } from "./campaigns";
+import { requireCampaign, subjectVar, bodyVar, liveSteps, hasOwnSubject } from "./campaigns";
 import { instantly, type LeadInput } from "./instantly";
 import { DO_NOT_CONTACT, IN_SEQUENCE, STOPPED_OUTSIDE, type LeadRow } from "./leads";
 import { AT_PROBLEM_DOMAIN, BEHIND_HELD, detectMailDomains, GATEWAY_LABEL, NO_MAIL_SERVER, type Gateway } from "./mailhost";
@@ -146,6 +146,12 @@ export async function pushApproved(campaignId: number, opts: { onlyWaiting?: boo
     // Belt and braces: re-check approval at the last moment.
     if (mine.some((d) => d.status !== "approved")) {
       await run("UPDATE leads SET stage = 'review' WHERE id = ?", lead.id);
+      continue;
+    }
+    // An email that should have its own subject but has none (a merge field that came out empty) would go out blank.
+    const noSubject = mine.find((d) => hasOwnSubject(campaign.steps[d.step - 1], d.step - 1) && !d.subject.trim());
+    if (noSubject) {
+      await run("UPDATE leads SET stage = 'review', stage_message = ? WHERE id = ?", `Not sent: email ${noSubject.step} has no subject. Add one, then approve it again.`, lead.id);
       continue;
     }
     // The same contact in other campaigns: never after a reply, bounce or unsubscribe, and never two sequences at once.
@@ -322,7 +328,7 @@ type DraftCopy = { step: number; subject: string; body: string; format: string }
 export function copyVars(drafts: DraftCopy[]): Record<string, string> {
   const vars: Record<string, string> = {};
   for (const d of drafts) {
-    if (d.step === 1) vars[subjectVar(1)] = d.subject;
+    if (d.step === 1 || d.subject) vars[subjectVar(d.step)] = d.subject;
     // Designed emails (html) go out as approved; AI plain text keeps its line breaks.
     vars[bodyVar(d.step)] = d.format === "html" ? flattenHtml(d.body) : toHtml(d.body);
   }

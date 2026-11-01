@@ -9,7 +9,8 @@ import { htmlToText } from "./merge";
 import { mailboxHealth, sendList } from "./mailboxHealth";
 
 // mode "fixed" = the client wrote this email (subject/body with merge fields); otherwise the AI writes it from `instructions`.
-export type Step = { delay_days: number; instructions: string; mode?: "ai" | "fixed"; subject?: string; body?: string };
+// new_subject = an AI-written follow-up gets its own subject; a "fixed" follow-up has one if `subject` is filled in.
+export type Step = { delay_days: number; instructions: string; mode?: "ai" | "fixed"; subject?: string; body?: string; new_subject?: boolean };
 export type Schedule = { days: number[]; from: string; to: string; timezone: string };
 
 export type Campaign = {
@@ -120,9 +121,15 @@ export async function requireCampaign(id: number): Promise<Campaign> {
   return c;
 }
 
-/** Custom-variable names the approved copy is delivered through. Follow-ups reuse the thread, so only step 1 has a subject. */
+/** Custom-variable names the approved copy is delivered through. */
 export const subjectVar = (step: number) => `subject_${step}`;
 export const bodyVar = (step: number) => `body_${step}`;
+
+/**
+ * Whether a step (zero-based `i`) goes out as a new email with its own subject. The first always does. A follow-up
+ * without one is sent with a blank subject, which Instantly sends as a reply in the same thread; with one, in a new thread.
+ */
+export const hasOwnSubject = (s: Step, i: number) => i === 0 || (s.mode === "fixed" ? !!s.subject?.trim() : !!s.new_subject);
 
 export function toInstantlySchedule(s: Schedule): CampaignSchedule {
   const days = Object.fromEntries(["0", "1", "2", "3", "4", "5", "6"].map((d) => [d, s.days.includes(Number(d))]));
@@ -150,7 +157,7 @@ function toInstantlyBody(c: Campaign, emailList: string[], live = liveSteps(c)) 
           type: "email",
           delay: s.delay_days,
           delay_unit: "days",
-          variants: [{ subject: i === 0 ? `{{${subjectVar(1)}}}` : "", body: `{{${bodyVar(i + 1)}}}` }],
+          variants: [{ subject: hasOwnSubject(s, i) ? `{{${subjectVar(i + 1)}}}` : "", body: `{{${bodyVar(i + 1)}}}` }],
         })),
       },
     ],
@@ -186,7 +193,7 @@ export async function syncCampaignToInstantly(id: number) {
   // attempt is repaired by saving again.
   if (client.instantly_tag_id) await api.tagResources(client.instantly_tag_id, 2, [remote.id]);
 
-  const vars = c.steps.slice(0, liveSteps(c)).flatMap((_, i) => (i === 0 ? [subjectVar(1), bodyVar(1)] : [bodyVar(i + 1)]));
+  const vars = c.steps.slice(0, liveSteps(c)).flatMap((s, i) => (hasOwnSubject(s, i) ? [subjectVar(i + 1), bodyVar(i + 1)] : [bodyVar(i + 1)]));
   await api.addVariables(remote.id, vars);
 
   await run(

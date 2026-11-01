@@ -1,7 +1,7 @@
 import "server-only";
 import { all, get, run, tx, logActivity, withLock } from "./db";
 import { requireClient, type Brief } from "./clients";
-import { IN_NEXUS_CAMPAIGN, isNexus, NEXUS_NOTICE, requireCampaign, writeTarget, type Step } from "./campaigns";
+import { hasOwnSubject, IN_NEXUS_CAMPAIGN, isNexus, NEXUS_NOTICE, requireCampaign, writeTarget, type Step } from "./campaigns";
 import type { LeadRow } from "./leads";
 import { htmlToText, renderMerge, stripCodeFence } from "./merge";
 import { refreshFromGhl } from "./ghlsync";
@@ -23,7 +23,7 @@ const SCHEMA = {
         required: ["step", "subject", "body"],
         properties: {
           step: { type: "integer" },
-          subject: { type: "string", description: "Only for step 1; empty string for follow-ups." },
+          subject: { type: "string", description: "For step 1 and any step marked as a new email; empty string for the others." },
           body: { type: "string", description: "Plain text. Greeting + body only; no sign-off or signature." },
         },
       },
@@ -43,8 +43,9 @@ function systemPrompt(brief: Brief): string {
     "Rules:",
     "- Plain text only. No links, no images, no bullet lists, no emojis, no bold.",
     "- Short sentences. Short paragraphs separated by one blank line.",
-    "- Step 1 subject: 2-5 words, lowercase except names, no punctuation tricks, no clickbait.",
-    "- Follow-up steps are replies in the same thread: subject must be an empty string, and they must make sense after the previous emails.",
+    "- Subjects: 2-5 words, lowercase except names, no punctuation tricks, no clickbait. Step 1 always has one, and so does any step marked as a new email.",
+    "- A follow-up not marked as a new email is a reply in the same thread: subject must be an empty string, and it must make sense after the previous emails.",
+    "- A step marked as a new email arrives separately, in its own thread: it must make sense on its own, without relying on the reader remembering earlier emails, and its subject must not look like a reply (no 'Re:').",
     "- Open with the person's first name if known (e.g. 'Hi Sam,'). If no first name, use 'Hi there,' and add a flag.",
     "- Use ONLY facts in the lead record and the brief. Never invent numbers, clients, results, mutual connections, or things you 'noticed'.",
     "- If a lead field looks like junk (placeholder, all caps, generic mailbox like info@), work around it and add a flag.",
@@ -85,7 +86,8 @@ type Rendered = { subject: string; body: string };
 function stepsPrompt(steps: Step[], fixed: (Rendered | null)[]): string {
   return steps
     .map((s, i) => {
-      const head = `Step ${i + 1}${i === 0 ? " (opener)" : ` (follow-up, sent ${steps[i - 1].delay_days} days after step ${i})`}`;
+      const kind = hasOwnSubject(s, i) ? "new email with its own subject" : "follow-up";
+      const head = `Step ${i + 1}${i === 0 ? " (opener)" : ` (${kind}, sent ${steps[i - 1].delay_days} days after step ${i})`}`;
       const f = fixed[i];
       if (f) {
         return `${head}: ALREADY WRITTEN (the client's own email, or one already approved). Do not return it; make your emails fit around it without repeating it.\n---\n${f.subject ? `Subject: ${f.subject}\n` : ""}${htmlToText(f.body)}\n---`;
@@ -184,11 +186,13 @@ async function writeForLead(leadId: number) {
       const f = fixed[i];
       const e = f ?? byStep.get(n);
       if (!e) throw new Error(`Writer skipped step ${n}`);
+      const own = hasOwnSubject(steps[i], i);
+      if (own && !f && !e.subject.trim()) throw new Error(`Writer gave step ${n} no subject`);
       // The client's own text already has its sign-off; AI-written steps get the brief's.
       const body = f ? f.body : sig ? `${e.body.trim()}\n\n${sig}` : e.body.trim();
       await run(
         "INSERT INTO drafts (lead_id, step, subject, body, flags, format) VALUES (?, ?, ?, ?, ?, ?)",
-        leadId, n, i === 0 ? e.subject.trim() : "", body,
+        leadId, n, own ? e.subject.trim() : "", body,
         k === 0 && flags.length ? [...new Set(flags)].join(" · ") : null,
         f ? "html" : "text",
       );
@@ -236,11 +240,12 @@ export async function rewriteStep(draftId: number, guidance: string) {
   const campaign = await requireCampaign(lead.campaign_id!);
   if (isNexus(campaign)) throw new Error(NEXUS_NOTICE);
   const others = await all<{ step: number; subject: string; body: string }>("SELECT step, subject, body FROM drafts WHERE lead_id = ? AND step != ? ORDER BY step", d.lead_id, d.step);
+  const own = hasOwnSubject(campaign.steps[d.step - 1] ?? { delay_days: 0, instructions: "" }, d.step - 1);
 
   const out = await llmJson<{ emails: { step: number; subject: string; body: string }[] }>({
     system: systemPrompt(client.brief),
     user:
-      `Rewrite step ${d.step} only. Step instructions: ${campaign.steps[d.step - 1]?.instructions ?? ""}\n\n` +
+      `Rewrite step ${d.step} only${d.step > 1 && own ? ", which is marked as a new email" : ""}. Step instructions: ${campaign.steps[d.step - 1]?.instructions ?? ""}\n\n` +
       `Reviewer's guidance: ${guidance || "make it better"}\n\n` +
       `Current version:\nSubject: ${d.subject}\n${d.body}\n\nThe other emails in the sequence (for context, do not repeat them):\n` +
       others.map((o) => `Step ${o.step}: ${o.body}`).join("\n---\n") +
@@ -254,6 +259,6 @@ export async function rewriteStep(draftId: number, guidance: string) {
   const sig = signOff(client.brief);
   await run(
     "UPDATE drafts SET subject = ?, body = ?, edited = 1, status = 'pending' WHERE id = ?",
-    d.step === 1 ? e.subject.trim() : "", sig ? `${e.body.trim()}\n\n${sig}` : e.body.trim(), draftId,
+    own ? e.subject.trim() || d.subject : "", sig ? `${e.body.trim()}\n\n${sig}` : e.body.trim(), draftId,
   );
 }

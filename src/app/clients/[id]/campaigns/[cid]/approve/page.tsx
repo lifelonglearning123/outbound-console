@@ -1,7 +1,7 @@
 import { requireClientAccess } from "@/lib/auth";
 import { notFound } from "next/navigation";
 import Link from "next/link";
-import { getCampaign, isNexus, NEXUS_NOTICE } from "@/lib/campaigns";
+import { getCampaign, hasOwnSubject, isNexus, NEXUS_NOTICE } from "@/lib/campaigns";
 import { batchInfo } from "@/lib/progress";
 import { reviewQueue, approvalCounts } from "@/lib/approvals";
 import { approveGroupAndSend } from "@/app/leads/actions";
@@ -86,6 +86,18 @@ export default async function CampaignApprovePage({ params, searchParams }: Page
               srcDoc={`<!doctype html><html><head><meta charset="utf-8"><style>body{font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.5;margin:14px;color:#222}</style></head><body>${preview}</body></html>`}
               className="h-[560px] w-full rounded-md border border-line bg-white"
             />
+            {c.steps.length > 1 && (
+              <div className="flex flex-col gap-1 text-xs">
+                <h3 className="font-medium">After this email</h3>
+                <ul className="flex flex-col gap-1 text-muted">
+                  {c.steps.slice(1).map((s, i) => (
+                    <li key={i}>
+                      {c.steps[i].delay_days} days later, follow-up {i + 2}: {hasOwnSubject(s, i + 1) ? `a new email with the subject “${s.subject}”` : "a reply in the same thread"}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
           </section>
 
           <aside className="flex flex-col gap-4">

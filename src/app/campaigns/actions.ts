@@ -3,9 +3,9 @@
 import { clientOfCampaign, requireClientAccess } from "@/lib/auth";
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
-import { run, logActivity } from "@/lib/db";
+import { run, tx, logActivity } from "@/lib/db";
 import {
-  campaignStepProblems, isNexus, liveSteps, NEXUS_NOTICE, pushedLeadCount, requireCampaign, setCampaignRunning, syncCampaignToInstantly,
+  campaignStepProblems, hasOwnSubject, isNexus, liveSteps, NEXUS_NOTICE, pushedLeadCount, requireCampaign, setCampaignRunning, syncCampaignToInstantly,
   toInstantlySchedule, type Step,
 } from "@/lib/campaigns";
 import { applyRelease, cancelRelease, prepareRelease, retryFailed } from "@/lib/hold";
@@ -42,7 +42,10 @@ function readForm(form: FormData) {
       const subject = String(form.get(`step_${i}_subject`) ?? "").trim();
       steps.push({ delay_days, instructions: "Client's own email", mode: "fixed", subject, body });
     } else {
-      steps.push({ delay_days, instructions: String(form.get(`step_${i}_instructions`) ?? "").trim(), mode: "ai" });
+      steps.push({
+        delay_days, instructions: String(form.get(`step_${i}_instructions`) ?? "").trim(), mode: "ai",
+        ...(i > 1 && form.get(`step_${i}_new_subject`) ? { new_subject: true } : {}),
+      });
     }
   }
   if (steps.length === 0) throw new Error("Add at least one step");
@@ -71,7 +74,7 @@ function readForm(form: FormData) {
     stop_on_reply: form.get("stop_on_reply") ? 1 : 0,
     match_esp: form.get("match_esp") ? 1 : 0,
     hold_after: holdAfter,
-    step_count: steps.length,
+    list: steps,
     ghl_tag: String(form.get("ghl_tag") ?? "").trim() || null,
   };
 }
@@ -80,17 +83,33 @@ export async function saveCampaign(clientId: number, campaignId: number | null, 
   await requireClientAccess(clientId);
   if (campaignId && (await clientOfCampaign(campaignId)) !== clientId) throw new Error("Campaign not found");
   if (campaignId && isNexus(await requireCampaign(campaignId))) throw new Error(NEXUS_NOTICE);
-  const { step_count, ...fields } = readForm(form);
+  const { list, ...fields } = readForm(form);
   let id = campaignId;
   if (id) {
     const existing = await requireCampaign(id);
     if (existing.managed && existing.release_to) throw new Error("A hold release is in progress. Apply or cancel it before editing the steps.");
+    // Follow-ups that have gained or lost their own subject.
+    const subjectChanged = existing.managed
+      ? list.flatMap((s, i) => (existing.steps[i] && hasOwnSubject(s, i) !== hasOwnSubject(existing.steps[i], i) ? [i + 1] : []))
+      : [];
     if (existing.managed && await pushedLeadCount(id) > 0) {
       // Leads are already in Instantly with their copy: the live steps stay as they are, and any steps
       // beyond them are held until released from the campaign page (so nobody gets a step without copy).
       const live = liveSteps(existing);
-      if (step_count < live) throw new Error(`Steps 1-${live} are already live in Instantly and can't be removed.`);
-      fields.hold_after = step_count > live ? live : existing.hold_after;
+      if (list.length < live) throw new Error(`Steps 1-${live} are already live in Instantly and can't be removed.`);
+      // Those contacts' copy has no subject for a step that didn't have one, so it would go out blank.
+      const locked = subjectChanged.find((n) => n <= live);
+      if (locked) throw new Error(`Follow-up ${locked} is already being sent, so its subject can't be added or removed. Change it on a follow-up that isn't live yet.`);
+      fields.hold_after = list.length > live ? live : existing.hold_after;
+    }
+    if (subjectChanged.length) {
+      // Emails prepared under the old setting are out of date: prepare those steps again, and they need approving again.
+      await tx(async () => {
+        const notSent = "SELECT id FROM leads WHERE campaign_id = ? AND pushed_at IS NULL AND instantly_lead_id IS NULL";
+        await run(`DELETE FROM drafts WHERE step = ANY(?) AND lead_id IN (${notSent})`, subjectChanged, id);
+        await run(`UPDATE leads SET stage = 'drafting', stage_message = NULL WHERE id IN (${notSent}) AND stage IN ('review', 'approved')`, id);
+      });
+      after(runWriter);
     }
     if (!existing.managed) {
       // External campaigns: only the controls we can safely change from here.

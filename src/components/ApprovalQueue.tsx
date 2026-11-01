@@ -252,13 +252,14 @@ export function ApprovalQueue({
                 <div key={d.id} className="card flex flex-col gap-2 p-4">
                   <div className="flex items-center justify-between text-xs text-muted">
                     <span className="font-medium uppercase tracking-wide">
-                      {d.step === 1 ? "Email 1" : `Follow-up ${d.step}, sent as a reply in the same thread`}{isHtml ? " · your own email" : " · written by AI"}{d.edited ? " · edited" : ""}
+                      {d.step === 1 ? "Email 1" : `Follow-up ${d.step}, sent as ${d.subject ? "a new email with its own subject" : "a reply in the same thread"}`}{isHtml ? " · your own email" : " · written by AI"}{d.edited ? " · edited" : ""}
                     </span>
                     <span className="num">{words} words</span>
                   </div>
-                  {d.step === 1 && (
+                  {(d.step === 1 || d.subject) && (
                     <input
                       className="field font-medium"
+                      aria-label={`Subject of ${d.step === 1 ? "email 1" : `follow-up ${d.step}`}`}
                       value={e.subject}
                       onChange={(ev) => setEdit(d, { subject: ev.target.value })}
                     />

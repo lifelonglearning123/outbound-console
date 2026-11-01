@@ -103,7 +103,7 @@ export function CampaignForm(p: Props) {
             <h2 className="font-semibold">Sequence</h2>
             <p className="text-sm text-muted">
               Each email is either your own, sent exactly as designed, or written by the AI for each contact. Follow-ups are sent as replies in the same
-              thread. Every email waits for your approval.
+              thread, unless you give one its own subject. Every email waits for your approval.
             </p>
           </div>
           {steps.map((s, i) => (
@@ -147,21 +147,60 @@ export function CampaignForm(p: Props) {
                       value={s.subject ?? ""}
                       onChange={(e) => update(i, { subject: e.target.value })}
                     />
+                  ) : i < p.lockedLive && !s.subject?.trim() ? (
+                    <>
+                      <input type="hidden" name={`step_${i + 1}_subject`} value="" />
+                      <p className="text-xs text-muted">Sent as a reply in the same thread. Contacts already have this follow-up, so it can&apos;t be given its own subject now.</p>
+                    </>
                   ) : (
-                    <p className="text-xs text-muted">No subject: this follow-up is sent as a reply in the same thread.</p>
+                    <div className="flex flex-col gap-1">
+                      <input
+                        name={`step_${i + 1}_subject`}
+                        className="field font-medium"
+                        aria-label={`Subject of follow-up ${i + 1}`}
+                        placeholder="Subject line (optional)"
+                        required={i < p.lockedLive}
+                        value={s.subject ?? ""}
+                        onChange={(e) => update(i, { subject: e.target.value })}
+                      />
+                      <p className="text-xs text-muted">
+                        {s.subject?.trim() ? "Sent as a new email with this subject, in its own thread." : "No subject: sent as a reply in the same thread."}
+                      </p>
+                    </div>
                   )}
                   <EmailEditor name={`step_${i + 1}_body`} initial={s.body ?? ""} />
                   <input type="hidden" name={`step_${i + 1}_instructions`} value={s.instructions || "Client's own email"} />
                 </>
               ) : (
-                <textarea
-                  name={`step_${i + 1}_instructions`}
-                  rows={2}
-                  className="field"
-                  placeholder="What should this email do?"
-                  value={s.instructions}
-                  onChange={(e) => update(i, { instructions: e.target.value })}
-                />
+                <>
+                  <textarea
+                    name={`step_${i + 1}_instructions`}
+                    rows={2}
+                    className="field"
+                    placeholder="What should this email do?"
+                    value={s.instructions}
+                    onChange={(e) => update(i, { instructions: e.target.value })}
+                  />
+                  {i > 0 && i < p.lockedLive && (
+                    <>
+                      {s.new_subject && <input type="hidden" name={`step_${i + 1}_new_subject`} value="1" />}
+                      <p className="text-xs text-muted">
+                        {s.new_subject ? "Sent as a new email with its own subject." : "Sent as a reply in the same thread."} Contacts already have this follow-up, so this can&apos;t change now.
+                      </p>
+                    </>
+                  )}
+                  {i > 0 && i >= p.lockedLive && (
+                    <label className="flex items-center gap-2 text-sm text-muted">
+                      <input
+                        type="checkbox"
+                        name={`step_${i + 1}_new_subject`}
+                        checked={!!s.new_subject}
+                        onChange={(e) => update(i, { new_subject: e.target.checked })}
+                      />
+                      Send as a new email with its own subject, instead of a reply in the same thread
+                    </label>
+                  )}
+                </>
               )}
               {i < steps.length - 1 ? (
                 <label className="flex items-center gap-2 text-sm text-muted">
