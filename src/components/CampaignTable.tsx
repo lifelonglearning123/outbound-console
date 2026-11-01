@@ -2,6 +2,8 @@ import Link from "next/link";
 import { pauseCampaign, resumeCampaign } from "@/app/campaigns/actions";
 import { ago } from "@/lib/format";
 import { CAMPAIGN_STATUS_LABEL } from "@/lib/stages";
+import { startLabel } from "@/lib/startTime";
+import { DEFAULT_TIMEZONE } from "@/lib/timezones";
 
 export type CampaignRow = {
   id: number;
@@ -13,18 +15,30 @@ export type CampaignRow = {
   managed: number;
   not_sending: string | null;
   last_synced_at: string | null;
+  start_at: string | null;
+  start_problem: string | null;
+  schedule: string;
 };
 
 const STATUS_STYLE: Record<string, string> = {
   active: "bg-go-soft text-go",
   paused: "bg-wait-soft text-wait",
   draft: "bg-paper text-muted",
+  scheduled: "bg-info-soft text-info",
   completed: "bg-info-soft text-info",
   error: "bg-bad-soft text-bad",
 };
 
 export function StatusPill({ status }: { status: string }) {
   return <span className={`rounded px-1.5 py-0.5 text-xs font-medium ${STATUS_STYLE[status] ?? ""}`}>{CAMPAIGN_STATUS_LABEL[status] ?? status}</span>;
+}
+
+function startsAt(c: CampaignRow): string {
+  let timezone = DEFAULT_TIMEZONE;
+  try {
+    timezone = JSON.parse(c.schedule).timezone ?? timezone;
+  } catch {}
+  return startLabel(new Date(c.start_at!), timezone);
 }
 
 export function CampaignTable({ clientId, campaigns }: { clientId: number; campaigns: CampaignRow[] }) {
@@ -56,14 +70,16 @@ export function CampaignTable({ clientId, campaigns }: { clientId: number; campa
                 <Link href={`/clients/${clientId}/campaigns/${c.id}${c.status === "draft" ? "/contacts" : ""}`} className="font-medium hover:underline">{c.name}</Link>
                 {!c.managed && <span className="ml-2 text-xs text-muted" title="Set up outside the console, so its email isn't approved here">external</span>}
                 {c.status === "active" && c.not_sending && <div className="text-xs text-wait">{c.not_sending}</div>}
+                {c.status === "draft" && c.start_at && <div className="text-xs text-info">Starts {startsAt(c)}</div>}
+                {c.status === "draft" && c.start_problem && <div className="text-xs text-bad">Didn&apos;t start as scheduled</div>}
               </td>
-              <td className="px-3 py-2"><StatusPill status={c.status} /></td>
+              <td className="px-3 py-2"><StatusPill status={c.status === "draft" && c.start_at ? "scheduled" : c.status} /></td>
               <td className="num px-3 py-2 text-right">{c.daily_limit}</td>
               <td className="px-3 py-2 text-xs text-muted">{ago(c.last_synced_at)}</td>
               <td className="px-3 py-2 text-right">
                 {c.instantly_campaign_id && (c.status === "active" ? (
                   <form action={pauseCampaign.bind(null, c.id)}><button className="btn">Pause sending</button></form>
-                ) : c.status === "paused" || c.status === "draft" ? (
+                ) : c.status === "draft" && c.start_at ? null : c.status === "paused" || c.status === "draft" ? (
                   <form action={resumeCampaign.bind(null, c.id)}><button className="btn-go">{c.status === "draft" ? "Start sending" : "Resume sending"}</button></form>
                 ) : null)}
               </td>

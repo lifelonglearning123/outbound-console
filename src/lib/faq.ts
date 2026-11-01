@@ -52,4 +52,29 @@ export const FAQ: FaqSection[] = [
       },
     ],
   },
+  {
+    id: "sending",
+    title: "Emails and sending",
+    items: [
+      {
+        id: "own-subject",
+        question: "Can each email in a campaign have its own subject?",
+        answer: [
+          "Yes. On the campaign's Email tab, fill in a follow-up's subject line, or for an AI-written follow-up tick “Send as a new email with its own subject”. It then arrives as a new email in its own thread.",
+          "A follow-up with no subject is sent as a reply in the same thread, under the first email's subject.",
+          "Once contacts have a follow-up, it can't gain or lose its subject, though an existing subject can be reworded for emails prepared after that. So set subjects before you add contacts where you can.",
+        ],
+      },
+      {
+        id: "schedule",
+        question: "Can I schedule a campaign to start later?",
+        answer: [
+          "Yes. Press Schedule beside Start sending on a campaign that hasn't started, and pick a date and time in the campaign's timezone. You can change it, cancel it or start now at any time before then.",
+          "It can start up to 30 minutes after the time you pick. A campaign isn't sent all at once: emails then go out over the following days, within its daily limit and sending hours. A time outside those hours means the first emails wait until they next open.",
+          "Approved contacts wait in the console and are checked again as they go, so anyone who has since replied, bounced or unsubscribed stays out. Contacts approved after it starts can still be sent.",
+          "If it has no approved contacts or no mailbox that can send at that time, it doesn't start and nothing is sent. The campaign page says why, so you can pick a new time.",
+        ],
+      },
+    ],
+  },
 ];

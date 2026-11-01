@@ -58,6 +58,30 @@ export async function clientAttention(client: Client, isAdmin: boolean, boxes?: 
     }
   }
 
+  // Scheduled starts: one that didn't happen, and one due within a day that wouldn't happen as things stand.
+  const scheduled = await all<{ id: number; name: string; accounts: string; start_at: string | null; start_problem: string | null; ready: number }>(
+    `SELECT c.id, c.name, c.accounts, c.start_at, c.start_problem,
+       (SELECT COUNT(*) FROM leads l WHERE l.campaign_id = c.id AND (l.stage = 'approved' OR l.instantly_lead_id IS NOT NULL)) ready
+     FROM campaigns c WHERE c.client_id = ? AND c.status = 'draft' AND (c.start_problem IS NOT NULL OR c.start_at < ?)`,
+    client.id, new Date(Date.now() + 86400_000).toISOString(),
+  );
+  for (const c of scheduled) {
+    const href = `${base}/campaigns/${c.id}`;
+    if (c.start_problem) {
+      items.push({ kind: "problem", tone: "bad", priority: 92, text: `"${c.name}" didn't start as scheduled: ${c.start_problem}`, href, link: "Open campaign" });
+      continue;
+    }
+    let accounts: string[] = [];
+    try {
+      accounts = JSON.parse(c.accounts || "[]");
+    } catch {}
+    if (Number(c.ready) === 0) {
+      items.push({ kind: "todo", tone: "wait", priority: 78, text: `"${c.name}" is scheduled to start within a day but has no approved contacts, so it won't start.`, href: `${href}/approve`, link: "Approve" });
+    } else if (!accounts.some((a) => working.has(a))) {
+      items.push({ kind: "todo", tone: "wait", priority: 78, text: `"${c.name}" is scheduled to start within a day, but none of its mailboxes can send right now.`, href: mailboxPage, link: "Mailboxes" });
+    }
+  }
+
   for (const m of mailboxes.filter((x) => x.state.key === "error")) {
     items.push({ kind: "problem", tone: "bad", priority: 85, text: `${m.email}: ${m.state.label.toLowerCase()}. ${m.detail ?? ""}`, href: mailboxPage, link: "Mailboxes" });
   }

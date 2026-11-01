@@ -41,6 +41,8 @@ export type Campaign = {
   nexus_webhook_id: string | null;
   nexus_webhook_url: string | null;
   nexus_webhook_token_hash: string | null;
+  start_at: string | null;      // when a draft campaign is scheduled to start, in UTC (scheduling.ts)
+  start_problem: string | null; // why a scheduled start didn't happen
 };
 
 /** Run from Nexus: the console checks addresses and sends, but never writes, approves or answers for it. */
@@ -214,6 +216,8 @@ export async function setCampaignRunning(id: number, running: boolean) {
     "UPDATE campaigns SET instantly_status = ?, status = ?, last_synced_at = ? WHERE id = ?",
     remote.status, campaignState(remote.status), new Date().toISOString(), id,
   );
+  // Started, so any schedule is over with.
+  if (running) await run("UPDATE campaigns SET start_at = NULL, start_problem = NULL WHERE id = ?", id);
   await logActivity(c.client_id, running ? "resume" : "pause", `${running ? "Started" : "Paused"} "${c.name}"`);
 }
 

@@ -13,6 +13,7 @@ import { syncMeetings } from "./meetings";
 import { fillJobTitles, linkPendingLeads, logEmailsToGhl, noteCampaignsInGhl, pullTaggedContacts } from "./ghlsync";
 import { detectMailDomains, reclassifyMailDomains } from "./mailhost";
 import { sendWaiting } from "./push";
+import { startDueCampaigns } from "./scheduling";
 import { checkDomains, enforceHealth, syncWarmup } from "./mailboxHealth";
 import { flagProblemDomains } from "./deliverability";
 
@@ -342,6 +343,8 @@ export async function syncClient(clientId: number): Promise<{ ok: boolean; messa
       await reclassifyMailDomains();
       await detectMailDomains();
     }],
+    // After "leads" and "outside campaigns", so the check at the start sees the latest bounces.
+    ["scheduled starts", () => startDueCampaigns(clientId)],
     // Contacts that waited for another campaign's sequence go out once it's over (after "leads" refreshed statuses).
     ["waiting sends", () => sendWaiting(clientId)],
   ];

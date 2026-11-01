@@ -32,6 +32,7 @@ export function contactStatus(stage: string, verification: string | null): { lab
 /** Campaign status, in the user's words. */
 export const CAMPAIGN_STATUS_LABEL: Record<string, string> = {
   draft: "Not started",
+  scheduled: "Scheduled",
   active: "Sending",
   paused: "Paused",
   completed: "Finished",

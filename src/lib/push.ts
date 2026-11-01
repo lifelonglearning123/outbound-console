@@ -5,7 +5,7 @@ import { requireCampaign, subjectVar, bodyVar, liveSteps, hasOwnSubject } from "
 import { instantly, type LeadInput } from "./instantly";
 import { DO_NOT_CONTACT, IN_SEQUENCE, STOPPED_OUTSIDE, type LeadRow } from "./leads";
 import { AT_PROBLEM_DOMAIN, BEHIND_HELD, detectMailDomains, GATEWAY_LABEL, NO_MAIL_SERVER, type Gateway } from "./mailhost";
-import type { PushResult } from "./pushResult";
+import { NO_PUSH, type PushResult } from "./pushResult";
 
 export type { PushResult };
 
@@ -63,10 +63,13 @@ export async function approvedBreakdown(campaignId: number): Promise<ApprovedBre
  * Upload every approved lead of a campaign to Instantly, with its approved copy in custom variables.
  * Only leads whose every step is approved are in stage 'approved', so nothing unapproved can leave.
  * `probeIds` sends just those contacts, past the campaign's held mail filters (a test of a filter).
+ * A campaign scheduled to start later keeps its approved contacts here until then (`starting`, scheduling.ts), so
+ * they're checked when they go, not weeks before.
  */
-export async function pushApproved(campaignId: number, opts: { onlyWaiting?: boolean; probeIds?: number[] } = {}): Promise<PushResult> {
+export async function pushApproved(campaignId: number, opts: { onlyWaiting?: boolean; probeIds?: number[]; starting?: boolean } = {}): Promise<PushResult> {
   const campaign = await requireCampaign(campaignId);
   if (!campaign.instantly_campaign_id) throw new Error("Create the campaign in Instantly first");
+  if (campaign.start_at && campaign.status === "draft" && !opts.starting) return { ...NO_PUSH };
   const client = await requireClient(campaign.client_id);
   const api = instantly(client.instantly_api_key!);
 

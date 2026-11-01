@@ -7,6 +7,7 @@ import { approvedBreakdown } from "@/lib/push";
 import { campaignProgress } from "@/lib/progress";
 import { pauseCampaign, resumeCampaign } from "@/app/campaigns/actions";
 import { StatusPill } from "@/components/CampaignTable";
+import { ScheduleBanner, ScheduleButton } from "@/components/ScheduleStart";
 import { Tabs } from "@/components/Tabs";
 import { ago } from "@/lib/format";
 import { Working } from "@/components/Working";
@@ -66,7 +67,7 @@ export default async function CampaignLayout({ children, params }: LayoutProps<"
             <Link href={`/clients/${clientId}/campaigns`} className="text-sm text-muted hover:underline">Campaigns</Link>
             <span className="text-muted">/</span>
             <h2 className="text-xl font-semibold">{c.name}</h2>
-            <StatusPill status={c.status} />
+            <StatusPill status={c.start_at && c.status === "draft" ? "scheduled" : c.status} />
             {!c.managed && <span className="text-xs text-muted">set up outside the console, so its email is managed there</span>}
             {nexus && <span className="text-xs text-muted">run from Nexus</span>}
           </div>
@@ -83,12 +84,16 @@ export default async function CampaignLayout({ children, params }: LayoutProps<"
         </div>
         {c.instantly_campaign_id && (c.status === "active" ? (
           <form action={pauseCampaign.bind(null, c.id)}><SubmitButton className="btn" pendingLabel="Pausing…">Pause sending</SubmitButton></form>
-        ) : c.status === "paused" || c.status === "draft" ? (
-          <form action={resumeCampaign.bind(null, c.id)}><SubmitButton className="btn-go" pendingLabel="Starting…">{c.status === "draft" ? "Start sending" : "Resume sending"}</SubmitButton></form>
+        ) : c.status === "draft" && c.start_at ? null : c.status === "paused" || c.status === "draft" ? (
+          <div className="flex items-start gap-2">
+            {c.status === "draft" && c.managed === 1 && !nexus && <ScheduleButton c={c} />}
+            <form action={resumeCampaign.bind(null, c.id)}><SubmitButton className="btn-go" pendingLabel="Starting…">{c.status === "draft" ? "Start sending" : "Resume sending"}</SubmitButton></form>
+          </div>
         ) : null)}
       </header>
 
       {nexus && <p className="card p-3 text-sm text-muted">{NEXUS_NOTICE}</p>}
+      {c.status === "draft" && <ScheduleBanner c={c} approved={split.approved} needApproving={p.ready + p.unconfirmed} handedOver={p.sending} />}
 
       <AutoRefresh active={p.preparing + p.checking + p.updatingPortal > 0} />
       <Working

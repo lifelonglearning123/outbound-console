@@ -88,12 +88,12 @@ export default async function CampaignSendingPage({ params, searchParams }: Page
     <div className="flex flex-col gap-6">
       <AutoRefresh active={!!hold?.writing} />
 
-      {p.sending === 0 && next && (
+      {p.sending === 0 && next && !c.start_at && (
         <div className="card border-wait/40 bg-wait-soft/40 p-4 text-sm">
           Nothing is being sent yet. <Link href={next.href} className="font-medium underline">{next.text}</Link>
         </div>
       )}
-      {c.status === "draft" && p.sending > 0 && (
+      {c.status === "draft" && p.sending > 0 && !c.start_at && (
         <div className="card border-wait/40 bg-wait-soft/40 p-4 text-sm">
           {n(p.sending)} contacts are approved and loaded, but sending hasn&apos;t been started. Use <strong>Start sending</strong> above.
         </div>

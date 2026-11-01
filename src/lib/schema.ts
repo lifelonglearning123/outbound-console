@@ -350,6 +350,9 @@ CREATE TABLE IF NOT EXISTS suppressed_contacts (
   PRIMARY KEY (client_id, email)
 );
 ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS outcomes_read_at TEXT;
+-- A campaign's scheduled start (scheduling.ts), in UTC, and why one didn't happen.
+ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS start_at TEXT;
+ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS start_problem TEXT;
 -- People deleted from the Nexus Portal on purpose (portalTags.ts): queued, done or error. Kept for good, so nothing adds them back.
 CREATE TABLE IF NOT EXISTS portal_deletions (
   client_id INTEGER NOT NULL REFERENCES clients(id),

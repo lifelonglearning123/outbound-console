@@ -16,6 +16,7 @@ import { requireClient } from "@/lib/clients";
 import { instantly } from "@/lib/instantly";
 import { sanitizeEmailHtml } from "@/lib/merge";
 import { sendList } from "@/lib/mailboxHealth";
+import { cancelStart, scheduleStart } from "@/lib/scheduling";
 
 export async function pauseCampaign(id: number) {
   await requireClientAccess(await clientOfCampaign(id));
@@ -26,6 +27,19 @@ export async function pauseCampaign(id: number) {
 export async function resumeCampaign(id: number) {
   await requireClientAccess(await clientOfCampaign(id));
   await setCampaignRunning(id, true);
+  revalidatePath("/", "layout");
+}
+
+/** Start this campaign at the time picked, in the campaign's own timezone. */
+export async function scheduleCampaign(id: number, form: FormData) {
+  await requireClientAccess(await clientOfCampaign(id));
+  await scheduleStart(id, String(form.get("start_at") ?? ""));
+  revalidatePath("/", "layout");
+}
+
+export async function cancelSchedule(id: number) {
+  await requireClientAccess(await clientOfCampaign(id));
+  await cancelStart(id);
   revalidatePath("/", "layout");
 }
 
