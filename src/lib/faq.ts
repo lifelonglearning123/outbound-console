@@ -62,7 +62,15 @@ export const FAQ: FaqSection[] = [
         answer: [
           "Yes. On the campaign's Email tab, fill in a follow-up's subject line, or for an AI-written follow-up tick “Send as a new email with its own subject”. It then arrives as a new email in its own thread.",
           "A follow-up with no subject is sent as a reply in the same thread, under the first email's subject.",
-          "Once contacts have a follow-up, it can't gain or lose its subject, though an existing subject can be reworded for emails prepared after that. So set subjects before you add contacts where you can.",
+          "Once contacts are with the sender, a follow-up they have can't gain or lose its subject. An existing subject can still be reworded for everyone not yet sent.",
+        ],
+      },
+      {
+        id: "edit-email",
+        question: "What happens if I change an email after contacts are prepared or approved?",
+        answer: [
+          "Anyone not yet sent gets the new version. That email is prepared again for them and needs approving again, and any other emails in their sequence keep their approval. Edits made to that email one by one are replaced, so make them after you've finished changing it.",
+          "Contacts already with the sender keep the emails they have. Changing only the wait between emails doesn't need anything approving again.",
         ],
       },
       {

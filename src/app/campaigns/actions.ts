@@ -5,8 +5,8 @@ import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { run, tx, logActivity } from "@/lib/db";
 import {
-  campaignStepProblems, hasOwnSubject, isNexus, liveSteps, NEXUS_NOTICE, pushedLeadCount, requireCampaign, setCampaignRunning, syncCampaignToInstantly,
-  toInstantlySchedule, type Step,
+  campaignStepProblems, hasOwnSubject, isNexus, liveSteps, NEXUS_NOTICE, pushedLeadCount, requireCampaign, setCampaignRunning, stepEmailChanged,
+  syncCampaignToInstantly, toInstantlySchedule, type Step,
 } from "@/lib/campaigns";
 import { applyRelease, cancelRelease, prepareRelease, retryFailed } from "@/lib/hold";
 import { after } from "next/server";
@@ -116,14 +116,20 @@ export async function saveCampaign(clientId: number, campaignId: number | null, 
       if (locked) throw new Error(`Follow-up ${locked} is already being sent, so its subject can't be added or removed. Change it on a follow-up that isn't live yet.`);
       fields.hold_after = list.length > live ? live : existing.hold_after;
     }
-    if (subjectChanged.length) {
-      // Emails prepared under the old setting are out of date: prepare those steps again, and they need approving again.
-      await tx(async () => {
-        const notSent = "SELECT id FROM leads WHERE campaign_id = ? AND pushed_at IS NULL AND instantly_lead_id IS NULL";
-        await run(`DELETE FROM drafts WHERE step = ANY(?) AND lead_id IN (${notSent})`, subjectChanged, id);
-        await run(`UPDATE leads SET stage = 'drafting', stage_message = NULL WHERE id IN (${notSent}) AND stage IN ('review', 'approved')`, id);
+    if (existing.managed) {
+      // Emails already prepared for anyone not yet sent would still go out in their old wording. Those steps are
+      // prepared again and need approving again; a step that didn't change keeps its email and its approval.
+      const changed = list.flatMap((s, i) => (existing.steps[i] && stepEmailChanged(s, existing.steps[i]) ? [i + 1] : []));
+      const prepared = "SELECT id FROM leads WHERE campaign_id = ? AND pushed_at IS NULL AND instantly_lead_id IS NULL AND stage IN ('drafting', 'review', 'approved', 'error')";
+      const again = await tx(async () => {
+        await run(`DELETE FROM drafts WHERE (step = ANY(?) OR step > ?) AND lead_id IN (${prepared})`, changed, list.length, id);
+        if (changed.length === 0) return 0;
+        return (await run(`UPDATE leads SET stage = 'drafting', stage_message = NULL WHERE id IN (${prepared}) AND stage IN ('review', 'approved')`, id)).changes;
       });
-      after(runWriter);
+      if (again) {
+        await logActivity(clientId, "write", `The email changed in "${existing.name}", so ${again} ${again === 1 ? "contact's emails are" : "contacts' emails are"} being prepared again and need approving again`);
+        after(runWriter);
+      }
     }
     if (!existing.managed) {
       // External campaigns: only the controls we can safely change from here.

@@ -5,7 +5,7 @@ import { instantly, type CampaignSchedule } from "./instantly";
 import { campaignState } from "./connection";
 import { DEFAULT_TIMEZONE } from "./timezones";
 import type { Gateway } from "./mailhost";
-import { htmlToText } from "./merge";
+import { htmlToText, sanitizeEmailHtml } from "./merge";
 import { mailboxHealth, sendList } from "./mailboxHealth";
 
 // mode "fixed" = the client wrote this email (subject/body with merge fields); otherwise the AI writes it from `instructions`.
@@ -132,6 +132,20 @@ export const bodyVar = (step: number) => `body_${step}`;
  * without one is sent with a blank subject, which Instantly sends as a reply in the same thread; with one, in a new thread.
  */
 export const hasOwnSubject = (s: Step, i: number) => i === 0 || (s.mode === "fixed" ? !!s.subject?.trim() : !!s.new_subject);
+
+/**
+ * Whether an edit changes the email a step prepares. The wait between emails isn't part of the email. Compared as they'd
+ * be saved, because re-saving isn't an edit: older emails were stored before they were cleaned, and a form submission
+ * can change the line endings.
+ */
+export function stepEmailChanged(a: Step, b: Step): boolean {
+  if ((a.mode === "fixed") !== (b.mode === "fixed")) return true;
+  const text = (s: string | undefined) => (s ?? "").replace(/\r\n?/g, "\n").trim();
+  const html = (s: string | undefined) => text(sanitizeEmailHtml(s ?? ""));
+  return a.mode === "fixed"
+    ? text(a.subject) !== text(b.subject) || html(a.body) !== html(b.body)
+    : text(a.instructions) !== text(b.instructions) || !!a.new_subject !== !!b.new_subject;
+}
 
 export function toInstantlySchedule(s: Schedule): CampaignSchedule {
   const days = Object.fromEntries(["0", "1", "2", "3", "4", "5", "6"].map((d) => [d, s.days.includes(Number(d))]));
