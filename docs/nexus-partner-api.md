@@ -102,7 +102,7 @@ Where each person stands. 500 a page.
 | verdict | meaning |
 |---|---|
 | `removed` | taken out in the console by a person, or stopped through this API |
-| `do_not_contact` | replied, bounced or unsubscribed in another of the client's campaigns |
+| `do_not_contact` | replied, bounced or unsubscribed in another of the client's campaigns, including ones run outside the console |
 | `invalid` | the address doesn't exist |
 | `no_mail_server` | the domain has no mail server |
 | `problem_company` | the company is on the client's problem companies list |

@@ -49,8 +49,8 @@ export type LeadRow = {
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-// A contact can be in several of a client's campaigns, once in each. These two rules, written against a lead
-// aliased `a`, keep that safe: the import uses the first, the send (push.ts) uses both.
+// A contact can be in several of a client's campaigns, once in each. DO_NOT_CONTACT and IN_SEQUENCE, written against
+// a lead aliased `a`, keep that safe: the import uses the first, the send (push.ts) uses both. Both check STOPPED_OUTSIDE too.
 
 /**
  * A bounce from a checked address at a company behind a security filter (Mimecast and the like): the address
@@ -72,11 +72,22 @@ export const DO_NOT_CONTACT = (a: string) =>
        AND e.interest IS DISTINCT FROM 'ooo'))`;
 
 /**
+ * Never emailed again because of what happened outside the client's contact records, so true with no earlier lead to
+ * read it from: a bounce or unsubscribe in a campaign the console doesn't manage (see syncOutsideOutcomes), or a reply
+ * to any of the client's mailboxes. `a` needs client_id and email.
+ */
+export const STOPPED_OUTSIDE = (a: string) =>
+  `(EXISTS (SELECT 1 FROM suppressed_contacts s WHERE s.client_id = ${a}.client_id AND s.email = ${a}.email) OR EXISTS (
+     SELECT 1 FROM emails e WHERE e.client_id = ${a}.client_id AND e.lead_email = ${a}.email AND e.direction = 'in'
+       AND e.interest IS DISTINCT FROM 'ooo'))`;
+
+/**
  * Handed to Instantly and its sequence not over yet, so another campaign must wait. Over means completed (3),
- * skipped (-3), bounced (-1) or unsubscribed (-2).
+ * skipped (-3), bounced (-1) or unsubscribed (-2), or that the campaign itself has completed: it sends nothing more.
  */
 export const IN_SEQUENCE = (a: string) =>
-  `((${a}.pushed_at IS NOT NULL OR ${a}.instantly_lead_id IS NOT NULL) AND COALESCE(${a}.instantly_status, 1) NOT IN (3, -3, -1, -2))`;
+  `((${a}.pushed_at IS NOT NULL OR ${a}.instantly_lead_id IS NOT NULL) AND COALESCE(${a}.instantly_status, 1) NOT IN (3, -3, -1, -2)
+     AND NOT EXISTS (SELECT 1 FROM campaigns done WHERE done.id = ${a}.campaign_id AND done.status = 'completed'))`;
 
 export type OtherCampaign = { campaign: string; outcome: string; tone: string };
 
@@ -103,10 +114,10 @@ export async function otherCampaigns(clientId: number, campaignId: number, email
   const out = new Map<string, OtherCampaign[]>();
   if (emails.length === 0) return out;
   const rows = await all<{
-    email: string; campaign: string; stage: string; verification: string | null; instantly_status: number | null; replied: boolean;
-    blocked: boolean; gateway: Gateway | null;
+    email: string; campaign: string; campaign_status: string; stage: string; verification: string | null; instantly_status: number | null;
+    replied: boolean; blocked: boolean; gateway: Gateway | null;
   }>(
-    `SELECT o.email, c.name campaign, o.stage, o.verification, o.instantly_status,
+    `SELECT o.email, c.name campaign, c.status campaign_status, o.stage, o.verification, o.instantly_status,
        EXISTS (SELECT 1 FROM emails e WHERE e.client_id = o.client_id AND e.lead_email = o.email AND e.direction = 'in'
          AND e.campaign_id = o.campaign_id AND e.interest IS DISTINCT FROM 'ooo') replied,
        ${FILTER_BLOCKED("o")} blocked, (SELECT md.gateway FROM mail_domains md WHERE md.domain = split_part(o.email, '@', 2)) gateway
@@ -122,7 +133,7 @@ export async function otherCampaigns(clientId: number, campaignId: number, email
       : r.instantly_status === -1 ? ["bounced", "text-bad"]
       : r.instantly_status === -2 ? ["unsubscribed", "text-bad"]
       : r.verification === "invalid" ? ["invalid address", "text-bad"]
-      : sent && r.instantly_status === 3 ? ["sequence finished, no reply", "text-muted"]
+      : sent && (r.instantly_status === 3 || r.campaign_status === "completed") ? ["sequence finished, no reply", "text-muted"]
       : sent ? ["being emailed", "text-info"]
       : r.stage === "rejected" || r.stage === "removed" ? ["not sent", "text-muted"]
       : ["waiting, not sent yet", "text-wait"];
@@ -145,7 +156,7 @@ type Earlier = {
 /**
  * Add leads to a campaign:
  *   - already in this campaign: its fields are refreshed while it's still 'new', otherwise it's left alone;
- *   - replied, bounced, unsubscribed or invalid in any campaign: skipped;
+ *   - replied, bounced, unsubscribed or invalid in any campaign, including ones the console doesn't manage: skipped;
  *   - otherwise added, even while another campaign has it: the send waits until no other sequence is emailing it.
  *     It keeps the address check from its latest earlier campaign.
  * A lead with no earlier result starts queued for an address check (verify.ts), unless it comes from the portal
@@ -181,6 +192,10 @@ export async function importLeads(
      FROM leads l WHERE l.client_id = ? AND l.email = ANY(?) ORDER BY l.id DESC`,
     clientId, [...wanted.keys()],
   )) earlier.set(e.email, [...(earlier.get(e.email) ?? []), e]);
+  const stopped = new Set((await all<{ email: string }>(
+    `SELECT x.email FROM (SELECT ?::int client_id, unnest(?::text[]) email) x WHERE ${STOPPED_OUTSIDE("x")}`,
+    clientId, [...wanted.keys()],
+  )).map((s) => s.email));
 
   type Write = {
     id?: number; email: string; first_name: string | null; last_name: string | null; company: string | null; title: string | null;
@@ -197,7 +212,7 @@ export async function importLeads(
       continue;
     }
     const others = mine.filter((e) => e !== existing);
-    if (others.some((e) => e.dnc)) {
+    if (others.some((e) => e.dnc) || stopped.has(email)) {
       r.skippedDoNotContact++;
       continue;
     }

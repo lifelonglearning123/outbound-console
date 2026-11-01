@@ -341,4 +341,13 @@ CREATE UNIQUE INDEX IF NOT EXISTS campaigns_nexus_id ON campaigns (nexus_campaig
 ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS nexus_webhook_id TEXT;
 ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS nexus_webhook_url TEXT;
 ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS nexus_webhook_token_hash TEXT;
+-- People who bounced or unsubscribed in a campaign the console doesn't manage: it has no contact records to hold that.
+CREATE TABLE IF NOT EXISTS suppressed_contacts (
+  client_id INTEGER NOT NULL REFERENCES clients(id),
+  email TEXT NOT NULL,
+  reason TEXT NOT NULL,                 -- 'bounced' | 'unsubscribed'
+  created_at TEXT NOT NULL DEFAULT ${NOW_TEXT},
+  PRIMARY KEY (client_id, email)
+);
+ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS outcomes_read_at TEXT;
 `;

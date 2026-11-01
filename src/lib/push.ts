@@ -3,7 +3,7 @@ import { all, get, run, tx, logActivity } from "./db";
 import { requireClient } from "./clients";
 import { requireCampaign, subjectVar, bodyVar, liveSteps } from "./campaigns";
 import { instantly, type LeadInput } from "./instantly";
-import { DO_NOT_CONTACT, IN_SEQUENCE, type LeadRow } from "./leads";
+import { DO_NOT_CONTACT, IN_SEQUENCE, STOPPED_OUTSIDE, type LeadRow } from "./leads";
 import { AT_PROBLEM_DOMAIN, BEHIND_HELD, detectMailDomains, GATEWAY_LABEL, NO_MAIL_SERVER, type Gateway } from "./mailhost";
 import type { PushResult } from "./pushResult";
 
@@ -36,7 +36,7 @@ export async function approvedBreakdown(campaignId: number): Promise<ApprovedBre
          (SELECT md.gateway FROM mail_domains md WHERE md.domain = split_part(l.email, '@', 2) AND md.gateway = ANY(?)) held_by,
          ${NO_MAIL_SERVER("l")} nomail,
          ${AT_PROBLEM_DOMAIN("l")} blocked,
-         EXISTS (SELECT 1 FROM leads o WHERE o.client_id = l.client_id AND o.email = l.email AND o.id <> l.id AND ${DO_NOT_CONTACT("o")}) stop,
+         (${STOPPED_OUTSIDE("l")} OR EXISTS (SELECT 1 FROM leads o WHERE o.client_id = l.client_id AND o.email = l.email AND o.id <> l.id AND ${DO_NOT_CONTACT("o")})) stop,
          (SELECT oc.name FROM leads o JOIN campaigns oc ON oc.id = o.campaign_id
            WHERE o.client_id = l.client_id AND o.email = l.email AND o.id <> l.id AND ${IN_SEQUENCE("o")} LIMIT 1) busy_in
        FROM leads l WHERE l.campaign_id = ? AND l.stage = 'approved'
@@ -114,6 +114,11 @@ export async function pushApproved(campaignId: number, opts: { onlyWaiting?: boo
     ...leads.map((l) => l.id),
   );
 
+  const outside = new Set((await all<{ id: number }>(
+    `SELECT l.id FROM leads l WHERE l.id = ANY(?) AND ${STOPPED_OUTSIDE("l")}`,
+    leads.map((l) => l.id),
+  )).map((l) => l.id));
+
   const ready: { lead: LeadRow; input: LeadInput }[] = [];
   const hasGhl = !!ghlCreds(client);
   for (const lead of leads) {
@@ -150,9 +155,10 @@ export async function pushApproved(campaignId: number, opts: { onlyWaiting?: boo
        ORDER BY 2 DESC LIMIT 1`,
       lead.client_id, lead.email, lead.id,
     );
-    if (other?.dnc) {
+    if (other?.dnc || outside.has(lead.id)) {
+      const where = other?.dnc ? `"${other.name}"` : "an earlier campaign";
       await tx(async () => {
-        await run("UPDATE leads SET stage = 'rejected', stage_message = ? WHERE id = ?", `Not sent: replied, bounced or unsubscribed in "${other.name}"`, lead.id);
+        await run("UPDATE leads SET stage = 'rejected', stage_message = ? WHERE id = ?", `Not sent: replied, bounced or unsubscribed in ${where}`, lead.id);
         await run("UPDATE drafts SET status = 'rejected', reviewed_at = datetime('now') WHERE lead_id = ? AND status IN ('pending', 'approved')", lead.id);
       });
       stopped++;
@@ -238,7 +244,7 @@ export async function probeFilter(campaignId: number, gateway: Gateway, n = 10):
   // Only contacts that can go now: not on the problem list, and not stopped or mid-sequence in another campaign.
   const ids = (await all<{ id: number }>(
     `SELECT l.id FROM leads l JOIN mail_domains md ON md.domain = split_part(l.email, '@', 2)
-     WHERE l.campaign_id = ? AND l.stage = 'approved' AND md.gateway = ? AND NOT ${AT_PROBLEM_DOMAIN("l")}
+     WHERE l.campaign_id = ? AND l.stage = 'approved' AND md.gateway = ? AND NOT ${AT_PROBLEM_DOMAIN("l")} AND NOT ${STOPPED_OUTSIDE("l")}
        AND NOT EXISTS (SELECT 1 FROM leads o WHERE o.client_id = l.client_id AND o.email = l.email AND o.id <> l.id
          AND (${DO_NOT_CONTACT("o")} OR ${IN_SEQUENCE("o")}))
      ORDER BY l.id LIMIT ?`,

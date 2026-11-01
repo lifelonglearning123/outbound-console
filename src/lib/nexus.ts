@@ -7,7 +7,7 @@ import {
   formMailboxes, getCampaign, liveSteps, pushedLeadCount, setCampaignRunning, syncCampaignToInstantly, type Campaign, type Step,
 } from "./campaigns";
 import { instantly, InstantlyError } from "./instantly";
-import { DO_NOT_CONTACT, importLeads, mailServers, type LeadFields } from "./leads";
+import { DO_NOT_CONTACT, importLeads, mailServers, STOPPED_OUTSIDE, type LeadFields } from "./leads";
 import { AT_PROBLEM_DOMAIN, BEHIND_HELD, NO_MAIL_SERVER } from "./mailhost";
 import { pushApproved } from "./push";
 import { toHtml } from "./merge";
@@ -296,8 +296,8 @@ async function leadFacts(c: Campaign, opts: { emails?: string[]; offset?: number
   return all<Facts>(
     `SELECT l.id, l.email, l.ghl_contact_id, l.verification, l.stage, l.stage_message, l.instantly_status, l.pushed_at, l.instantly_lead_id,
        l.last_sent_at, l.last_reply_at, l.step_reached,
-       (${notSent} AND EXISTS (SELECT 1 FROM leads o WHERE o.client_id = l.client_id AND o.email = l.email AND o.id <> l.id
-         AND o.campaign_id IS DISTINCT FROM l.campaign_id AND ${DO_NOT_CONTACT("o")})) dnc,
+       (${notSent} AND (${STOPPED_OUTSIDE("l")} OR EXISTS (SELECT 1 FROM leads o WHERE o.client_id = l.client_id AND o.email = l.email AND o.id <> l.id
+         AND o.campaign_id IS DISTINCT FROM l.campaign_id AND ${DO_NOT_CONTACT("o")}))) dnc,
        (${notSent} AND ${NO_MAIL_SERVER("l")}) nomail,
        (${notSent} AND ${AT_PROBLEM_DOMAIN("l")}) problem,
        (${notSent} AND ${BEHIND_HELD("l").replace("?", "@held")}) held,

@@ -227,13 +227,17 @@ async function syncStats(clientId: number, api: InstantlyClient) {
   );
 }
 
-async function syncLeads(clientId: number, api: InstantlyClient) {
+/** Campaigns still running are read every sync; finished ones once a day, because a bounce can land after the last send. */
+export async function syncLeads(clientId: number, api: InstantlyClient) {
+  const now = new Date().toISOString();
   const campaigns = await all<{ id: number; instantly_campaign_id: string }>(
-    "SELECT id, instantly_campaign_id FROM campaigns WHERE client_id = ? AND managed = 1 AND instantly_campaign_id IS NOT NULL AND status IN ('active','paused')",
-    clientId,
+    `SELECT id, instantly_campaign_id FROM campaigns WHERE client_id = ? AND managed = 1 AND instantly_campaign_id IS NOT NULL
+       AND (status IN ('active','paused') OR (status = 'completed' AND (outcomes_read_at IS NULL OR outcomes_read_at < ?)))`,
+    clientId, new Date(Date.now() - 86400_000).toISOString(),
   );
   for (const c of campaigns) {
     const leads = await api.leadsInCampaign(c.instantly_campaign_id);
+    await run("UPDATE campaigns SET outcomes_read_at = ? WHERE id = ?", now, c.id);
     await tx(async () => {
       for (const l of leads) {
         if (!l.email) continue;
@@ -245,6 +249,39 @@ async function syncLeads(clientId: number, api: InstantlyClient) {
         );
       }
     });
+  }
+}
+
+/**
+ * A campaign the console doesn't manage has no contact records to hold how each person did, so its bounces and
+ * unsubscribes go on a list of their own (replies are already in `emails`). A mailbox can move to another client after
+ * sending, so they count for every client whose record holds an email to that person. Finished campaigns are read once a day.
+ */
+export async function syncOutsideOutcomes(clientId: number, api: InstantlyClient) {
+  const now = new Date().toISOString();
+  const campaigns = await all<{ id: number; instantly_campaign_id: string }>(
+    `SELECT id, instantly_campaign_id FROM campaigns WHERE client_id = ? AND managed = 0 AND instantly_campaign_id IS NOT NULL AND status <> 'draft'
+       AND (status <> 'completed' OR outcomes_read_at IS NULL OR outcomes_read_at < ?)`,
+    clientId, new Date(Date.now() - 86400_000).toISOString(),
+  );
+  const added = new Map<number, number>();
+  for (const c of campaigns) {
+    const stopped = (await api.leadsInCampaign(c.instantly_campaign_id))
+      .filter((l) => l.email && (l.status === -1 || l.status === -2))
+      .map((l) => ({ email: l.email!.toLowerCase(), reason: l.status === -1 ? "bounced" : "unsubscribed" }));
+    if (stopped.length) {
+      for (const r of await all<{ client_id: number }>(
+        `INSERT INTO suppressed_contacts (client_id, email, reason)
+         SELECT DISTINCT who.client_id, x.email, x.reason FROM jsonb_to_recordset(?::jsonb) AS x(email text, reason text)
+         CROSS JOIN LATERAL (SELECT ?::int client_id UNION SELECT e.client_id FROM emails e WHERE e.lead_email = x.email AND e.direction = 'out') who
+         ON CONFLICT (client_id, email) DO NOTHING RETURNING client_id`,
+        JSON.stringify(stopped), clientId,
+      )) added.set(r.client_id, (added.get(r.client_id) ?? 0) + 1);
+    }
+    await run("UPDATE campaigns SET outcomes_read_at = ? WHERE id = ?", now, c.id);
+  }
+  for (const [id, n] of added) {
+    await logActivity(id, "suppressed", `${n} ${n === 1 ? "person" : "people"} who bounced or unsubscribed in a campaign outside the console won't be emailed again`);
   }
 }
 
@@ -284,6 +321,7 @@ export async function syncClient(clientId: number): Promise<{ ok: boolean; messa
     ["scheduled", () => syncScheduled(client, api)],
     ["stats", () => syncStats(clientId, api)],
     ["leads", () => syncLeads(clientId, api)],
+    ["outside campaigns", () => syncOutsideOutcomes(clientId, api)],
     ["warmup", () => syncWarmup(clientId, api)],
     // Rest mailboxes that break the health rules, put recovered ones back, move easing-in limits along.
     ["health", () => enforceHealth(clientId, api)],
