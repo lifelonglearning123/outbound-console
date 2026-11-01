@@ -134,6 +134,7 @@ export function Nav({ clients, user }: { clients: NavClient[]; user: { email: st
           {user.isAdmin && (
             <Link href="/admin/users" className={item(path.startsWith("/admin/users"))}>Users</Link>
           )}
+          <Link href="/faq" className={item(path === "/faq")}>FAQ</Link>
           <Link href="/account" className={item(path === "/account")}>
             <span className="truncate text-xs">{user.email}</span>
           </Link>
