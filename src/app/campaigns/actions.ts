@@ -3,9 +3,9 @@
 import { clientOfCampaign, requireClientAccess } from "@/lib/auth";
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
-import { run, tx, logActivity } from "@/lib/db";
+import { get, run, tx, logActivity } from "@/lib/db";
 import {
-  campaignStepProblems, hasOwnSubject, isNexus, liveSteps, NEXUS_NOTICE, pushedLeadCount, requireCampaign, setCampaignRunning, stepEmailChanged,
+  archiveCampaign, campaignStepProblems, deleteEmptyCampaign, hasOwnSubject, isNexus, restoreCampaign, liveSteps, NEXUS_NOTICE, pushedLeadCount, requireCampaign, setCampaignRunning, stepEmailChanged,
   syncCampaignToInstantly, toInstantlySchedule, type Step,
 } from "@/lib/campaigns";
 import { applyRelease, cancelRelease, prepareRelease, retryFailed } from "@/lib/hold";
@@ -16,7 +16,7 @@ import { requireClient } from "@/lib/clients";
 import { instantly } from "@/lib/instantly";
 import { sanitizeEmailHtml } from "@/lib/merge";
 import { sendList } from "@/lib/mailboxHealth";
-import { cancelStart, scheduleStart } from "@/lib/scheduling";
+import { cancelStart, scheduleStart, startNow } from "@/lib/scheduling";
 
 export async function pauseCampaign(id: number) {
   await requireClientAccess(await clientOfCampaign(id));
@@ -26,7 +26,28 @@ export async function pauseCampaign(id: number) {
 
 export async function resumeCampaign(id: number) {
   await requireClientAccess(await clientOfCampaign(id));
-  await setCampaignRunning(id, true);
+  const c = await requireCampaign(id);
+  // First start of a console campaign: its approved contacts go with it. Otherwise it would say "Sending" with nobody to send to.
+  if (c.status === "draft" && c.managed && !isNexus(c)) await startNow(id);
+  else await setCampaignRunning(id, true);
+  revalidatePath("/", "layout");
+}
+
+export async function archive(id: number) {
+  await requireClientAccess(await clientOfCampaign(id));
+  await archiveCampaign(id);
+  revalidatePath("/", "layout");
+}
+
+export async function restore(id: number) {
+  await requireClientAccess(await clientOfCampaign(id));
+  await restoreCampaign(id);
+  revalidatePath("/", "layout");
+}
+
+export async function deleteEmpty(id: number) {
+  await requireClientAccess(await clientOfCampaign(id));
+  await deleteEmptyCampaign(id);
   revalidatePath("/", "layout");
 }
 
@@ -145,6 +166,12 @@ export async function saveCampaign(clientId: number, campaignId: number | null, 
       );
     }
   } else {
+    // The same campaign created again within a minute is a repeated click, not a new one: open the first.
+    const repeat = await get<{ id: number }>(
+      "SELECT id FROM campaigns WHERE client_id = ? AND name = ? AND created_at >= to_char(now() AT TIME ZONE 'utc' - interval '60 seconds', 'YYYY-MM-DD HH24:MI:SS') ORDER BY id LIMIT 1",
+      clientId, fields.name,
+    );
+    if (repeat) redirect(`/clients/${clientId}/campaigns/${repeat.id}/contacts`);
     id = (await run(
       `INSERT INTO campaigns (client_id, name, steps, schedule, daily_limit, accounts, stop_on_reply, hold_after, ghl_tag, match_esp)
        VALUES (@clientId, @name, @steps, @schedule, @daily_limit, @accounts, @stop_on_reply, @hold_after, @ghl_tag, @match_esp)`,

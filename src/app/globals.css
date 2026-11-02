@@ -1,21 +1,21 @@
 @import "tailwindcss";
 
-/* Operations-console palette: warm paper, dark ink, one "go" green.
-   Amber = waiting on a human, red = something is wrong. */
+/* A calm CRM palette: cool canvas, white cards, navy ink, one teal for "go".
+   Amber = waiting on a human, red = something is wrong. Every text colour passes WCAG AA on card and paper. */
 :root {
-  --paper: #f6f5f1;
+  --paper: #f5f8fa;
   --card: #ffffff;
-  --ink: #1b1a17;
-  --muted: #6b6860;
-  --line: #e4e1d8;
-  --go: #2f6b4f;
-  --go-soft: #e3efe8;
-  --wait: #a86a12;
-  --wait-soft: #f8ecd6;
-  --bad: #b3372b;
-  --bad-soft: #f7e1de;
-  --info: #3b5b8c;
-  --info-soft: #e2e9f4;
+  --ink: #213343;
+  --muted: #55697c;
+  --line: #dfe3eb;
+  --go: #0b7a6b;
+  --go-soft: #e2f4f1;
+  --wait: #955a00;
+  --wait-soft: #fdf1dd;
+  --bad: #b42b2b;
+  --bad-soft: #fbe8e8;
+  --info: #1c689f;
+  --info-soft: #e5f1fa;
 }
 
 @theme inline {
@@ -47,22 +47,35 @@ body {
 }
 
 .field {
-  @apply w-full rounded-md border border-line bg-card px-3 py-2 text-sm outline-none focus:border-ink;
+  @apply w-full rounded-md border border-line bg-card px-3 py-2 text-sm outline-none focus:border-info focus:ring-2 focus:ring-info-soft;
 }
 .label {
-  @apply mb-1 block text-xs font-medium uppercase tracking-wide text-muted;
+  @apply mb-1.5 block text-[13px] font-medium text-ink;
+}
+.btn,
+.btn-go,
+.btn-bad {
+  @apply inline-flex cursor-pointer items-center justify-center gap-1.5 rounded-md px-3.5 py-2 text-sm font-medium whitespace-nowrap transition-colors outline-none focus-visible:ring-2 focus-visible:ring-info focus-visible:ring-offset-1 active:translate-y-px disabled:cursor-not-allowed disabled:opacity-50 motion-reduce:transition-none;
 }
 .btn {
-  @apply inline-flex items-center gap-1.5 rounded-md border border-line bg-card px-3 py-1.5 text-sm font-medium hover:border-ink active:translate-y-px disabled:opacity-50;
+  @apply border border-line bg-card text-ink hover:border-muted hover:bg-paper;
 }
 .btn-go {
-  @apply inline-flex items-center gap-1.5 rounded-md bg-go px-3 py-1.5 text-sm font-medium text-white hover:opacity-90 active:translate-y-px disabled:opacity-50;
+  @apply bg-go text-white hover:opacity-90;
 }
 .btn-bad {
-  @apply inline-flex items-center gap-1.5 rounded-md border border-bad px-3 py-1.5 text-sm font-medium text-bad hover:bg-bad-soft active:translate-y-px disabled:opacity-50;
+  @apply border border-bad text-bad hover:bg-bad-soft;
+}
+/* A quiet action beside a main one, such as Archive on a campaign's row. */
+.btn-quiet {
+  @apply cursor-pointer rounded text-xs text-muted underline-offset-2 outline-none hover:text-ink hover:underline focus-visible:ring-2 focus-visible:ring-info disabled:opacity-50;
 }
 .card {
   @apply rounded-lg border border-line bg-card;
+}
+.popover {
+  @apply rounded-lg border border-line bg-card;
+  box-shadow: 0 10px 28px rgb(33 51 67 / 0.14);
 }
 
 /* On narrow screens, a card-wrapped table scrolls sideways instead of crushing its columns. */

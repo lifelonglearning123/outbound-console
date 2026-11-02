@@ -35,6 +35,19 @@ export async function cancelStart(campaignId: number) {
   if (c.start_at) await logActivity(c.client_id, "campaign", `Cancelled the scheduled start of "${c.name}"`);
 }
 
+/**
+ * Start a campaign that hasn't started, now: its approved contacts go to the sender, checked again as they go, and
+ * sending switches on. Refused when there's nobody to send to, because a campaign with no contacts says "Sending" and sends nothing.
+ */
+export async function startNow(id: number) {
+  await dropStoppedContacts(id);
+  for (;;) {
+    if ((await pushApproved(id, { starting: true })).pushed === 0) break;
+  }
+  if ((await pushedLeadCount(id)) === 0) throw new Error("None of this campaign's contacts can be sent yet. Check the Approvals tab to see why.");
+  await setCampaignRunning(id, true);
+}
+
 /** Each sync: start the client's campaigns whose time has come. A failure that may be passing is tried again next sync. */
 export async function startDueCampaigns(clientId: number) {
   // Started some other way (Instantly directly): the schedule no longer means anything.

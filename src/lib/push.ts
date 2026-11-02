@@ -237,7 +237,7 @@ export async function sendWaiting(clientId: number): Promise<number> {
   const campaigns = await all<{ id: number }>(
     `SELECT DISTINCT l.campaign_id id FROM leads l JOIN campaigns c ON c.id = l.campaign_id
      WHERE l.client_id = ? AND l.stage = 'approved' AND l.stage_message LIKE 'Waiting:%'
-       AND c.managed = 1 AND c.instantly_campaign_id IS NOT NULL AND c.status IN ('active', 'paused', 'draft')`,
+       AND c.managed = 1 AND c.instantly_campaign_id IS NOT NULL AND c.status IN ('active', 'paused', 'draft') AND c.archived_at IS NULL`,
     clientId,
   );
   let pushed = 0;

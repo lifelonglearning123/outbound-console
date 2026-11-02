@@ -5,8 +5,8 @@ import { getCampaign, isNexus, NEXUS_NOTICE } from "@/lib/campaigns";
 import { getClient } from "@/lib/clients";
 import { approvedBreakdown } from "@/lib/push";
 import { campaignProgress } from "@/lib/progress";
-import { pauseCampaign, resumeCampaign } from "@/app/campaigns/actions";
-import { StatusPill } from "@/components/CampaignTable";
+import { pauseCampaign, restore, resumeCampaign } from "@/app/campaigns/actions";
+import { NextStep, StatusPill } from "@/components/CampaignTable";
 import { ScheduleBanner, ScheduleButton } from "@/components/ScheduleStart";
 import { Tabs } from "@/components/Tabs";
 import { ago } from "@/lib/format";
@@ -67,7 +67,7 @@ export default async function CampaignLayout({ children, params }: LayoutProps<"
             <Link href={`/clients/${clientId}/campaigns`} className="text-sm text-muted hover:underline">Campaigns</Link>
             <span className="text-muted">/</span>
             <h2 className="text-xl font-semibold">{c.name}</h2>
-            <StatusPill status={c.start_at && c.status === "draft" ? "scheduled" : c.status} />
+            <StatusPill status={c.archived_at ? "archived" : c.start_at && c.status === "draft" ? "scheduled" : c.status} />
             {!c.managed && <span className="text-xs text-muted">set up outside the console, so its email is managed there</span>}
             {nexus && <span className="text-xs text-muted">run from Nexus</span>}
           </div>
@@ -82,13 +82,17 @@ export default async function CampaignLayout({ children, params }: LayoutProps<"
             updated {ago(c.last_synced_at)}
           </p>
         </div>
-        {c.instantly_campaign_id && (c.status === "active" ? (
+        {c.archived_at ? (
+          <form action={restore.bind(null, c.id)}><SubmitButton className="btn" pendingLabel="Restoring…">Restore</SubmitButton></form>
+        ) : c.instantly_campaign_id && (c.status === "active" ? (
           <form action={pauseCampaign.bind(null, c.id)}><SubmitButton className="btn" pendingLabel="Pausing…">Pause sending</SubmitButton></form>
-        ) : c.status === "draft" && c.start_at ? null : c.status === "paused" || c.status === "draft" ? (
+        ) : c.status === "draft" && c.start_at ? null : c.status === "draft" && c.managed === 1 && !nexus ? (
           <div className="flex items-start gap-2">
-            {c.status === "draft" && c.managed === 1 && !nexus && <ScheduleButton c={c} />}
-            <form action={resumeCampaign.bind(null, c.id)}><SubmitButton className="btn-go" pendingLabel="Starting…">{c.status === "draft" ? "Start sending" : "Resume sending"}</SubmitButton></form>
+            <ScheduleButton c={c} />
+            <NextStep href={base} id={c.id} contacts={p.contacts} ready={split.approved + p.sending} toApprove={p.ready + p.unconfirmed} />
           </div>
+        ) : c.status === "paused" || c.status === "draft" ? (
+          <form action={resumeCampaign.bind(null, c.id)}><SubmitButton className="btn-go" pendingLabel="Starting…">{c.status === "draft" ? "Start sending" : "Resume sending"}</SubmitButton></form>
         ) : null)}
       </header>
 

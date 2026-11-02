@@ -38,7 +38,13 @@ export default async function CampaignApprovePage({ params, searchParams }: Page
   const split = await approvedBreakdown(c.id);
   const sendable = { ...split, held: split.held.map((h) => ({ ...h, label: GATEWAY_LABEL[h.gateway] ?? h.gateway })) };
   const unconfirmed = b.groups.catch_all ? await unconfirmedSuggestion(clientId, b.groups.catch_all) : null;
-  const startsAt = c.start_at && c.status === "draft" ? startLabel(new Date(c.start_at), c.schedule.timezone) : undefined;
+  // Not started: approving doesn't send. Approved contacts go when it starts, and are checked again then.
+  const notStarted = c.status === "draft";
+  const waitingFor = !notStarted
+    ? undefined
+    : c.start_at
+      ? `They go when the campaign starts, ${startLabel(new Date(c.start_at), c.schedule.timezone)}.`
+      : "They go when you start the campaign, or at the time you schedule.";
 
   if (!b.fixed || eachOne) {
     const leads = await reviewQueue(clientId, 200, c.id);
@@ -46,7 +52,7 @@ export default async function CampaignApprovePage({ params, searchParams }: Page
       <div className="flex flex-col gap-3">
         {b.fixed && <Link href={`${base}/approve`} className="text-sm underline">← Back to approving in one go</Link>}
         <AutoRefresh active={counts.drafting > 0 && leads.length === 0} />
-        <SendPanel campaignId={c.id} contactsHref={`${base}/contacts`} mailboxesHref={`/clients/${clientId}/mailboxes`} b={sendable} startsAt={startsAt} />
+        <SendPanel campaignId={c.id} contactsHref={`${base}/contacts`} mailboxesHref={`/clients/${clientId}/mailboxes`} b={sendable} waitingFor={waitingFor} />
         <ApprovalQueue leads={leads} clientId={clientId} campaignId={c.id} approvedCount={counts.approved} draftingCount={counts.drafting} showClient={false} hideSend />
       </div>
     );
@@ -60,7 +66,7 @@ export default async function CampaignApprovePage({ params, searchParams }: Page
     <div className="flex flex-col gap-6">
       <AutoRefresh active={counts.drafting > 0} />
 
-      <SendPanel campaignId={c.id} contactsHref={`${base}/contacts`} mailboxesHref={`/clients/${clientId}/mailboxes`} b={sendable} startsAt={startsAt} />
+      <SendPanel campaignId={c.id} contactsHref={`${base}/contacts`} mailboxesHref={`/clients/${clientId}/mailboxes`} b={sendable} waitingFor={waitingFor} />
 
       {waiting === 0 ? (
         <div className="card p-8 text-center text-sm text-muted">
@@ -111,7 +117,7 @@ export default async function CampaignApprovePage({ params, searchParams }: Page
               tone="text-go"
               note="Verified addresses with their email prepared. Safe to send to all of them."
               primary
-              scheduled={!!startsAt}
+              approveOnly={notStarted}
             />
             <Group
               campaignId={c.id}
@@ -122,7 +128,7 @@ export default async function CampaignApprovePage({ params, searchParams }: Page
               note="Their company accepts every address, so some may bounce. Send a few at a time and watch the bounce figure on the Sending tab."
               batch
               suggestion={unconfirmed ? { size: unconfirmed.size, text: unconfirmed.text } : undefined}
-              scheduled={!!startsAt}
+              approveOnly={notStarted}
             />
             {b.checking > 0 && (
               <p className="text-xs text-muted">{n(b.checking)} more contacts are still being checked and will appear here once they pass.</p>
@@ -141,7 +147,7 @@ export default async function CampaignApprovePage({ params, searchParams }: Page
 }
 
 function Group({
-  campaignId, group, title, count, tone, note, primary, batch, suggestion, scheduled,
+  campaignId, group, title, count, tone, note, primary, batch, suggestion, approveOnly,
 }: {
   campaignId: number;
   group: "verified" | "catch_all";
@@ -153,8 +159,8 @@ function Group({
   batch?: boolean;
   /** For unconfirmed contacts: how many to send at once, from how the client's earlier ones bounced. */
   suggestion?: { size: number; text: string };
-  /** The campaign starts later: approving doesn't send, it joins the start. */
-  scheduled?: boolean;
+  /** The campaign hasn't started: approving doesn't send, it joins the start. */
+  approveOnly?: boolean;
 }) {
   if (count === 0) return null;
   const action = approveGroupAndSend.bind(null, campaignId, group);
@@ -166,12 +172,12 @@ function Group({
       {suggestion && <p className={`text-sm ${suggestion.size === 0 ? "text-bad" : "text-info"}`}>{suggestion.text}</p>}
       {batch ? (
         <form action={action} className="flex items-center gap-2">
-          <SubmitButton pendingLabel="Approving…">{scheduled ? "Approve the next" : "Approve and send the next"}</SubmitButton>
+          <SubmitButton pendingLabel="Approving…">{approveOnly ? "Approve the next" : "Approve and send the next"}</SubmitButton>
           <input name="limit" type="number" min={1} max={count} defaultValue={size} className="field w-20" aria-label="How many" />
         </form>
       ) : (
         <form action={action}>
-          <SubmitButton className={primary ? "btn-go" : "btn"} pendingLabel="Approving…">{scheduled ? `Approve all ${n(count)}` : `Approve and send all ${n(count)}`}</SubmitButton>
+          <SubmitButton className={primary ? "btn-go" : "btn"} pendingLabel="Approving…">{approveOnly ? `Approve all ${n(count)}` : `Approve and send all ${n(count)}`}</SubmitButton>
         </form>
       )}
     </div>

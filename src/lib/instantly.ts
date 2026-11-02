@@ -328,6 +328,7 @@ export function instantly(key: string) {
     createCampaign: (body: Record<string, unknown>) => call<Campaign>(key, "POST", "/campaigns", { body }),
     patchCampaign: (id: string, body: Record<string, unknown>) =>
       call<Campaign>(key, "PATCH", `/campaigns/${id}`, { body }),
+    deleteCampaign: (id: string) => call(key, "DELETE", `/campaigns/${id}`),
     activate: (id: string) => call<Campaign>(key, "POST", `/campaigns/${id}/activate`),
     pause: (id: string) => call<Campaign>(key, "POST", `/campaigns/${id}/pause`),
     addVariables: (id: string, variables: string[]) =>

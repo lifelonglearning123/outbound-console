@@ -113,6 +113,8 @@ export async function approveAndSend(campaignId: number, group: BatchGroup, limi
   });
   const label = group === "verified" ? "verified" : "unconfirmed";
   await logActivity(c.client_id, "approve", `Approved ${ids.length} ${label} contacts in "${c.name}" in one go`);
+  // Not started yet: they go when it starts, and are checked again then.
+  if (c.status === "draft") return { approved: ids.length, pushed: 0, skipped: 0 };
   const r = await pushApproved(campaignId);
   return { approved: ids.length, pushed: r.pushed, skipped: r.skipped };
 }

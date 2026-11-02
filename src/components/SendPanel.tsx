@@ -17,14 +17,14 @@ export function SendPanel({
   contactsHref,
   mailboxesHref,
   b,
-  startsAt,
+  waitingFor,
 }: {
   campaignId: number;
   contactsHref: string;
   /** The client's Mailboxes page, where the problem companies list is. */
   mailboxesHref: string;
-  /** When the campaign is scheduled to start, in words: approved contacts wait for that, so there's nothing to press. */
-  startsAt?: string;
+  /** The campaign hasn't started: what approved contacts are waiting for, in words. There's nothing to press here. */
+  waitingFor?: string;
   b: {
     approved: number;
     sendable: number;
@@ -52,14 +52,14 @@ export function SendPanel({
         <div>
           <h2 className="font-semibold">{n(b.approved)} approved, not yet with the sender</h2>
           <p className="text-muted">
-            {startsAt
-              ? `They go when the campaign starts, ${startsAt}.`
+            {waitingFor
+              ? waitingFor
               : b.sendable > 0
                 ? `${n(b.sendable)} can go now.`
                 : "None of them can go right now. Here's why, and what to do about it."}
           </p>
         </div>
-        {!startsAt && (
+        {!waitingFor && (
           <button type="button" className="btn-go" disabled={b.sendable === 0 || pending} onClick={send} aria-busy={pending}>
             {pending ? "Sending…" : b.sendable > 0 ? `Send ${n(b.sendable)} now` : "Nothing to send yet"}
           </button>

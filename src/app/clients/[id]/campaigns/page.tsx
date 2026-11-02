@@ -26,7 +26,14 @@ export default async function CampaignsPage({ params }: PageProps<"/clients/[id]
     );
   }
 
-  const campaigns = await all<CampaignRow>("SELECT * FROM campaigns WHERE client_id = ? ORDER BY status = 'active' DESC, created_at DESC", id);
+  const campaigns = await all<CampaignRow>(
+    `SELECT c.*,
+       (SELECT COUNT(*) FROM leads l WHERE l.campaign_id = c.id AND l.stage <> 'removed') contacts,
+       (SELECT COUNT(*) FROM leads l WHERE l.campaign_id = c.id AND (l.stage = 'approved' OR l.instantly_lead_id IS NOT NULL)) ready,
+       (SELECT COUNT(*) FROM leads l WHERE l.campaign_id = c.id AND l.stage = 'review' AND l.verification IN ('verified', 'catch_all')) to_approve
+     FROM campaigns c WHERE c.client_id = ? ORDER BY c.status = 'active' DESC, c.created_at DESC`,
+    id,
+  );
   const mailboxes = await mailboxHealth(id);
   const attention = await clientAttention(client, user.role === "admin", mailboxes);
   // One plain sentence per sending domain, so "5 sending, 5 resting while warmup rebuilds" reads at a glance.

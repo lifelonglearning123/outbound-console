@@ -83,10 +83,18 @@ export const FAQ: FaqSection[] = [
         ],
       },
       {
+        id: "tidy-up",
+        question: "How do I remove a campaign I no longer need?",
+        answer: [
+          "On the campaigns list, a campaign with no contacts that has never sent can be deleted. A finished campaign, or one with contacts that hasn't started, can be archived: it moves to the Archived list under the table, and you can restore it at any time.",
+          "A campaign with contacts can't be deleted, because its history is what stops those people being emailed again. A campaign that's sending or paused can't be archived, because it could still email someone.",
+        ],
+      },
+      {
         id: "schedule",
         question: "Can I schedule a campaign to start later?",
         answer: [
-          "Yes. Press Schedule beside Start sending on a campaign that hasn't started, and pick a date and time in the campaign's timezone. You can change it, cancel it or start now at any time before then.",
+          "Yes. Press Schedule at the top of a campaign that hasn't started, then pick one of the suggested days, or a date, hour and minute, in the campaign's timezone. You can change it, cancel it or start now at any time before then.",
           "It can start up to 30 minutes after the time you pick. A campaign isn't sent all at once: emails then go out over the following days, within its daily limit and sending hours. A time outside those hours means the first emails wait until they next open.",
           "Approved contacts wait in the console and are checked again as they go, so anyone who has since replied, bounced or unsubscribed stays out. Contacts approved after it starts can still be sent.",
           "If it has no approved contacts or no mailbox that can send at that time, it doesn't start and nothing is sent. The campaign page says why, so you can pick a new time.",

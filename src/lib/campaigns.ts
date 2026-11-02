@@ -1,7 +1,7 @@
 import "server-only";
 import { get, run, logActivity } from "./db";
 import { requireClient } from "./clients";
-import { instantly, type CampaignSchedule } from "./instantly";
+import { instantly, InstantlyError, type CampaignSchedule } from "./instantly";
 import { campaignState } from "./connection";
 import { DEFAULT_TIMEZONE } from "./timezones";
 import type { Gateway } from "./mailhost";
@@ -43,6 +43,7 @@ export type Campaign = {
   nexus_webhook_token_hash: string | null;
   start_at: string | null;      // when a draft campaign is scheduled to start, in UTC (scheduling.ts)
   start_problem: string | null; // why a scheduled start didn't happen
+  archived_at: string | null;   // put away out of the campaigns list
 };
 
 /** Run from Nexus: the console checks addresses and sends, but never writes, approves or answers for it. */
@@ -233,6 +234,45 @@ export async function setCampaignRunning(id: number, running: boolean) {
   // Started, so any schedule is over with.
   if (running) await run("UPDATE campaigns SET start_at = NULL, start_problem = NULL WHERE id = ?", id);
   await logActivity(c.client_id, running ? "resume" : "pause", `${running ? "Started" : "Paused"} "${c.name}"`);
+}
+
+/** A finished or unstarted campaign can be put away. One still sending or paused could still email someone, so it can't. */
+export async function archiveCampaign(id: number) {
+  const c = await requireCampaign(id);
+  if (isNexus(c)) throw new Error(NEXUS_NOTICE);
+  if (!["draft", "completed"].includes(c.status) || c.start_at) throw new Error("Only a campaign that's finished or not started can be archived. Pause or cancel its schedule first.");
+  await run("UPDATE campaigns SET archived_at = ? WHERE id = ?", new Date().toISOString(), id);
+  await logActivity(c.client_id, "campaign", `Archived "${c.name}"`);
+}
+
+export async function restoreCampaign(id: number) {
+  const c = await requireCampaign(id);
+  await run("UPDATE campaigns SET archived_at = NULL WHERE id = ?", id);
+  await logActivity(c.client_id, "campaign", `Restored "${c.name}"`);
+}
+
+/**
+ * Delete a campaign nobody was ever in. Anything with contacts is archived instead, because their history is what stops
+ * them being emailed again. It goes from Instantly too, or the next sync would bring it back as an outside campaign.
+ */
+export async function deleteEmptyCampaign(id: number) {
+  const c = await requireCampaign(id);
+  if (isNexus(c) || !c.managed) throw new Error("This campaign is managed elsewhere, so it can't be deleted here.");
+  const used = await get<{ n: number }>(
+    `SELECT (SELECT COUNT(*) FROM leads WHERE campaign_id = ?) + (SELECT COUNT(*) FROM emails WHERE campaign_id = ?) n`,
+    id, id,
+  );
+  if (c.status !== "draft" || Number(used?.n ?? 0) > 0) throw new Error("Only a campaign that never started and has no contacts can be deleted. You can archive this one instead.");
+  if (c.instantly_campaign_id) {
+    const client = await requireClient(c.client_id);
+    try {
+      await instantly(client.instantly_api_key!).deleteCampaign(c.instantly_campaign_id);
+    } catch (e) {
+      if (!(e instanceof InstantlyError && e.status === 404)) throw e; // already gone there
+    }
+  }
+  await run("DELETE FROM campaigns WHERE id = ?", id);
+  await logActivity(c.client_id, "campaign", `Deleted the empty campaign "${c.name}"`);
 }
 
 /** What's still missing from steps before they can be written or sent (held steps may be unfinished until released). */

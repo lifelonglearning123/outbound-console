@@ -25,7 +25,7 @@ export async function reviewQueue(clientId: number | null, limit = 200, campaign
             l.company, l.title, l.website, l.fields, l.stage, c.hold_after
      FROM leads l JOIN campaigns c ON c.id = l.campaign_id JOIN clients cl ON cl.id = l.client_id
      WHERE l.stage IN ('review', 'extend_review') AND l.verification IN ('verified', 'catch_all')
-       ${clientId ? "AND l.client_id = ?" : ""} ${campaignId ? "AND l.campaign_id = ?" : ""}
+       ${clientId ? "AND l.client_id = ?" : ""} ${campaignId ? "AND l.campaign_id = ?" : "AND c.archived_at IS NULL"}
      ORDER BY l.verification = 'verified' DESC, l.id LIMIT ?`,
     ...(clientId ? [clientId] : []), ...(campaignId ? [campaignId] : []), limit,
   );
@@ -51,8 +51,8 @@ export async function approvalCounts(clientId: number | null, campaignId: number
     await get<{ review: number; approved: number; drafting: number }>(
       `SELECT COUNT(*) FILTER (WHERE stage IN ('review','extend_review') AND verification IN ('verified', 'catch_all')) review, COUNT(*) FILTER (WHERE stage = 'approved') approved,
               COUNT(*) FILTER (WHERE stage IN ('drafting','extending')) drafting
-       FROM leads WHERE 1 = 1 ${clientId ? "AND client_id = ?" : ""} ${campaignId ? "AND campaign_id = ?" : ""}`,
-      ...(clientId ? [clientId] : []),
+       FROM leads WHERE 1 = 1 ${clientId ? "AND client_id = ?" : ""} ${campaignId ? "AND campaign_id = ?" : "AND NOT EXISTS (SELECT 1 FROM campaigns a WHERE a.id = leads.campaign_id AND a.archived_at IS NOT NULL)"}`,
+      ...(clientId ? [clientId] : []), ...(campaignId ? [campaignId] : []),
     ) ?? { review: 0, approved: 0, drafting: 0 }
   );
 }

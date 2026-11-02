@@ -168,7 +168,7 @@ export async function pullTaggedContacts(client: Client): Promise<number> {
   const creds = ghlCreds(client);
   if (!creds) return 0;
   const campaigns = await all<{ id: number; name: string; ghl_tag: string }>(
-    "SELECT id, name, ghl_tag FROM campaigns WHERE client_id = ? AND managed = 1 AND ghl_tag IS NOT NULL AND ghl_tag != '' AND status != 'completed'",
+    "SELECT id, name, ghl_tag FROM campaigns WHERE client_id = ? AND managed = 1 AND ghl_tag IS NOT NULL AND ghl_tag != '' AND status != 'completed' AND archived_at IS NULL",
     client.id,
   );
   let total = 0;

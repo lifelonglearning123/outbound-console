@@ -131,7 +131,7 @@ export async function clientAttention(client: Client, isAdmin: boolean, boxes?: 
   const held = await all<{ campaign_id: number; name: string; gateway: Gateway; n: number }>(
     `SELECT l.campaign_id, c.name, md.gateway, COUNT(*) n FROM leads l
      JOIN campaigns c ON c.id = l.campaign_id JOIN mail_domains md ON md.domain = split_part(l.email, '@', 2)
-     WHERE l.client_id = ? AND l.stage = 'approved'
+     WHERE l.client_id = ? AND l.stage = 'approved' AND c.archived_at IS NULL
        AND md.gateway IN (SELECT json_array_elements_text(COALESCE(c.hold_gateways, '["mimecast"]')::json))
      GROUP BY 1, 2, 3 ORDER BY 4 DESC`,
     client.id,
@@ -153,7 +153,7 @@ export async function clientAttention(client: Client, isAdmin: boolean, boxes?: 
 
   const ready = await get<{ n: number; campaign_id: number; name: string }>(
     `SELECT COUNT(*) n, l.campaign_id, c.name FROM leads l JOIN campaigns c ON c.id = l.campaign_id
-     WHERE l.client_id = ? AND l.stage IN ('review', 'extend_review') AND l.verification = 'verified' AND c.status <> 'completed'
+     WHERE l.client_id = ? AND l.stage IN ('review', 'extend_review') AND l.verification = 'verified' AND c.status <> 'completed' AND c.archived_at IS NULL
      GROUP BY 2, 3 ORDER BY 1 DESC LIMIT 1`,
     client.id,
   );
