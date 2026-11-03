@@ -3,6 +3,8 @@
 //   {{first_name|there}}      -> "there" when the lead has no first name
 // Keys are case-insensitive; spaces and punctuation count as "_" ({{Company Name}} = {{company_name}}).
 
+import { textParts } from "./links";
+
 export const STANDARD_FIELDS = ["first_name", "last_name", "company", "title", "website", "email", "phone"] as const;
 
 export type MergeLead = {
@@ -44,11 +46,19 @@ function values(lead: MergeLead): Record<string, string> {
 const FIELD_RE = /\{\{\s*([^}|]+?)\s*(?:\|([^}]*))?\}\}/g;
 const PLATFORM_TOKENS = /^unsubscribe/;
 
-/** Plain text as email HTML, keeping its line breaks. */
-export const toHtml = (text: string) =>
-  text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\r?\n/g, "<br/>");
-
+const escapeText = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 const escapeHtml = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+
+/**
+ * Plain text as email HTML, keeping its line breaks, with its web addresses as links. Without them a
+ * link arrived as words: most mail apps make it clickable themselves, but not every one, and never
+ * for Instantly's click tracking.
+ */
+export const toHtml = (text: string) =>
+  textParts(text)
+    .map((p) => (p.href ? `<a href="${escapeHtml(p.href)}">${escapeText(p.text)}</a>` : escapeText(p.text)))
+    .join("")
+    .replace(/\r?\n/g, "<br/>");
 
 /**
  * Fill merge fields. `missing` lists fields that were empty and had no fallback (they render as "").
