@@ -95,6 +95,11 @@ export async function formMailboxes(clientId: number) {
     email: m.email,
     healthy: m.state.key === "sending" || m.state.key === "easing",
     ready: m.readiness.ready,
+    // Ticked for a new campaign: one still in its first weeks of warmup, or whose warmup is off or failing, waits for
+    // someone to choose it. A quiet week of warmup data alone doesn't untick an established mailbox.
+    byDefault:
+      (m.state.key === "sending" || m.state.key === "easing") &&
+      (m.readiness.ready || (m.readiness.tone !== "bad" && !(m.readiness.daysLeft && m.readiness.daysLeft > 0))),
     note:
       m.state.key === "resting"
         ? `resting${m.rest?.returnsInDays ? `: back in about ${m.rest.returnsInDays} ${m.rest.returnsInDays === 1 ? "day" : "days"}` : ""}`

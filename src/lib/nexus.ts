@@ -146,10 +146,10 @@ export async function putCampaign(nexusId: string, body: unknown) {
   const timezone = (INSTANTLY_TIMEZONES as readonly string[]).includes(b.schedule.timezone) ? b.schedule.timezone : DEFAULT_TIMEZONE;
   const schedule = { days: [...new Set(b.schedule.days)].sort(), from: b.schedule.from, to: b.schedule.to, timezone };
 
-  // Every mailbox that can send now, unless Nexus named some; resting ones stay chosen and rejoin when healthy.
+  // Every mailbox that can send now and has finished warming up, unless Nexus named some; resting ones stay chosen and rejoin when healthy.
   const boxes = await formMailboxes(client.id);
   const own = new Set(boxes.map((m) => m.email.toLowerCase()));
-  let accounts = b.accounts ? b.accounts.filter((e) => own.has(e)) : boxes.filter((m) => m.healthy).map((m) => m.email);
+  let accounts = b.accounts ? b.accounts.filter((e) => own.has(e)) : boxes.filter((m) => m.byDefault).map((m) => m.email);
   if (accounts.length === 0) accounts = boxes.map((m) => m.email);
 
   const existing = await get<{ id: number; client_id: number }>("SELECT id, client_id FROM campaigns WHERE nexus_campaign_id = ?", nexusId);

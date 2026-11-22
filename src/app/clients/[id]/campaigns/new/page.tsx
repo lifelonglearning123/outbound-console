@@ -28,7 +28,7 @@ export default async function NewCampaignPage({ params }: PageProps<"/clients/[i
       steps={DEFAULT_STEPS}
       schedule={DEFAULT_SCHEDULE}
       dailyLimit={30}
-      accounts={mailboxes.filter((m) => m.healthy).map((m) => m.email)}
+      accounts={mailboxes.filter((m) => m.byDefault).map((m) => m.email)}
       stopOnReply
       mailboxes={mailboxes}
       managed
