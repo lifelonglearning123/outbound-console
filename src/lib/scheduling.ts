@@ -75,8 +75,9 @@ async function startCampaign(id: number) {
   if (Date.now() - Date.parse(c.start_at!) > TOO_LATE_MS) {
     return notStarted(`it missed its start time by more than a day (${startLabel(new Date(c.start_at!), c.schedule.timezone)}), so it's waiting for you to pick a new time or start it.`);
   }
-  const boxes = await mailboxHealth(c.client_id);
-  if (!boxes.some((m) => c.accounts.includes(m.email) && (m.state.key === "sending" || m.state.key === "easing"))) {
+  const boxes = (await mailboxHealth(c.client_id)).filter((m) => c.accounts.includes(m.email));
+  // Only resting mailboxes: it's handed over and then waits for one to come back (setCampaignRunning), so the start isn't lost.
+  if (!boxes.some((m) => ["sending", "easing", "resting"].includes(m.state.key))) {
     return notStarted("none of its mailboxes can send right now. Nothing was sent.");
   }
   await dropStoppedContacts(id);
@@ -88,11 +89,12 @@ async function startCampaign(id: number) {
   }
   if ((await pushedLeadCount(id)) === 0) return notStarted("it has no approved contacts that can be sent. Nothing was sent.");
 
-  await setCampaignRunning(id, true);
+  const sending = await setCampaignRunning(id, true);
   const waiting = (await get<{ n: number }>("SELECT COUNT(*) n FROM leads WHERE campaign_id = ? AND stage = 'review'", id))?.n ?? 0;
   await logActivity(
     c.client_id, "resume",
-    `Started "${c.name}" as scheduled, handing ${sent} approved contacts to the sender` + (waiting ? `. ${waiting} more still need approving.` : "."),
+    `${sending ? "Started" : "Got"} "${c.name}" ${sending ? "" : "ready "}as scheduled, handing ${sent} approved contacts to the sender` +
+      (sending ? "" : "; it sends once a mailbox is back from resting") + (waiting ? `. ${waiting} more still need approving.` : "."),
   );
 }
 

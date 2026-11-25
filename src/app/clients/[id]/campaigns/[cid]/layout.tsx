@@ -1,11 +1,13 @@
 import { requireClientAccess } from "@/lib/auth";
 import { notFound } from "next/navigation";
 import Link from "next/link";
-import { getCampaign, isNexus, NEXUS_NOTICE } from "@/lib/campaigns";
+import { formMailboxes, getCampaign, isNexus, NEXUS_NOTICE } from "@/lib/campaigns";
 import { getClient } from "@/lib/clients";
 import { approvedBreakdown } from "@/lib/push";
 import { campaignProgress } from "@/lib/progress";
-import { pauseCampaign, restore, resumeCampaign } from "@/app/campaigns/actions";
+import { sendingLine } from "@/lib/sendingLine";
+import { dontWait, pauseCampaign, restore, resumeCampaign, sendAnyway } from "@/app/campaigns/actions";
+import { ConfirmButton } from "@/components/ConfirmButton";
 import { NextStep, StatusPill } from "@/components/CampaignTable";
 import { ScheduleBanner, ScheduleButton } from "@/components/ScheduleStart";
 import { Tabs } from "@/components/Tabs";
@@ -36,6 +38,10 @@ export default async function CampaignLayout({ children, params }: LayoutProps<"
   const base = `/clients/${clientId}/campaigns/${c.id}`;
   // Run from Nexus: Nexus writes and approves, so there is no copy or approval to open here.
   const nexus = isNexus(c);
+  // Started, but every mailbox it sends from is resting: it starts by itself when one is back, unless someone sends anyway.
+  const waiting = !!c.waiting_mailbox_at && c.status !== "active" && !c.archived_at;
+  const restingBoxes = waiting ? (await formMailboxes(clientId)).filter((m) => m.resting && c.accounts.includes(m.email)) : [];
+  const sendLine = c.status === "active" ? await sendingLine(c) : null;
 
   // Each tile opens the place where that number can be acted on.
   const checkSub = [
@@ -67,24 +73,23 @@ export default async function CampaignLayout({ children, params }: LayoutProps<"
             <Link href={`/clients/${clientId}/campaigns`} className="text-sm text-muted hover:underline">Campaigns</Link>
             <span className="text-muted">/</span>
             <h2 className="text-xl font-semibold">{c.name}</h2>
-            <StatusPill status={c.archived_at ? "archived" : c.start_at && c.status === "draft" ? "scheduled" : c.status} />
+            <StatusPill status={c.archived_at ? "archived" : waiting ? "waiting" : c.start_at && c.status === "draft" ? "scheduled" : c.status} />
             {!c.managed && <span className="text-xs text-muted">set up outside the console, so its email is managed there</span>}
             {nexus && <span className="text-xs text-muted">run from Nexus</span>}
           </div>
-          <p className="text-sm text-muted">
-            {c.status === "active" && c.not_sending ? (
-              <span className="text-wait">
-                {/daily sending limit/i.test(c.not_sending)
-                  ? `Sent today's ${n(c.daily_limit)} emails; carries on tomorrow`
-                  : c.not_sending}{" · "}
-              </span>
-            ) : null}
-            updated {ago(c.last_synced_at)}
+          {sendLine ? (
+            <p className="text-sm">
+              <span className={sendLine.tone}>{sendLine.text}</span>
+              {sendLine.last && <span className="text-muted"> {sendLine.last}</span>}
+            </p>
+          ) : null}
+          <p className="text-xs text-muted">
+            Checked {ago(c.last_synced_at)}{c.status === "active" ? "; emails show here within half an hour of going out" : ""}
           </p>
         </div>
         {c.archived_at ? (
           <form action={restore.bind(null, c.id)}><SubmitButton className="btn" pendingLabel="Restoring…">Restore</SubmitButton></form>
-        ) : c.instantly_campaign_id && (c.status === "active" ? (
+        ) : waiting ? null : c.instantly_campaign_id && (c.status === "active" ? (
           <form action={pauseCampaign.bind(null, c.id)}><SubmitButton className="btn" pendingLabel="Pausing…">Pause sending</SubmitButton></form>
         ) : c.status === "draft" && c.start_at ? null : c.status === "draft" && c.managed === 1 && !nexus ? (
           <div className="flex items-start gap-2">
@@ -97,7 +102,32 @@ export default async function CampaignLayout({ children, params }: LayoutProps<"
       </header>
 
       {nexus && <p className="card p-3 text-sm text-muted">{NEXUS_NOTICE}</p>}
-      {c.status === "draft" && <ScheduleBanner c={c} approved={split.approved} needApproving={p.ready + p.unconfirmed} handedOver={p.sending} />}
+      {waiting && (
+        <div className="card flex flex-wrap items-center justify-between gap-3 border-wait/40 bg-wait-soft/40 p-4 text-sm">
+          <div className="max-w-2xl">
+            <div className="font-medium">Waiting for a mailbox</div>
+            <p className="text-muted">
+              {restingBoxes.length
+                ? `${restingBoxes.map((m) => `${m.email} is ${m.note}`).join("; ")}, and this campaign sends from nothing else.`
+                : "Every mailbox this campaign sends from is resting."}{" "}
+              Nothing goes out meanwhile. It starts by itself when a mailbox is back, or as soon as you tick another one on the{" "}
+              <Link href={`${base}/email`} className="underline">Email tab</Link>.
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            <form action={dontWait.bind(null, c.id)}><SubmitButton className="btn-quiet" pendingLabel="Stopping…">Don&apos;t start it</SubmitButton></form>
+            <form action={sendAnyway.bind(null, c.id)}>
+              <ConfirmButton
+                className="btn"
+                message={`Send from ${restingBoxes.map((m) => m.email).join(", ") || "the resting mailboxes"} now, without waiting? ${restingBoxes[0]?.reason ? `${restingBoxes[0].reason} ` : ""}Emails sent from a resting mailbox are more likely to land in spam.`}
+              >
+                Send anyway
+              </ConfirmButton>
+            </form>
+          </div>
+        </div>
+      )}
+      {c.status === "draft" && !waiting && <ScheduleBanner c={c} approved={split.approved} needApproving={p.ready + p.unconfirmed} handedOver={p.sending} />}
 
       <AutoRefresh active={p.preparing + p.checking + p.updatingPortal > 0} />
       <Working

@@ -17,11 +17,16 @@ export type PeopleScope = { clientId: number; campaignId: number | null };
 type Option = { value: string; label: string };
 
 const NOT_REMOVED = "f.stage <> 'removed'";
+// With the sender and the sequence not over: completed (3), skipped (-3), bounced (-1) and unsubscribed (-2) are over.
+const IN_SEQUENCE = "f.handed AND COALESCE(f.instantly_status, 1) NOT IN (3, -3, -1, -2)";
+// Can be taken out of the campaign (the same rule as takeOut.ts): not removed, and not finished with the sender.
+const CAN_TAKE_OUT = `${NOT_REMOVED} AND (NOT f.handed OR COALESCE(f.instantly_status, 1) NOT IN (3, -3, -1, -2))`;
 
 /** Where people are, for filtering. Not exclusive: someone who replied was also emailed, and usually opened. */
 export const STATUSES: (Option & { where: string })[] = [
   { value: "waiting", label: "Not handed to the sender yet", where: "NOT f.handed AND NOT f.emailed AND f.stage NOT IN ('removed', 'rejected', 'error')" },
   { value: "queued", label: "Queued, not emailed yet", where: `f.handed AND NOT f.emailed AND NOT f.bounced AND ${NOT_REMOVED}` },
+  { value: "in_sequence", label: "With the sender, sequence not finished", where: `${IN_SEQUENCE} AND ${NOT_REMOVED}` },
   { value: "emailed", label: "Emailed", where: `f.emailed AND ${NOT_REMOVED}` },
   { value: "opened", label: "Opened", where: `f.emailed AND f.last_open_at IS NOT NULL AND ${NOT_REMOVED}` },
   { value: "no_open", label: "Emailed, no open yet", where: `f.emailed AND f.last_open_at IS NULL AND f.replied_at IS NULL AND NOT f.bounced AND ${NOT_REMOVED}` },
@@ -249,14 +254,19 @@ export async function listPeople(s: PeopleScope, f: PeopleFilters, sort: Sort, p
   const p = params(s, f);
   const w = where(conditions(f));
   const [sum, rows] = await Promise.all([
-    get<{ total: number; removable: number }>(
-      `WITH f AS (${facts(s)}) SELECT COUNT(*) total, COUNT(*) FILTER (WHERE NOT f.handed AND f.stage <> 'removed') removable FROM f WHERE ${w}`,
+    get<{ total: number; removable: number; with_sender: number }>(
+      `WITH f AS (${facts(s)}) SELECT COUNT(*) total, COUNT(*) FILTER (WHERE ${CAN_TAKE_OUT}) removable,
+         COUNT(*) FILTER (WHERE ${CAN_TAKE_OUT} AND f.handed) with_sender FROM f WHERE ${w}`,
       p,
     ),
     all<Person>(`WITH f AS (${facts(s)}) SELECT f.* FROM f WHERE ${w} ORDER BY ${ORDER(sort)} LIMIT ${perPage} OFFSET ${(page - 1) * perPage}`, p),
   ]);
-  return { rows, total: sum?.total ?? 0, removable: sum?.removable ?? 0 };
+  return { rows, total: Number(sum?.total ?? 0), removable: Number(sum?.removable ?? 0), withSender: Number(sum?.with_sender ?? 0) };
 }
+
+/** Whether this person can be taken out of their campaign: not removed, and not finished with the sender. */
+export const canTakeOut = (p: Pick<Person, "stage" | "handed" | "instantly_status">) =>
+  p.stage !== "removed" && (!p.handed || ![3, -3, -1, -2].includes(p.instantly_status ?? 1));
 
 /** Everyone matching, for a download. */
 export async function allPeople(s: PeopleScope, f: PeopleFilters, sort: Sort): Promise<Person[]> {
@@ -268,10 +278,10 @@ export async function matchingIds(s: PeopleScope, f: PeopleFilters): Promise<num
   return (await all<{ id: number }>(`WITH f AS (${facts(s)}) SELECT f.id FROM f WHERE ${where(conditions(f))}`, params(s, f))).map((r) => r.id);
 }
 
-/** The matching contacts that haven't been handed to the sender, so can still be taken out of the campaign. */
+/** The matching contacts that can be taken out of the campaign: everyone whose sequence isn't over. */
 export async function removableIds(s: PeopleScope, f: PeopleFilters): Promise<number[]> {
   return (await all<{ id: number }>(
-    `WITH f AS (${facts(s)}) SELECT f.id FROM f WHERE ${where(conditions(f))} AND NOT f.handed AND f.stage <> 'removed'`,
+    `WITH f AS (${facts(s)}) SELECT f.id FROM f WHERE ${where(conditions(f))} AND ${CAN_TAKE_OUT}`,
     params(s, f),
   )).map((r) => r.id);
 }

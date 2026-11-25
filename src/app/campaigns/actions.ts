@@ -5,8 +5,8 @@ import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { get, run, tx, logActivity } from "@/lib/db";
 import {
-  archiveCampaign, campaignStepProblems, deleteEmptyCampaign, hasOwnSubject, isNexus, restoreCampaign, liveSteps, NEXUS_NOTICE, pushedLeadCount, requireCampaign, setCampaignRunning, stepEmailChanged,
-  syncCampaignToInstantly, toInstantlySchedule, type Step,
+  archiveCampaign, campaignStepProblems, deleteEmptyCampaign, hasOwnSubject, isNexus, restoreCampaign, liveSteps, NEXUS_NOTICE, pushedLeadCount, requireCampaign, sendFromResting,
+  setCampaignRunning, settleWaiting, stepEmailChanged, stopWaiting, syncCampaignToInstantly, toInstantlySchedule, type Step,
 } from "@/lib/campaigns";
 import { applyRelease, cancelRelease, prepareRelease, retryFailed } from "@/lib/hold";
 import { after } from "next/server";
@@ -30,6 +30,20 @@ export async function resumeCampaign(id: number) {
   // First start of a console campaign: its approved contacts go with it. Otherwise it would say "Sending" with nobody to send to.
   if (c.status === "draft" && c.managed && !isNexus(c)) await startNow(id);
   else await setCampaignRunning(id, true);
+  revalidatePath("/", "layout");
+}
+
+/** Every mailbox the campaign sends from is resting and it's waiting for one: send from them anyway. */
+export async function sendAnyway(id: number) {
+  await requireClientAccess(await clientOfCampaign(id));
+  await sendFromResting(id);
+  await resumeCampaign(id);
+}
+
+/** Stop a campaign waiting for a mailbox from starting by itself. */
+export async function dontWait(id: number) {
+  await requireClientAccess(await clientOfCampaign(id));
+  await stopWaiting(id);
   revalidatePath("/", "layout");
 }
 
@@ -193,6 +207,8 @@ export async function saveCampaign(clientId: number, campaignId: number | null, 
     });
     await logActivity(clientId, "campaign", `Updated schedule and limits for "${c.name}"`);
   }
+  // The mailboxes may have changed: a campaign left with only resting ones waits, and one that was waiting can start.
+  await settleWaiting(id);
 
   revalidatePath("/", "layout");
   // A new campaign has no contacts yet, so that's the next step; an edited one goes back to its email.

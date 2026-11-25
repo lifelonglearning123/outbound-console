@@ -6,7 +6,7 @@ import { campaignState } from "./connection";
 import { DEFAULT_TIMEZONE } from "./timezones";
 import type { Gateway } from "./mailhost";
 import { htmlToText, sanitizeEmailHtml } from "./merge";
-import { mailboxHealth, sendList } from "./mailboxHealth";
+import { mailboxHealth, restingOnly, sendList } from "./mailboxHealth";
 
 // mode "fixed" = the client wrote this email (subject/body with merge fields); otherwise the AI writes it from `instructions`.
 // new_subject = an AI-written follow-up gets its own subject; a "fixed" follow-up has one if `subject` is filled in.
@@ -44,6 +44,8 @@ export type Campaign = {
   start_at: string | null;      // when a draft campaign is scheduled to start, in UTC (scheduling.ts)
   start_problem: string | null; // why a scheduled start didn't happen
   archived_at: string | null;   // put away out of the campaigns list
+  waiting_mailbox_at: string | null; // started, but every mailbox it sends from is resting: it starts when one is back
+  send_resting: number;         // someone chose to send from its resting mailboxes anyway
 };
 
 /** Run from Nexus: the console checks addresses and sends, but never writes, approves or answers for it. */
@@ -100,9 +102,18 @@ export async function formMailboxes(clientId: number) {
     byDefault:
       (m.state.key === "sending" || m.state.key === "easing") &&
       (m.readiness.ready || (m.readiness.tone !== "bad" && !(m.readiness.daysLeft && m.readiness.daysLeft > 0))),
+    resting: m.state.key === "resting",
+    // Day of its first two weeks of warmup, while it can send but isn't ready (null once it's through them).
+    warmingDay: m.state.key !== "resting" && !m.readiness.ready && m.readiness.daysLeft && m.readiness.daysLeft > 0 && m.warmupAgeDays !== null ? m.warmupAgeDays + 1 : null,
     note:
       m.state.key === "resting"
-        ? `resting${m.rest?.returnsInDays ? `: back in about ${m.rest.returnsInDays} ${m.rest.returnsInDays === 1 ? "day" : "days"}` : ""}`
+        ? `resting: won't send until ${
+            m.rest?.kind === "manual"
+              ? "you put it back"
+              : m.rest?.returnsInDays != null
+                ? `about ${new Date(Date.now() + m.rest.returnsInDays * 86400_000).toLocaleDateString("en-GB", { day: "numeric", month: "short", timeZone: "UTC" })}`
+                : "its warmup is healthy again"
+          }`
         : m.state.key === "error"
           ? "not connected"
           : m.state.key === "paused" || m.state.key === "maintenance"
@@ -226,19 +237,69 @@ export async function syncCampaignToInstantly(id: number) {
   return remote;
 }
 
-export async function setCampaignRunning(id: number, running: boolean) {
+/**
+ * Start or pause a campaign in Instantly. A campaign whose every mailbox is resting doesn't start: it waits, and starts
+ * by itself when one is back (mailboxHealth.ts), unless someone chose to send from the resting ones anyway. Returns
+ * whether it's now sending.
+ */
+export async function setCampaignRunning(id: number, running: boolean): Promise<boolean> {
   const c = await requireCampaign(id);
   if (!c.instantly_campaign_id) throw new Error("Campaign isn't in Instantly yet");
   const client = await requireClient(c.client_id);
   const api = instantly(client.instantly_api_key!);
+  const now = new Date().toISOString();
+  const resting = running && !c.send_resting ? await restingOnly(c.client_id, c.accounts) : [];
+  if (resting.length) {
+    if (c.status === "active") {
+      const remote = await api.pause(c.instantly_campaign_id);
+      await run("UPDATE campaigns SET instantly_status = ?, status = ?, last_synced_at = ? WHERE id = ?", remote.status, campaignState(remote.status), now, id);
+    }
+    await run("UPDATE campaigns SET waiting_mailbox_at = COALESCE(waiting_mailbox_at, ?), start_at = NULL, start_problem = NULL WHERE id = ?", now, id);
+    if (!c.waiting_mailbox_at) {
+      await logActivity(
+        c.client_id, "pause",
+        `"${c.name}" is waiting for a mailbox: ${resting.join(", ")} ${resting.length === 1 ? "is" : "are"} resting and it sends from nothing else. ` +
+          `It starts by itself when ${resting.length === 1 ? "it's" : "one is"} back.`,
+      );
+    }
+    return false;
+  }
   const remote = running ? await api.activate(c.instantly_campaign_id) : await api.pause(c.instantly_campaign_id);
+  // Started or paused by hand, so it isn't waiting for a mailbox any more.
   await run(
-    "UPDATE campaigns SET instantly_status = ?, status = ?, last_synced_at = ? WHERE id = ?",
-    remote.status, campaignState(remote.status), new Date().toISOString(), id,
+    "UPDATE campaigns SET instantly_status = ?, status = ?, last_synced_at = ?, waiting_mailbox_at = NULL WHERE id = ?",
+    remote.status, campaignState(remote.status), now, id,
   );
   // Started, so any schedule is over with.
   if (running) await run("UPDATE campaigns SET start_at = NULL, start_problem = NULL WHERE id = ?", id);
   await logActivity(c.client_id, running ? "resume" : "pause", `${running ? "Started" : "Paused"} "${c.name}"`);
+  return running;
+}
+
+/**
+ * After a campaign's mailboxes change: one that's sending with only resting mailboxes left starts waiting, and one
+ * that was waiting starts once it has a mailbox that can send.
+ */
+export async function settleWaiting(id: number) {
+  const c = await requireCampaign(id);
+  if (!c.instantly_campaign_id || c.accounts.length === 0) return;
+  const resting = c.send_resting ? [] : await restingOnly(c.client_id, c.accounts);
+  if (resting.length ? c.status === "active" : c.waiting_mailbox_at && c.status !== "active") await setCampaignRunning(id, true);
+}
+
+/** Someone chose not to wait: the campaign sends from its resting mailboxes until one of them is back in the normal way. */
+export async function sendFromResting(id: number) {
+  const c = await requireCampaign(id);
+  await run("UPDATE campaigns SET send_resting = 1 WHERE id = ?", id);
+  await logActivity(c.client_id, "resume", `You chose to send "${c.name}" from its resting mailboxes rather than wait`);
+}
+
+/** Stop waiting for a mailbox: the campaign stays as it is and won't start by itself. */
+export async function stopWaiting(id: number) {
+  const c = await requireCampaign(id);
+  if (!c.waiting_mailbox_at) return;
+  await run("UPDATE campaigns SET waiting_mailbox_at = NULL WHERE id = ?", id);
+  await logActivity(c.client_id, "pause", `"${c.name}" is no longer waiting for a mailbox, so it won't start by itself`);
 }
 
 /** A finished or unstarted campaign can be put away. One still sending or paused could still email someone, so it can't. */
@@ -246,7 +307,8 @@ export async function archiveCampaign(id: number) {
   const c = await requireCampaign(id);
   if (isNexus(c)) throw new Error(NEXUS_NOTICE);
   if (!["draft", "completed"].includes(c.status) || c.start_at) throw new Error("Only a campaign that's finished or not started can be archived. Pause or cancel its schedule first.");
-  await run("UPDATE campaigns SET archived_at = ? WHERE id = ?", new Date().toISOString(), id);
+  // Put away, so it mustn't start by itself when a resting mailbox comes back.
+  await run("UPDATE campaigns SET archived_at = ?, waiting_mailbox_at = NULL WHERE id = ?", new Date().toISOString(), id);
   await logActivity(c.client_id, "campaign", `Archived "${c.name}"`);
 }
 

@@ -355,6 +355,10 @@ ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS start_at TEXT;
 ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS start_problem TEXT;
 -- A finished or unstarted campaign put away out of the list; nothing about it is lost.
 ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS archived_at TEXT;
+-- Every mailbox the campaign sends from is resting (mailboxHealth.ts): since when it has been waiting for one to come
+-- back, and whether someone chose to send from the resting ones anyway.
+ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS waiting_mailbox_at TEXT;
+ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS send_resting INTEGER NOT NULL DEFAULT 0;
 -- People deleted from the Nexus Portal on purpose (portalTags.ts): queued, done or error. Kept for good, so nothing adds them back.
 CREATE TABLE IF NOT EXISTS portal_deletions (
   client_id INTEGER NOT NULL REFERENCES clients(id),

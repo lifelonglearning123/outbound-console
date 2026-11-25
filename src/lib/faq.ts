@@ -51,6 +51,16 @@ export const FAQ: FaqSection[] = [
         ],
       },
       {
+        id: "take-out",
+        question: "A contact is stuck in another campaign. How do I move them to a new one?",
+        answer: [
+          "Take them out of the campaign that holds them. Open that campaign's Contacts tab, tick them and press Take ticked contacts out. To do many at once, set Status to “With the sender, sequence not finished” and use the button above the list.",
+          "This works at any point: before they've been handed to the sender, while they're queued, or part-way through the sequence. Anyone already with the sender is removed there too, so that campaign emails them nothing more. Emails already sent stay on their record.",
+          "They're then free straight away. If another campaign had them approved and waiting, they go to it by themselves; otherwise add them to the new campaign as usual. The Approvals tab of the waiting campaign names the campaign holding them and links to it.",
+          "Someone who replied, bounced or unsubscribed stays suppressed whichever campaign they're in.",
+        ],
+      },
+      {
         id: "unable-to-verify",
         question: "Why does a real email address, such as my own Yahoo address, show “Unable to verify”?",
         answer: [
@@ -91,13 +101,31 @@ export const FAQ: FaqSection[] = [
         ],
       },
       {
+        id: "when-sent",
+        question: "I pressed Start sending. When do the emails actually go, and how do I know they went?",
+        answer: [
+          "Emails only go out on the campaign's sending days, between its From and To hours, up to its daily cap. Start outside those hours and the first ones wait until they next open. The line under the campaign's name always says which: “Sending now”, “First emails go out today from 08:30”, or “Today's emails are sent. Next ones go out tomorrow from 08:30”.",
+          "The same line shows how many went today, when the last one went and from which mailbox. The console checks every 30 minutes, so an email can take up to half an hour to show.",
+          "For one person, open the Contacts tab: the Emailed column shows when their email went and which mailbox sent it.",
+        ],
+      },
+      {
+        id: "new-mailbox",
+        question: "Can I send from a mailbox that's resting or still warming up?",
+        answer: [
+          "A new mailbox warms up for about two weeks. You can tick it for a campaign before then and it will send, but the form warns you: emails from a new mailbox are more likely to land in spam, which can hurt its domain for a long time. If you go ahead, keep the daily cap low. New campaigns leave it unticked until it's ready.",
+          "A resting mailbox is one the console has taken out of sending because of bounces or warmup trouble; its warmup carries on. If a campaign also has other mailboxes, it sends from those and the resting one rejoins by itself.",
+          "If every mailbox a campaign sends from is resting, the campaign waits: it shows “Waiting for a mailbox”, sends nothing, and starts by itself when one is back. To start sooner, tick another mailbox on the Email tab, or press Send anyway to send from the resting ones.",
+        ],
+      },
+      {
         id: "schedule",
         question: "Can I schedule a campaign to start later?",
         answer: [
           "Yes. Press Schedule at the top of a campaign that hasn't started, then pick one of the suggested days, or a date, hour and minute, in the campaign's timezone. You can change it, cancel it or start now at any time before then.",
           "It can start up to 30 minutes after the time you pick. A campaign isn't sent all at once: emails then go out over the following days, within its daily limit and sending hours. A time outside those hours means the first emails wait until they next open.",
           "Approved contacts wait in the console and are checked again as they go, so anyone who has since replied, bounced or unsubscribed stays out. Contacts approved after it starts can still be sent.",
-          "If it has no approved contacts or no mailbox that can send at that time, it doesn't start and nothing is sent. The campaign page says why, so you can pick a new time.",
+          "If it has no approved contacts or no mailbox that can send at that time, it doesn't start and nothing is sent. The campaign page says why, so you can pick a new time. If its mailboxes are only resting, it waits for one to come back instead.",
         ],
       },
     ],

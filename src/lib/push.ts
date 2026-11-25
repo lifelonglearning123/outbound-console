@@ -23,7 +23,7 @@ export type ApprovedBreakdown = {
   sendable: number; // will go on the next send
   held: { gateway: Gateway; n: number }[]; // behind a mail filter this campaign has paused
   blocked: number; // their company is on the client's problem companies list
-  waiting: { campaign: string; n: number }[]; // the same person is mid-sequence in another campaign
+  waiting: { campaign: string; campaignId: number | null; n: number }[]; // the same person is mid-sequence in another campaign
   stopped: number; // replied, bounced or unsubscribed elsewhere: the next send sets them aside
   nomail: number; // their domain has no mail server: the next send sets them aside
 };
@@ -37,7 +37,7 @@ export async function approvedBreakdown(campaignId: number): Promise<ApprovedBre
          ${NO_MAIL_SERVER("l")} nomail,
          ${AT_PROBLEM_DOMAIN("l")} blocked,
          (${STOPPED_OUTSIDE("l")} OR EXISTS (SELECT 1 FROM leads o WHERE o.client_id = l.client_id AND o.email = l.email AND o.id <> l.id AND ${DO_NOT_CONTACT("o")})) stop,
-         (SELECT oc.name FROM leads o JOIN campaigns oc ON oc.id = o.campaign_id
+         (SELECT oc.id || ':' || oc.name FROM leads o JOIN campaigns oc ON oc.id = o.campaign_id
            WHERE o.client_id = l.client_id AND o.email = l.email AND o.id <> l.id AND ${IN_SEQUENCE("o")} LIMIT 1) busy_in
        FROM leads l WHERE l.campaign_id = ? AND l.stage = 'approved'
      )
@@ -53,7 +53,10 @@ export async function approvedBreakdown(campaignId: number): Promise<ApprovedBre
     sendable: sum("sendable"),
     held: rows.filter((r) => r.kind === "held").map((r) => ({ gateway: r.label as Gateway, n: Number(r.n) })),
     blocked: sum("blocked"),
-    waiting: rows.filter((r) => r.kind === "waiting").map((r) => ({ campaign: r.label ?? "another campaign", n: Number(r.n) })),
+    waiting: rows.filter((r) => r.kind === "waiting").map((r) => {
+      const [id, ...name] = (r.label ?? "").split(":");
+      return { campaign: name.join(":") || "another campaign", campaignId: Number(id) || null, n: Number(r.n) };
+    }),
     stopped: sum("stopped"),
     nomail: sum("nomail"),
   };

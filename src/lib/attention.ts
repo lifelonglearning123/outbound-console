@@ -58,6 +58,18 @@ export async function clientAttention(client: Client, isAdmin: boolean, boxes?: 
     }
   }
 
+  // Started, but waiting because every mailbox they send from is resting.
+  const waiting = await all<{ id: number; name: string }>(
+    "SELECT id, name FROM campaigns WHERE client_id = ? AND waiting_mailbox_at IS NOT NULL AND status <> 'active' AND archived_at IS NULL", client.id,
+  );
+  for (const c of waiting) {
+    items.push({
+      kind: "problem", tone: "wait", priority: 85,
+      text: `"${c.name}" is waiting for a mailbox: every mailbox it sends from is resting. It starts by itself when one is back.`,
+      href: `${base}/campaigns/${c.id}`, link: "Send anyway or pick another",
+    });
+  }
+
   // Scheduled starts: one that didn't happen, and one due within a day that wouldn't happen as things stand.
   const scheduled = await all<{ id: number; name: string; accounts: string; start_at: string | null; start_problem: string | null; ready: number }>(
     `SELECT c.id, c.name, c.accounts, c.start_at, c.start_problem,

@@ -21,6 +21,8 @@ export type CampaignRow = {
   start_at: string | null;
   start_problem: string | null;
   archived_at: string | null;
+  /** Started, but every mailbox it sends from is resting. */
+  waiting_mailbox_at: string | null;
   schedule: string;
   /** Everyone in it, approved or already with the sender, and waiting to be approved. */
   contacts: number;
@@ -33,6 +35,7 @@ const STATUS_STYLE: Record<string, string> = {
   paused: "bg-wait-soft text-wait",
   draft: "bg-line/60 text-muted",
   scheduled: "bg-info-soft text-info",
+  waiting: "bg-wait-soft text-wait",
   completed: "bg-line/60 text-muted",
   archived: "bg-line/60 text-muted",
   error: "bg-bad-soft text-bad",
@@ -92,9 +95,10 @@ export function CampaignTable({ clientId, campaigns }: { clientId: number; campa
               {shown.map((c) => {
                 const href = `${base}/${c.id}`;
                 const scheduled = c.status === "draft" && !!c.start_at;
+                const waiting = !!c.waiting_mailbox_at && c.status !== "active";
                 const ours = c.managed === 1 && c.source !== "nexus";
                 const empty = ours && c.status === "draft" && Number(c.contacts) === 0 && !scheduled;
-                const canArchive = ours && !empty && !scheduled && (c.status === "draft" || c.status === "completed");
+                const canArchive = ours && !empty && !scheduled && !waiting && (c.status === "draft" || c.status === "completed");
                 return (
                   <tr key={c.id} className="border-t border-line">
                     <td className="px-4 py-3">
@@ -104,7 +108,7 @@ export function CampaignTable({ clientId, campaigns }: { clientId: number; campa
                       {scheduled && <div className="text-xs text-info">Starts {startsAt(c)}</div>}
                       {c.status === "draft" && c.start_problem && <div className="text-xs text-bad">Didn&apos;t start as scheduled</div>}
                     </td>
-                    <td className="px-4 py-3"><StatusPill status={scheduled ? "scheduled" : c.status} /></td>
+                    <td className="px-4 py-3"><StatusPill status={waiting ? "waiting" : scheduled ? "scheduled" : c.status} /></td>
                     <td className="num px-4 py-3 text-right">{c.daily_limit}</td>
                     <td className="px-4 py-3 text-xs text-muted">{ago(c.last_synced_at)}</td>
                     <td className="px-4 py-3">
@@ -117,7 +121,9 @@ export function CampaignTable({ clientId, campaigns }: { clientId: number; campa
                         {canArchive && (
                           <form action={archive.bind(null, c.id)}><SubmitButton className="btn-quiet" pendingLabel="Archiving…">Archive</SubmitButton></form>
                         )}
-                        {c.instantly_campaign_id && (c.status === "active" ? (
+                        {waiting ? (
+                          <Link href={href} className="btn">See why</Link>
+                        ) : c.instantly_campaign_id && (c.status === "active" ? (
                           <form action={pauseCampaign.bind(null, c.id)}><SubmitButton className="btn" pendingLabel="Pausing…">Pause sending</SubmitButton></form>
                         ) : c.status === "paused" ? (
                           <form action={resumeCampaign.bind(null, c.id)}><SubmitButton className="btn" pendingLabel="Resuming…">Resume sending</SubmitButton></form>

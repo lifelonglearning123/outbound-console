@@ -59,6 +59,33 @@ export function timeChoices(from: string, to: string): { hour: string; minutes: 
   return out;
 }
 
+/** "UK time" for the UK's zones, otherwise the place ("New York time"). */
+export const zoneWords = (timeZone: string) =>
+  ["Europe/Isle_of_Man", "Europe/London", "Europe/Belfast", "Europe/Jersey", "Europe/Guernsey"].includes(timeZone) ? "UK time" : `${zoneLabel(timeZone)} time`;
+
+/**
+ * When a campaign that's switched on sends next, in words: "now, until 17:00 UK time", "today from 08:30 UK time",
+ * "tomorrow from…", "on Mon 30 Nov from…". `capHit` means today's emails have all gone, so the next are on its next sending day.
+ */
+export function nextSendWords(now: Date, s: Hours, capHit = false): { sendingNow: boolean; when: string } | null {
+  if (s.days.length === 0) return null;
+  const today = utcToZoned(now, s.timezone).slice(0, 10);
+  const plus = (ymd: string, n: number) => new Date(Date.parse(`${ymd}T00:00:00Z`) + n * 86400_000).toISOString().slice(0, 10);
+  const from = capHit ? zonedToUtc(`${plus(today, 1)}T00:00`, s.timezone) : now;
+  const at = firstSendAt(from, s);
+  const zone = zoneWords(s.timezone);
+  if (!capHit && at.getTime() === now.getTime()) {
+    // Either inside today's hours, or no sending day within a week (firstSendAt gives `from` back).
+    const close = zonedToUtc(`${today}T${s.to}`, s.timezone);
+    const open = zonedToUtc(`${today}T${s.from}`, s.timezone);
+    if (now >= open && now < close && s.days.includes(new Date(`${today}T12:00:00Z`).getUTCDay())) return { sendingNow: true, when: `now, until ${s.to} ${zone}` };
+    return null;
+  }
+  const day = utcToZoned(at, s.timezone).slice(0, 10);
+  const dayWords = day === today ? "today" : day === plus(today, 1) ? "tomorrow" : `on ${dayLabel(day)}`;
+  return { sendingNow: false, when: `${dayWords} from ${utcToZoned(at, s.timezone).slice(11, 16)} ${zone}` };
+}
+
 /** The first moment at or after `from` inside the campaign's sending days and hours: when its first email can really go. */
 export function firstSendAt(from: Date, s: Hours): Date {
   if (s.days.length === 0) return from;

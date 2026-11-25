@@ -88,9 +88,10 @@ export const DELETED_FROM_PORTAL = (a: string) =>
 /**
  * Handed to Instantly and its sequence not over yet, so another campaign must wait. Over means completed (3),
  * skipped (-3), bounced (-1) or unsubscribed (-2), or that the campaign itself has completed: it sends nothing more.
+ * Someone taken out of the campaign (takeOut.ts) is out of Instantly too, so they don't hold anything up.
  */
 export const IN_SEQUENCE = (a: string) =>
-  `((${a}.pushed_at IS NOT NULL OR ${a}.instantly_lead_id IS NOT NULL) AND COALESCE(${a}.instantly_status, 1) NOT IN (3, -3, -1, -2)
+  `((${a}.pushed_at IS NOT NULL OR ${a}.instantly_lead_id IS NOT NULL) AND ${a}.stage <> 'removed' AND COALESCE(${a}.instantly_status, 1) NOT IN (3, -3, -1, -2)
      AND NOT EXISTS (SELECT 1 FROM campaigns done WHERE done.id = ${a}.campaign_id AND done.status = 'completed'))`;
 
 export type OtherCampaign = { campaign: string; outcome: string; tone: string };

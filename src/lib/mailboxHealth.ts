@@ -2,6 +2,7 @@ import "server-only";
 import { all, get, run, tx, getSetting, logActivity } from "./db";
 import { requireClient } from "./clients";
 import { instantly, type InstantlyClient } from "./instantly";
+import { campaignState } from "./connection";
 import {
   DAY_MS, DEFAULT_RULES, RAMP_DAYS, bounceProblem, daysSince, isoDay, mailboxState, nextRampStep, rampLimit, readiness, suggestion,
   summariseWarmup, warmupProblem, type HealthRules, type Readiness, type StateKey, type Tone, type WarmupDay, type WarmupSummary,
@@ -159,7 +160,7 @@ export async function mailboxHealth(clientId: number | null, opts: { scopeSql?: 
       .map((c) => ({ id: c.id, name: c.name, status: c.status, resting: restRows.some((x) => x.campaign_id === c.id) }));
     const warmupAgeDays = daysSince(r.warmup_started_at, now);
     const bp = bounceProblem(Number(r.w_sent), Number(r.w_bounced), rules);
-    const wp = warmupProblem(r.warmup_score, warmup, rules);
+    const wp = warmupProblem(r.warmup_score, warmup, rules, warmupAgeDays);
 
     const rest = r.rested_at
       ? {
@@ -270,8 +271,8 @@ async function apiFor(clientId: number): Promise<InstantlyClient> {
 
 /** The client's campaigns in Instantly that use this mailbox and could send (active or paused). */
 async function campaignsWith(clientId: number, email: string) {
-  const rows = await all<{ id: number; name: string; status: string; instantly_campaign_id: string; accounts: string }>(
-    `SELECT id, name, status, instantly_campaign_id, accounts FROM campaigns
+  const rows = await all<{ id: number; name: string; status: string; instantly_campaign_id: string; accounts: string; send_resting: number }>(
+    `SELECT id, name, status, instantly_campaign_id, accounts, send_resting FROM campaigns
      WHERE client_id = ? AND instantly_campaign_id IS NOT NULL AND status IN ('active', 'paused')`,
     clientId,
   );
@@ -298,18 +299,42 @@ const addRestRow = (clientId: number, email: string, campaignId: number) =>
   );
 
 /**
- * Take a mailbox out of the client's campaigns in Instantly; its warmup keeps running. It stays in any active campaign
- * it's the only working mailbox of (a campaign can't send from nothing; Instantly's own bounce protection still covers it).
+ * The chosen mailboxes that are resting, when none of the chosen ones can send. A campaign like that waits for one to
+ * come back rather than sending from a mailbox the console is resting, unless someone chose to send anyway.
+ */
+export async function restingOnly(clientId: number, chosen: string[]): Promise<string[]> {
+  if (chosen.length === 0) return [];
+  const rows = await all<{ email: string; status: number | null; rested_at: string | null }>(
+    "SELECT email, status, rested_at FROM mailboxes WHERE client_id = ? AND email = ANY(?)", clientId, chosen,
+  );
+  if (rows.some((r) => r.status === 1 && !r.rested_at)) return [];
+  return rows.filter((r) => r.rested_at).map((r) => r.email);
+}
+
+/** Pause a campaign in Instantly because every mailbox it sends from is resting; it starts again when one is back. */
+async function waitForMailbox(api: InstantlyClient, c: { id: number; instantly_campaign_id: string }) {
+  const remote = await api.pause(c.instantly_campaign_id);
+  await run(
+    "UPDATE campaigns SET instantly_status = ?, status = ?, waiting_mailbox_at = ?, last_synced_at = ? WHERE id = ?",
+    remote.status, campaignState(remote.status), new Date().toISOString(), new Date().toISOString(), c.id,
+  );
+}
+
+/**
+ * Take a mailbox out of the client's campaigns in Instantly; its warmup keeps running. A campaign can't send from
+ * nothing, so where it's the only working mailbox it stays in the list and the campaign waits (paused) until it's
+ * back. Only a campaign someone chose "Send anyway" for keeps sending from it.
  */
 export async function restMailbox(
   clientId: number, email: string, kind: RestKind, reason: string, by: "auto" | "you",
   opts: { api?: InstantlyClient; quiet?: boolean } = {},
-): Promise<{ rested: boolean; out: string[]; kept: string[] }> {
+): Promise<{ rested: boolean; out: string[]; kept: string[]; held: string[] }> {
   const api = opts.api ?? (await apiFor(clientId));
   const working = await workingMailboxes(clientId);
   working.delete(email);
   const out: string[] = [];
   const kept: string[] = [];
+  const held: string[] = [];
   for (const c of await campaignsWith(clientId, email)) {
     const list = (await api.campaign(c.instantly_campaign_id)).email_list ?? [];
     if (!list.includes(email)) {
@@ -318,33 +343,71 @@ export async function restMailbox(
       continue;
     }
     if (!list.some((e) => e !== email && working.has(e))) {
-      if (c.status === "active") kept.push(c.name);
+      if (c.status !== "active") continue;
+      if (c.send_resting) {
+        kept.push(c.name);
+      } else {
+        await waitForMailbox(api, c);
+        held.push(c.name);
+      }
       continue;
     }
     await api.patchCampaign(c.instantly_campaign_id, { email_list: list.filter((e) => e !== email) });
     await addRestRow(clientId, email, c.id);
     out.push(c.name);
   }
-  if (out.length === 0 && kept.length > 0) {
-    const note = `${sentence(reason)}, but it's the only working mailbox on ${quoteList(kept)}, so it keeps sending there. Instantly's own bounce protection still watches ${kept.length === 1 ? "that campaign" : "those campaigns"}.`;
+  if (out.length === 0 && held.length === 0 && kept.length > 0) {
+    const note = `${sentence(reason)}, but someone chose to keep sending from it on ${quoteList(kept)}, where it's the only working mailbox. Instantly's own bounce protection still watches ${kept.length === 1 ? "that campaign" : "those campaigns"}.`;
     await run("UPDATE mailboxes SET health_note = ? WHERE client_id = ? AND email = ?", note, clientId, email);
-    return { rested: false, out, kept };
+    return { rested: false, out, kept, held };
   }
   await run(
     `UPDATE mailboxes SET rested_at = ?, rest_kind = ?, rest_reason = ?, healthy_since = NULL, health_note = ?
      WHERE client_id = ? AND email = ?`,
-    new Date().toISOString(), kind, reason, kept.length ? `Still in ${quoteList(kept)}: it's the only working mailbox there.` : null,
+    new Date().toISOString(), kind, reason, kept.length ? `Still sending in ${quoteList(kept)}, where someone chose to send anyway.` : null,
     clientId, email,
   );
   if (!opts.quiet) {
+    const where = out.length ? `Taken out of ${quoteList(out)}` : held.length ? "It stays chosen" : "It's in no campaign";
     await logActivity(
       clientId, "rest",
-      `${by === "auto" ? "Rested" : "You rested"} ${email}: ${reason}. ${out.length ? `Taken out of ${quoteList(out)}` : "It's in no campaign"}; ` +
-        `warmup keeps running${kind === "manual" ? "" : ", and it goes back by itself once it's healthy"}.`,
+      `${by === "auto" ? "Rested" : "You rested"} ${email}: ${reason}. ${where}; ` +
+        `warmup keeps running${kind === "manual" ? "" : ", and it goes back by itself once it's healthy"}.` +
+        (held.length ? ` ${quoteList(held)} ${held.length === 1 ? "sends" : "send"} from nothing else, so ${held.length === 1 ? "it waits" : "they wait"} until it's back.` : ""),
       { subject: email, undo: "return" },
     );
   }
-  return { rested: true, out, kept };
+  return { rested: true, out, kept, held };
+}
+
+/** Campaigns that were waiting for this mailbox start now that it's back, and its "send anyway" choices are over. */
+async function startWaiting(clientId: number, email: string, api: InstantlyClient): Promise<string[]> {
+  const rows = await all<{ id: number; name: string; status: string; instantly_campaign_id: string | null; accounts: string; waiting_mailbox_at: string | null }>(
+    `SELECT id, name, status, instantly_campaign_id, accounts, waiting_mailbox_at FROM campaigns
+     WHERE client_id = ? AND archived_at IS NULL AND (waiting_mailbox_at IS NOT NULL OR send_resting = 1)`,
+    clientId,
+  );
+  const started: string[] = [];
+  for (const c of rows) {
+    let accounts: string[] = [];
+    try {
+      accounts = JSON.parse(c.accounts || "[]");
+    } catch {}
+    if (!accounts.includes(email)) continue;
+    await run("UPDATE campaigns SET send_resting = 0 WHERE id = ?", c.id);
+    if (!c.waiting_mailbox_at) continue;
+    if (!c.instantly_campaign_id || !["paused", "draft"].includes(c.status)) {
+      await run("UPDATE campaigns SET waiting_mailbox_at = NULL WHERE id = ?", c.id);
+      continue;
+    }
+    const remote = await api.activate(c.instantly_campaign_id);
+    await run(
+      "UPDATE campaigns SET instantly_status = ?, status = ?, waiting_mailbox_at = NULL, start_at = NULL, start_problem = NULL, last_synced_at = ? WHERE id = ?",
+      remote.status, campaignState(remote.status), new Date().toISOString(), c.id,
+    );
+    started.push(c.name);
+  }
+  return started;
 }
 
 /** Put a resting mailbox back into the campaigns it was taken out of, optionally easing its daily limit up again. */
@@ -375,10 +438,12 @@ export async function returnMailbox(clientId: number, email: string, by: "auto" 
     );
   });
   if (ease) await startEasing(clientId, email, target, { api, quiet: true });
+  const started = await startWaiting(clientId, email, api);
   await logActivity(
     clientId, "return",
     `${by === "auto" ? "Put" : "You put"} ${email} back into ${back.length ? quoteList(back) : "sending"}` +
-      (ease ? `, easing in at ${rampLimit(0, target)} a day and up to ${target} over two weeks.` : "."),
+      (ease ? `, easing in at ${rampLimit(0, target)} a day and up to ${target} over two weeks.` : ".") +
+      (started.length ? ` Started ${quoteList(started)}, which ${started.length === 1 ? "was" : "were"} waiting for it.` : ""),
     { subject: email, undo: "rest" },
   );
 }

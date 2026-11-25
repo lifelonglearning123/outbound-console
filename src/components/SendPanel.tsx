@@ -30,7 +30,7 @@ export function SendPanel({
     sendable: number;
     held: { gateway: string; label: string; n: number }[];
     blocked: number;
-    waiting: { campaign: string; n: number }[];
+    waiting: { campaign: string; campaignId: number | null; n: number }[];
     stopped: number;
     nomail: number;
   };
@@ -86,9 +86,17 @@ export function SendPanel({
             </li>
           )}
           {b.waiting.map((w) => (
-            <li key={w.campaign}>
-              <span className="num font-medium text-info">{n(w.n)}</span> waiting: still being emailed by &quot;{w.campaign}&quot;. They go out
-              automatically once that sequence ends, so nobody gets two campaigns at once.
+            <li key={w.campaign} className="flex flex-wrap items-baseline justify-between gap-2">
+              <span>
+                <span className="num font-medium text-info">{n(w.n)}</span> waiting: still in &quot;{w.campaign}&quot;, and nobody gets two campaigns
+                at once. A paused campaign still holds its contacts. They go out by themselves once that sequence ends, or as soon as you take them
+                out of it.
+              </span>
+              {w.campaignId && (
+                <Link href={`${contactsHref.replace(/\/campaigns\/\d+\//, `/campaigns/${w.campaignId}/`)}?status=in_sequence#people`} className="text-xs underline">
+                  Take them out of &quot;{w.campaign}&quot;
+                </Link>
+              )}
             </li>
           ))}
           {b.stopped > 0 && (

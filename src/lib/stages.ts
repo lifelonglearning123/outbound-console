@@ -33,6 +33,7 @@ export function contactStatus(stage: string, verification: string | null): { lab
 export const CAMPAIGN_STATUS_LABEL: Record<string, string> = {
   draft: "Not started",
   scheduled: "Scheduled",
+  waiting: "Waiting for a mailbox",
   archived: "Archived",
   active: "Sending",
   paused: "Paused",

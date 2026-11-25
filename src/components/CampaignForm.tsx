@@ -23,7 +23,13 @@ type Props = {
    * `note` says in a few words why a mailbox is out or how ready it is ("resting: back in about 2 days", "warming up,
    * day 9…"); `reason` is the detail. `provider` is who hosts it, for ESP matching.
    */
-  mailboxes: { email: string; healthy: boolean; ready: boolean; note: string; reason: string | null; provider: "google" | "microsoft" | "other" | null }[];
+  mailboxes: {
+    email: string; healthy: boolean; ready: boolean; note: string; reason: string | null; provider: "google" | "microsoft" | "other" | null;
+    /** The console is resting it: it's kept out of sending until it's healthy again. */
+    resting: boolean;
+    /** Which day of its first two weeks of warmup it's on, while it's still in them. */
+    warmingDay: number | null;
+  }[];
   /** Instantly's ESP matching for this campaign. */
   matchEsp?: boolean;
   managed: boolean;
@@ -46,7 +52,12 @@ export function CampaignForm(p: Props) {
   const [hold, setHold] = useState<number>(p.holdAfter ?? 0);
   // Which mailboxes are ticked, to warn about ones that aren't ready and to judge ESP matching.
   const [chosen, setChosen] = useState<string[]>(p.accounts);
-  const notReady = p.mailboxes.filter((m) => chosen.includes(m.email) && (!m.healthy || !m.ready));
+  const ticked = p.mailboxes.filter((m) => chosen.includes(m.email));
+  const restingTicked = ticked.filter((m) => m.resting);
+  const warmingTicked = ticked.filter((m) => m.warmingDay !== null);
+  const otherNotReady = ticked.filter((m) => !m.resting && m.warmingDay === null && (!m.healthy || !m.ready));
+  // Nothing ticked can send while the console rests it, so the campaign would wait.
+  const allResting = restingTicked.length > 0 && !ticked.some((m) => m.healthy);
   const providers = new Set(p.mailboxes.filter((m) => chosen.includes(m.email)).map((m) => m.provider ?? "other"));
   const oneProvider = providers.size === 1 ? [...providers][0] : null;
   const effectiveHold = p.lockedLive ? (steps.length > p.lockedLive ? p.lockedLive : 0) : hold && hold < steps.length ? hold : 0;
@@ -346,10 +357,26 @@ export function CampaignForm(p: Props) {
               ))}
             </div>
           )}
-          {notReady.length > 0 && (
+          {warmingTicked.length > 0 && (
+            <p className="mt-2 rounded-md border border-wait/40 bg-wait-soft/40 px-3 py-2 text-xs" role="status">
+              <strong>
+                {warmingTicked.map((m) => `${m.email} is on day ${m.warmingDay} of 14`).join(", ")} of warmup.
+              </strong>{" "}
+              You can send from {warmingTicked.length === 1 ? "it" : "them"}, but emails from a new mailbox are more likely to land in spam, and that
+              can hurt its domain for a long time. If you go ahead, keep the daily cap low (5 to 10).
+            </p>
+          )}
+          {restingTicked.length > 0 && (
+            <p className="mt-2 rounded-md border border-wait/40 bg-wait-soft/40 px-3 py-2 text-xs" role="status">
+              <strong>{restingTicked.map((m) => m.email).join(", ")} {restingTicked.length === 1 ? "is" : "are"} resting.</strong>{" "}
+              {allResting
+                ? "Nothing else ticked can send, so this campaign will wait and start by itself when a mailbox is back. If you'd rather not wait, choose Send anyway on the campaign once it's waiting."
+                : `The campaign sends from the others meanwhile, and ${restingTicked.length === 1 ? "it joins" : "they join"} by ${restingTicked.length === 1 ? "itself" : "themselves"} once healthy.`}
+            </p>
+          )}
+          {otherNotReady.length > 0 && (
             <p className="mt-2 text-xs text-wait">
-              Not ready to send yet: {notReady.map((m) => `${m.email} (${m.note || "not ready"})`).join(", ")}. Resting mailboxes join the campaign
-              by themselves once they&apos;re healthy; the others send as soon as Instantly can use them.
+              Not ready to send yet: {otherNotReady.map((m) => `${m.email} (${m.note || "not ready"})`).join(", ")}. They send as soon as Instantly can use them.
             </p>
           )}
         </div>

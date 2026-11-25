@@ -102,10 +102,12 @@ export function summariseWarmup(days: WarmupDay[], now: number): WarmupSummary {
 
 /**
  * Warmup only counts against a mailbox when warmup is actually running. Instantly reports a score of 0 for a
- * mailbox that sent no warmup emails (paused, say), which means "no data", not "landing in spam".
+ * mailbox that sent no warmup emails (paused, say), which means "no data", not "landing in spam". The same goes for a
+ * mailbox in its first two weeks of warmup: its score starts at 0 and takes days to mean anything.
  */
-export function warmupProblem(score: number | null, w: WarmupSummary, rules: HealthRules): string | null {
+export function warmupProblem(score: number | null, w: WarmupSummary, rules: HealthRules, warmupAgeDays: number | null = null): string | null {
   if (!w.active || score === null || score >= rules.minWarmupScore) return null;
+  if (warmupAgeDays !== null && warmupAgeDays < WARMUP_DAYS) return null;
   return `warmup emails are landing in spam: health ${score} (minimum ${rules.minWarmupScore})`;
 }
 

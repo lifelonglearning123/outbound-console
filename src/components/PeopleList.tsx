@@ -5,7 +5,7 @@ import { requireClient, type Client } from "@/lib/clients";
 import { dateTime, toDate } from "@/lib/format";
 import { otherCampaigns, type OtherCampaign } from "@/lib/leads";
 import {
-  bouncedGroups, checkOption, defaultDir, describeFilters, hostLabel, listPeople, nonPeopleParams, peopleFacets, personName, personState, readFilters,
+  bouncedGroups, canTakeOut, checkOption, defaultDir, describeFilters, hostLabel, listPeople, nonPeopleParams, peopleFacets, personName, personState, readFilters,
   readSort, sortParams, sourceLabel, type Facet, type PeopleScope, type Person, type SortKey,
 } from "@/lib/people";
 import { portalDeleteStatus, portalTagStatus, runPortalDeletions, runPortalTagging } from "@/lib/portalTags";
@@ -83,7 +83,7 @@ export async function PeopleList({
   })}`;
   const active = Object.keys(filters).length > 0;
   const pages = Math.max(1, Math.ceil(list.total / PAGE));
-  const canTick = removable && scope.campaignId !== null && list.rows.some((r) => !r.handed && r.stage !== "removed");
+  const canTick = removable && scope.campaignId !== null && list.rows.some(canTakeOut);
   const columns = 6 + (removable ? 1 : 0) + (scope.campaignId ? 0 : 1);
 
   const sortHead = (k: SortKey, label: string) => {
@@ -126,7 +126,7 @@ export async function PeopleList({
               <tr key={r.id} className="border-t border-line align-top">
                 {removable && (
                   <td className="px-3 py-2">
-                    {!r.handed && r.stage !== "removed" && (
+                    {canTakeOut(r) && (
                       <input type="checkbox" name="ids" value={r.id} aria-label={`Select ${r.email}`} className="mt-1" />
                     )}
                   </td>
@@ -298,22 +298,30 @@ export async function PeopleList({
             <form action={removeMatching.bind(null, scope.campaignId, new URLSearchParams(values).toString())} className="flex flex-wrap items-center gap-3 rounded-md border border-line bg-card px-3 py-2 text-sm">
               <ConfirmButton
                 className="btn-bad text-xs"
-                message={`Remove ${n(list.removable)} contacts (${describeFilters(filters)}) from this campaign? They won't be emailed by it. Their record is kept under "Removed".`}
+                message={
+                  `Take ${n(list.removable)} contacts (${describeFilters(filters)}) out of this campaign? It emails them nothing more. ` +
+                  (list.withSender ? `${n(list.withSender)} are already with the sender: they're removed there too, even part-way through the sequence, and are then free for another campaign. ` : "") +
+                  `Their record is kept under "Removed".`
+                }
               >
-                Remove the {n(list.removable)} not yet with the sender
+                Take these {n(list.removable)} out of the campaign
               </ConfirmButton>
-              {list.removable < list.total && (
-                <span className="text-muted">{n(list.total - list.removable)} already with the sender stay as they are.</span>
-              )}
+              <span className="text-muted">
+                {list.withSender > 0 && `${n(list.withSender)} are already with the sender and are removed there too. `}
+                {list.removable < list.total && `${n(list.total - list.removable)} whose sequence has finished stay as they are.`}
+              </span>
             </form>
           )}
           {canTick ? (
             <form action={removeSelected.bind(null, scope.campaignId!)} className="flex flex-col gap-2">
               <div className="flex items-center gap-2 text-xs text-muted">
-                <ConfirmButton className="btn text-xs" message="Remove the ticked contacts from this campaign? Their record is kept under &quot;Removed&quot;.">
-                  Remove ticked contacts
+                <ConfirmButton
+                  className="btn text-xs"
+                  message={'Take the ticked contacts out of this campaign? It emails them nothing more. Anyone already with the sender is removed there too, and is then free for another campaign. Their record is kept under "Removed".'}
+                >
+                  Take ticked contacts out
                 </ConfirmButton>
-                <span>Only contacts not yet with the sender can be ticked.</span>
+                <span>Anyone whose sequence hasn&apos;t finished can be ticked, including contacts already with the sender.</span>
               </div>
               {table}
             </form>

@@ -10,7 +10,8 @@ import { importLeads, logImport, type LeadFields, type ImportResult } from "@/li
 import { addImports } from "@/lib/importResult";
 import { contactsWithTagPage, listTags } from "@/lib/ghl";
 import { runWriter, rewriteStep } from "@/lib/writer";
-import { probeFilter, pushApproved, pullBackHeld } from "@/lib/push";
+import { probeFilter, pushApproved, pullBackHeld, sendWaiting } from "@/lib/push";
+import { takeOut } from "@/lib/takeOut";
 import { NO_PUSH, addPushes } from "@/lib/pushResult";
 import { bouncedGroups, describeFilters, matchingIds, readFilters, removableIds } from "@/lib/people";
 import {
@@ -276,25 +277,22 @@ export async function pushCampaign(campaignId: number) {
   return r;
 }
 
-/** Contacts that can still be taken out of a campaign: not handed to the sender, not already removed. */
-const REMOVABLE = "pushed_at IS NULL AND instantly_lead_id IS NULL AND stage <> 'removed'";
-
-/** Remove the ticked contacts from a campaign (marked removed, never deleted, so their history stays). */
+/**
+ * Take the ticked contacts out of a campaign (marked removed, never deleted, so their history stays). Anyone already
+ * with the sender is removed there too, which frees them for another campaign.
+ */
 export async function removeSelected(campaignId: number, form: FormData) {
   const c = await requireCampaign(campaignId);
   await requireClientAccess(c.client_id);
   const ids = form.getAll("ids").map(Number).filter(Number.isInteger);
   if (ids.length === 0) return;
-  const n = (await run(
-    `UPDATE leads SET stage = 'removed', stage_message = 'Removed from the campaign by hand'
-     WHERE campaign_id = ? AND ${REMOVABLE} AND id = ANY(?)`,
-    campaignId, ids,
-  )).changes;
-  if (n) await logActivity(c.client_id, "import", `Removed ${n} contacts from "${c.name}" by hand`);
+  const r = await takeOut(campaignId, ids, "Removed from the campaign by hand");
+  // Anyone another campaign was waiting for can go to it now, rather than at the next sync.
+  if (r.fromSender) after(() => sendWaiting(c.client_id));
   revalidatePath("/", "layout");
 }
 
-/** Remove every not-yet-sent contact the contacts list's current filters match (e.g. all invalid ones) from a campaign. */
+/** Take everyone the contacts list's current filters match, whose sequence isn't over, out of a campaign. */
 export async function removeMatching(campaignId: number, query: string) {
   const c = await requireCampaign(campaignId);
   await requireClientAccess(c.client_id);
@@ -302,12 +300,8 @@ export async function removeMatching(campaignId: number, query: string) {
   if (Object.keys(filters).length === 0) throw new Error("Pick a filter first, so only the contacts you mean are removed.");
   const ids = await removableIds({ clientId: c.client_id, campaignId }, filters);
   if (ids.length === 0) return;
-  const which = describeFilters(filters);
-  const n = (await run(
-    `UPDATE leads SET stage = 'removed', stage_message = ? WHERE campaign_id = ? AND ${REMOVABLE} AND id = ANY(?)`,
-    `Removed from the campaign (${which})`, campaignId, ids,
-  )).changes;
-  if (n) await logActivity(c.client_id, "import", `Removed ${n} contacts from "${c.name}" (${which})`);
+  const r = await takeOut(campaignId, ids, `Removed from the campaign (${describeFilters(filters)})`);
+  if (r.fromSender) after(() => sendWaiting(c.client_id));
   revalidatePath("/", "layout");
 }
 
