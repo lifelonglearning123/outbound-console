@@ -282,7 +282,10 @@ async function actAll() {
       }
       const e = r.reason as Error;
       const status = e instanceof GhlError ? e.status : 0;
-      if (status === 404 && lead.ghl_verification_tag === "queued_delete") {
+      // The portal answers 400 "Contact not found" (not 404) for a contact that's already gone, which is what happens to the
+      // second campaign's copy of a person once the first one's delete has removed their one portal contact.
+      const gone = status === 404 || (status === 400 && /not found/i.test(e.message));
+      if (gone && lead.ghl_verification_tag === "queued_delete") {
         await markDeleted(lead); // already gone from the portal
         t.deleted++;
       } else if (status === 401 || status === 403) {
@@ -318,6 +321,17 @@ async function markDeleted(l: Job) {
       `Deleted from the ${PORTAL} (email ${OUTCOME_LABEL[l.verification].toLowerCase()})`, l.id,
     );
     await run("UPDATE drafts SET status = 'rejected', reviewed_at = datetime('now') WHERE lead_id = ? AND status IN ('pending', 'approved')", l.id);
+    // The same person in another of the client's campaigns shares this one portal contact, which no longer exists.
+    if (l.ghl_contact_id) {
+      const siblings = await all<{ id: number }>(
+        `UPDATE leads SET stage = 'removed', stage_message = ?, ghl_contact_id = NULL, ghl_verification_tag = 'deleted'
+         WHERE client_id = ? AND ghl_contact_id = ? AND id <> ? AND pushed_at IS NULL AND instantly_lead_id IS NULL RETURNING id`,
+        `Deleted from the ${PORTAL} (email ${OUTCOME_LABEL[l.verification].toLowerCase()})`, l.client_id, l.ghl_contact_id, l.id,
+      );
+      if (siblings.length) {
+        await run("UPDATE drafts SET status = 'rejected', reviewed_at = datetime('now') WHERE lead_id = ANY(?) AND status IN ('pending', 'approved')", siblings.map((s) => s.id));
+      }
+    }
   });
 }
 
