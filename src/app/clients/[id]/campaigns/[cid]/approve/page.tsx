@@ -74,7 +74,7 @@ export default async function CampaignApprovePage({ params, searchParams }: Page
             ? `Preparing ${n(counts.drafting)} emails…`
             : b.checking > 0
               ? `${n(b.checking)} addresses are still being checked. Contacts appear here once they pass.`
-              : <>Nothing ready to send. <Link href={`${base}/contacts`} className="underline">Add contacts</Link> to get started.</>}
+              : <>Nothing is waiting for approval. <Link href={`${base}/contacts`} className="underline">Add contacts</Link> to have more to send.</>}
         </div>
       ) : (
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-[1fr_380px]">
@@ -108,7 +108,8 @@ export default async function CampaignApprovePage({ params, searchParams }: Page
             )}
           </section>
 
-          <aside className="flex flex-col gap-4">
+          {/* First on a phone, so approving doesn't need a scroll past the preview; beside it on a wide screen. */}
+          <aside className="order-first flex flex-col gap-4 lg:order-last">
             <Group
               campaignId={c.id}
               group="verified"

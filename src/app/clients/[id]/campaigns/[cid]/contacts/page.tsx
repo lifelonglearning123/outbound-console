@@ -20,6 +20,7 @@ import { filterEvidence } from "@/lib/deliverability";
 const ADVICE_TONE: Record<string, string> = { go: "text-go", wait: "text-wait", bad: "text-bad", info: "text-info", muted: "text-muted" };
 import { ConfirmButton } from "@/components/ConfirmButton";
 import { PeopleList } from "@/components/PeopleList";
+import { HashOpen } from "@/components/HashOpen";
 
 const n = (v: number) => v.toLocaleString("en-GB");
 
@@ -65,15 +66,7 @@ export default async function CampaignContactsPage({ params, searchParams }: Pag
     <div className="flex flex-col gap-6">
       <AutoRefresh active={report.checking > 0 || report.portal.queued > 0} />
 
-      {/* 1. Results: what to do with each group */}
-      {report.checked > 0 && (
-        <section className="flex flex-col gap-3">
-          <h2 className="font-semibold">Address check results: tag or clean up each group</h2>
-          <VerificationGroups clientId={clientId} campaignId={c.id} report={report} lists={lists} />
-        </section>
-      )}
-
-      {/* 2. Add */}
+      {/* 1. Add: first, because it's what this tab is for. */}
       <section className="grid grid-cols-1 gap-6 lg:grid-cols-[1fr_320px]">
         {nexus ? (
           <div className="card flex flex-col gap-2 p-5 text-sm text-muted">
@@ -85,7 +78,8 @@ export default async function CampaignContactsPage({ params, searchParams }: Pag
           <LeadImporter clientId={clientId} campaigns={[{ id: c.id, name: c.name }]} campaignId={c.id} ghlTag={c.ghl_tag} hasGhl={Boolean(client.ghl_location_id && client.ghl_token)} />
         )}
         <div className="card flex flex-col gap-3 p-5">
-          <h2 className="font-semibold">What happens next</h2>
+          <details>
+            <summary className="cursor-pointer font-semibold">What happens next</summary>
           {nexus ? (
             <ol className="flex flex-col gap-2 text-sm text-muted">
               <li><span className="font-medium text-ink">1. Checked.</span> Every address is checked with the sending platform as soon as it arrives. Invalid ones are set aside.</li>
@@ -99,6 +93,7 @@ export default async function CampaignContactsPage({ params, searchParams }: Pag
             <li><span className="font-medium text-ink">3. Ready to send.</span> Verified contacts wait for your go on the Approve tab; unconfirmed ones are your call.</li>
           </ol>
           )}
+          </details>
           {verifyError && report.checking > 0 && <p className="text-sm text-bad">{verifyError}</p>}
           {report.credits && (
             <p className="text-xs text-muted">Check credits left: <span className="num">{Number(report.credits).toLocaleString("en-GB")}</span> (a quarter of a credit per contact)</p>
@@ -114,17 +109,47 @@ export default async function CampaignContactsPage({ params, searchParams }: Pag
               {errorCount > 0 && <form action={writeEmails.bind(null, c.id, true)}><SubmitButton pendingLabel="Starting…">Retry {n(errorCount)} that failed</SubmitButton></form>}
             </div>
           )}
-          {!nexus && report.counts.verified > 0 && (
-            <Link href={`/clients/${clientId}/campaigns/${c.id}/approve`} className="text-sm text-go underline">Go to Approve →</Link>
-          )}
         </div>
       </section>
 
-      {/* 3. Mail filters: pause sending to the ones that reject you */}
+      {/* 2. Results: folded to one line; open to tag or clean up each group. */}
+      {report.checked > 0 && (
+        <details className="card group p-4">
+          <summary className="flex cursor-pointer list-none flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+            <h2 className="font-semibold">Address checks</h2>
+            <span className="text-sm text-muted">
+              {[
+                report.counts.verified && `${n(report.counts.verified)} verified`,
+                report.counts.catch_all && `${n(report.counts.catch_all)} unable to verify`,
+                report.counts.invalid && `${n(report.counts.invalid)} invalid`,
+              ].filter(Boolean).join(" · ")}
+              <span className="ml-2 text-ink underline group-open:hidden">Tag or clean up</span>
+            </span>
+          </summary>
+          <div className="mt-4">
+            <VerificationGroups clientId={clientId} campaignId={c.id} report={report} lists={lists} />
+          </div>
+        </details>
+      )}
+
+      {/* 3. Mail filters: folded to one line; opens by itself when a link points here (#mail-filters). */}
       {gateways.length > 0 && (
-        <section id="mail-filters" className="flex scroll-mt-16 flex-col gap-2">
-          <header>
+        <details id="mail-filters" className="card group scroll-mt-40 p-4">
+          <HashOpen id="mail-filters" />
+          <summary className="flex cursor-pointer list-none flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
             <h2 className="font-semibold">Mail filters</h2>
+            <span className="text-sm text-muted">
+              {(() => {
+                const paused = gateways.filter((g) => c.hold_gateways.includes(g.gateway));
+                return paused.length
+                  ? `${paused.map((g) => GATEWAY_LABEL[g.gateway] ?? g.gateway).join(", ")} paused${paused.some((g) => Number(g.held)) ? ` (${n(paused.reduce((a, g) => a + Number(g.held), 0))} held)` : ""}`
+                  : "all sending normally";
+              })()}
+              <span className="ml-2 text-ink underline group-open:hidden">Change</span>
+            </span>
+          </summary>
+          <div className="mt-3 flex flex-col gap-2">
+          <header>
             <p className="text-sm text-muted">
               Some companies put a security filter in front of their email. If a filter doesn&apos;t trust your sending domain, it refuses
               the email and that counts as a bounce. While a filter is paused, its contacts aren&apos;t sent to: they stay approved and go
@@ -199,7 +224,8 @@ export default async function CampaignContactsPage({ params, searchParams }: Pag
               </SubmitButton>
             </form>
           )}
-        </section>
+          </div>
+        </details>
       )}
 
       {/* 4. Everyone: find, filter, download, remove */}

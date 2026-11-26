@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { SubmitButton } from "./SubmitButton";
 import type { Schedule, Step } from "@/lib/campaigns";
 import { INSTANTLY_TIMEZONES } from "@/lib/timezones";
@@ -63,6 +63,23 @@ export function CampaignForm(p: Props) {
   const effectiveHold = p.lockedLive ? (steps.length > p.lockedLive ? p.lockedLive : 0) : hold && hold < steps.length ? hold : 0;
   const update = (i: number, patch: Partial<Step>) => setSteps(steps.map((s, j) => (j === i ? { ...s, ...patch } : s)));
 
+  const [dirty, setDirty] = useState(false);
+  // Changed from what was loaded: steps, hold and mailboxes are compared; typing marks it straight away (onInput).
+  const loaded = useRef(JSON.stringify([p.steps, p.holdAfter ?? 0, p.accounts]));
+  useEffect(() => {
+    if (JSON.stringify([steps.map(({ uid: _uid, ...st }) => st), hold, chosen]) !== loaded.current) setDirty(true);
+  }, [steps, hold, chosen]);
+  // The sending settings in one line, for the folded Sending section (edit only; the new-campaign steps show it open).
+  const dayText = (() => {
+    const d = [...p.schedule.days].sort((a, b) => ((a + 6) % 7) - ((b + 6) % 7));
+    if (d.join() === "1,2,3,4,5") return "Mon–Fri";
+    if (d.length === 7) return "Every day";
+    return d.map((v) => DAY_LABEL[String(v)]).join(", ");
+  })();
+  const sendingSummary = `${dayText}, ${p.schedule.from}–${p.schedule.to}, ${p.dailyLimit} a day, from ${
+    chosen.length === 1 ? chosen[0] : `${chosen.length} mailboxes`
+  }`;
+
   // Wizard (new campaign only): one group of sections at a time. Hidden sections still submit with the form.
   const formRef = useRef<HTMLFormElement>(null);
   const [stage, setStage] = useState(1);
@@ -88,7 +105,7 @@ export function CampaignForm(p: Props) {
   };
 
   return (
-    <form ref={formRef} action={p.action} className="flex max-w-3xl flex-col gap-6">
+    <form ref={formRef} action={p.action} onInput={() => setDirty(true)} className="flex max-w-3xl flex-col gap-6">
       {p.wizard && (
         <ol className="flex gap-6 text-sm">
           {WIZARD_STEPS.map((label, i) => (
@@ -290,8 +307,19 @@ export function CampaignForm(p: Props) {
         </section>
       )}
 
-      <section className="card flex flex-col gap-4 p-5">
-        <h2 className="font-semibold">Sending</h2>
+      {/* Editing: folded to one line, opened only to change it. Its fields still save while folded. */}
+      <details className="card group p-5" open={p.wizard || undefined}>
+        <summary className="flex cursor-pointer list-none flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+          <h2 className="font-semibold">Sending</h2>
+          {!p.wizard && (
+            <span className="text-sm text-muted">
+              {sendingSummary}
+              {(warmingTicked.length > 0 || restingTicked.length > 0) && <span className="text-wait"> · check the mailboxes</span>}
+              <span className="ml-2 text-ink underline group-open:hidden">Change</span>
+            </span>
+          )}
+        </summary>
+        <div className="mt-4 flex flex-col gap-4">
         <div>
           <span className="label">Days</span>
           <div className="flex gap-2">
@@ -408,7 +436,8 @@ export function CampaignForm(p: Props) {
             </span>
           </label>
         </div>
-      </section>
+        </div>
+      </details>
 
       </div>
 
@@ -427,7 +456,13 @@ export function CampaignForm(p: Props) {
         </section>
       )}
 
-      <div className="flex items-center gap-2">
+      {/* Pinned to the bottom of the screen, so saving never needs a scroll to the end of the form. */}
+      <div
+        className={`sticky bottom-0 z-10 flex items-center gap-3 border-t py-3 ${
+          !p.wizard && dirty ? "border-line bg-paper" : "border-transparent bg-paper/90"
+        }`}
+      >
+        {!p.wizard && dirty && <span className="text-sm text-wait">Unsaved changes</span>}
         {p.wizard && stage > 1 && <button type="button" className="btn" onClick={() => setStage(stage - 1)}>Back</button>}
         {p.wizard && stage < 3 ? (
           <button type="button" className="btn-go" onClick={next}>Next</button>
