@@ -30,7 +30,7 @@ export default async function MailboxesPage() {
 
           <Rule
             title="Rest a mailbox when too many of its emails bounce"
-            instantly={`Instantly pauses a whole campaign once it has sent ${INSTANTLY_RULE.minSent} emails with over ${INSTANTLY_RULE.bouncePct}% bouncing. The console uses the same line per mailbox, so it is never stricter.`}
+            instantly={`The sending platform pauses a whole campaign once it has sent ${INSTANTLY_RULE.minSent} emails with over ${INSTANTLY_RULE.bouncePct}% bouncing. The console uses the same line per mailbox, so it is never stricter.`}
           >
             <span>Over</span>
             <input name="bounce" type="number" step="0.25" min="0.5" defaultValue={rules.bouncePct} className="field w-20" aria-label="Bounce rate limit, percent" />
@@ -43,7 +43,7 @@ export default async function MailboxesPage() {
 
           <Rule
             title="Rest a mailbox whose warmup lands in spam"
-            instantly="Instantly shows a warmup health score (the share of warmup emails reaching the inbox) but doesn't act on it. A score of 0 with no warmup running means no data, so it never counts."
+            instantly="The sending platform shows a warmup health score (the share of warmup emails reaching the inbox) but doesn't act on it. A score of 0 with no warmup running means no data, so it never counts."
           >
             <span>Warmup health under</span>
             <input name="warmup" type="number" min="0" max="100" defaultValue={rules.minWarmupScore} className="field w-20" aria-label="Minimum warmup health" />
@@ -52,7 +52,7 @@ export default async function MailboxesPage() {
 
           <Rule
             title="Put a resting mailbox back"
-            instantly="Instantly never puts anything back by itself: a campaign it paused stays paused until you press play (it then won't pause it again for 7 days)."
+            instantly="The sending platform never puts anything back by itself: a campaign it paused stays paused until you press play (it then won't pause it again for 7 days)."
           >
             <span>After it has looked healthy for</span>
             <input name="return_days" type="number" min="1" defaultValue={rules.returnDays} className="field w-16" aria-label="Days healthy before returning" />
@@ -72,7 +72,7 @@ export default async function MailboxesPage() {
         </form>
       )}
 
-      <MailboxBoard boxes={boxes} rules={rules} checks={checks} showClient />
+      <MailboxBoard boxes={boxes} rules={rules} checks={checks} showClient admin={u.role === "admin"} />
     </div>
   );
 }
@@ -84,7 +84,7 @@ function Rule({ title, instantly, children }: { title: string; instantly: string
         <div className="font-medium">{title}</div>
         <div className="mt-1 flex flex-wrap items-center gap-2">{children}</div>
       </div>
-      <p className="text-xs text-muted"><span className="font-medium text-ink">Instantly&apos;s own rule: </span>{instantly}</p>
+      <p className="text-xs text-muted"><span className="font-medium text-ink">The sending platform&apos;s own rule: </span>{instantly}</p>
     </div>
   );
 }

@@ -14,7 +14,7 @@ export async function GET(req: NextRequest, ctx: RouteContext<"/clients/[id]/ver
   const client = await requireClient(clientId);
   const campaignId = Number(req.nextUrl.searchParams.get("campaign")) || null;
   const leads = await groupLeads(clientId, group, campaignId);
-  const header = ["Email", "First name", "Last name", "Company", "Campaign", "Result", "Tag", "Nexus Portal", "In Instantly", "Checked at"];
+  const header = ["Email", "First name", "Last name", "Company", "Campaign", "Result", "Tag", "Nexus Portal", "With the sender", "Checked at"];
   const rows = leads.map((l) =>
     [l.email, l.first_name, l.last_name, l.company, l.campaign, OUTCOME_LABEL[group], GHL_TAGS[group], portalStatus(l, group), l.in_instantly ? "Yes" : "No", l.verified_at?.slice(0, 16).replace("T", " ")],
   );

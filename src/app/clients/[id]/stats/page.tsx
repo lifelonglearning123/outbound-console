@@ -109,7 +109,7 @@ export default async function StatsPage({ params, searchParams }: PageProps<"/cl
 
       <Section
         title="Mailbox health"
-        note={`${client.name}'s sending mailboxes in this period. A mailbox over ${healthRulesNow.bouncePct}% bounces (Instantly's own line) rests until it's healthy; warmup, DNS and what the console did are on the Mailboxes page.`}
+        note={`${client.name}'s sending mailboxes in this period. A mailbox over ${healthRulesNow.bouncePct}% bounces (the sending platform's own line) rests until it's healthy; warmup, DNS and what the console did are on the Mailboxes page.`}
       >
         <table className="w-full text-sm [&_td]:px-2 [&_th]:px-2 [&_td:first-child]:pl-0 [&_th:first-child]:pl-0">
           <thead className="text-left text-xs uppercase tracking-wide text-muted">
@@ -174,7 +174,7 @@ export default async function StatsPage({ params, searchParams }: PageProps<"/cl
         />
         <p className="text-xs text-muted">
           Everyone added from this console, whatever the date range above; set the Emailed dates to narrow it. Campaigns built directly in
-          Instantly don&apos;t list individual people here.
+          the sending platform don&apos;t list individual people here.
         </p>
       </section>
 

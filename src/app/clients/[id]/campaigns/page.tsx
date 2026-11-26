@@ -22,7 +22,7 @@ export default async function CampaignsPage({ params }: PageProps<"/clients/[id]
   if (!client.instantly_api_key) {
     return (
       <div className="card p-6 text-sm">
-        Add this client&apos;s Instantly API key in <Link className="underline" href={`/clients/${id}/settings`}>Settings</Link> to get started.
+        Add this client&apos;s sending platform API key in <Link className="underline" href={`/clients/${id}/settings`}>Settings</Link> to get started.
       </div>
     );
   }

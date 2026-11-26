@@ -66,7 +66,7 @@ export function Nav({ clients, user }: { clients: NavClient[]; user: { email: st
       >
         <Link href={home} className="px-2.5">
           <div className="text-[15px] font-semibold tracking-tight">Outbound Console</div>
-          <div className="text-xs text-muted">{user.isAdmin ? "Instantly control room" : "Cold email campaigns"}</div>
+          <div className="text-xs text-muted">{user.isAdmin ? "Cold email control room" : "Cold email campaigns"}</div>
         </Link>
 
         <nav className="flex min-h-0 flex-1 flex-col gap-0.5">
@@ -92,7 +92,7 @@ export function Nav({ clients, user }: { clients: NavClient[]; user: { email: st
                         className={`h-1.5 w-1.5 shrink-0 rounded-full ${
                           c.keyStatus === "ok" ? "bg-go" : c.keyStatus === "error" ? "bg-bad" : "bg-line"
                         }`}
-                        title={c.keyStatus === "ok" ? "Instantly connected" : c.keyStatus === "error" ? "Key problem" : "Key not checked"}
+                        title={c.keyStatus === "ok" ? "Connected" : c.keyStatus === "error" ? "Key problem" : "Key not checked"}
                       />
                     )}
                   </Link>

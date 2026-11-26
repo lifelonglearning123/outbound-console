@@ -3,6 +3,7 @@ import { all, get, run, tx, getSetting, logActivity } from "./db";
 import { requireClient } from "./clients";
 import { instantly, type InstantlyClient } from "./instantly";
 import { campaignState } from "./connection";
+import { unbrand } from "./brand";
 import {
   DAY_MS, DEFAULT_RULES, RAMP_DAYS, bounceProblem, daysSince, isoDay, mailboxState, nextRampStep, rampLimit, readiness, suggestion,
   summariseWarmup, warmupProblem, type HealthRules, type Readiness, type StateKey, type Tone, type WarmupDay, type WarmupSummary,
@@ -192,13 +193,13 @@ export async function mailboxHealth(clientId: number | null, opts: { scopeSql?: 
 
     let detail: string | null = null;
     if (state.key === "error") {
-      detail = `Instantly reports: ${r.status_message ?? "it can't connect to the mailbox"}. Nothing sends from it until it's fixed in Instantly.`;
+      detail = `The sending platform reports: ${unbrand(r.status_message) ?? "it can't connect to the mailbox"}. Nothing sends from it until it's fixed in the sending platform.`;
     } else if (state.key === "maintenance") {
-      detail = "Instantly paused it for maintenance; it resumes by itself.";
+      detail = "The sending platform paused it for maintenance; it resumes by itself.";
     } else if (state.key === "paused") {
       detail = stuck
         ? `Paused by the console on ${fmtWhen(r.auto_paused_at!)} (${r.auto_paused_reason ?? "health rules"}). A paused mailbox doesn't warm up, so its score can't recover: bring it back to rebuild it.`
-        : "Paused in Instantly: it sends no campaign emails and no warmup.";
+        : "Paused in the sending platform: it sends no campaign emails and no warmup.";
     } else if (rest) {
       const why = rest.reason ? `${sentence(rest.reason)}. ` : "";
       const where = rest.out.length ? `Out of ${quoteList(rest.out)} since ${fmtWhen(rest.at)}` : `Resting since ${fmtWhen(rest.at)}`;
@@ -265,7 +266,7 @@ export async function oneMailbox(clientId: number, email: string): Promise<Mailb
 
 async function apiFor(clientId: number): Promise<InstantlyClient> {
   const client = await requireClient(clientId);
-  if (!client.instantly_api_key) throw new Error("This client has no Instantly key");
+  if (!client.instantly_api_key) throw new Error("This client has no sending platform key");
   return instantly(client.instantly_api_key);
 }
 
@@ -357,7 +358,7 @@ export async function restMailbox(
     out.push(c.name);
   }
   if (out.length === 0 && held.length === 0 && kept.length > 0) {
-    const note = `${sentence(reason)}, but someone chose to keep sending from it on ${quoteList(kept)}, where it's the only working mailbox. Instantly's own bounce protection still watches ${kept.length === 1 ? "that campaign" : "those campaigns"}.`;
+    const note = `${sentence(reason)}, but someone chose to keep sending from it on ${quoteList(kept)}, where it's the only working mailbox. The sending platform's own bounce protection still watches ${kept.length === 1 ? "that campaign" : "those campaigns"}.`;
     await run("UPDATE mailboxes SET health_note = ? WHERE client_id = ? AND email = ?", note, clientId, email);
     return { rested: false, out, kept, held };
   }
@@ -491,7 +492,7 @@ export async function bringBack(clientId: number, emails: string[], opts: { api?
     );
     await logActivity(
       clientId, "resume",
-      `Brought back ${email}: resumed in Instantly so its warmup restarts, resting out of campaigns meanwhile. It goes back by itself once its warmup has been healthy for a few days.`,
+      `Brought back ${email}: resumed in the sending platform so its warmup restarts, resting out of campaigns meanwhile. It goes back by itself once its warmup has been healthy for a few days.`,
       { subject: email, undo: "return" },
     );
   }

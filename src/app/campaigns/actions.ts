@@ -126,7 +126,7 @@ function readForm(form: FormData) {
   if (problems.length) throw new Error(`Fix before saving: ${problems.join("; ")}`);
 
   const timezone = String(form.get("timezone"));
-  if (!(INSTANTLY_TIMEZONES as readonly string[]).includes(timezone)) throw new Error(`Instantly doesn't accept timezone ${timezone}`);
+  if (!(INSTANTLY_TIMEZONES as readonly string[]).includes(timezone)) throw new Error(`The sending platform doesn't accept timezone ${timezone}`);
   const schedule = {
     days: form.getAll("days").map(Number),
     from: String(form.get("from") || "09:00"),
@@ -166,7 +166,7 @@ export async function saveCampaign(clientId: number, campaignId: number | null, 
       // Leads are already in Instantly with their copy: the live steps stay as they are, and any steps
       // beyond them are held until released from the campaign page (so nobody gets a step without copy).
       const live = liveSteps(existing);
-      if (list.length < live) throw new Error(`Steps 1-${live} are already live in Instantly and can't be removed.`);
+      if (list.length < live) throw new Error(`Steps 1-${live} are already live in the sending platform and can't be removed.`);
       // Those contacts' copy has no subject for a step that didn't have one, so it would go out blank.
       const locked = subjectChanged.find((n) => n <= live);
       if (locked) throw new Error(`Follow-up ${locked} is already being sent, so its subject can't be added or removed. Change it on a follow-up that isn't live yet.`);

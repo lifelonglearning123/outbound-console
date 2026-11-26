@@ -77,7 +77,7 @@ export function HoldPanel({
     <section className="card flex flex-col gap-3 border-wait/40 p-4">
       <div>
         <h3 className="font-semibold">Releasing the hold: steps {s.live + 1}–{s.releaseTo}</h3>
-        <p className="text-sm text-muted">Nothing changes in Instantly until you apply it.</p>
+        <p className="text-sm text-muted">Nothing changes in the sending platform until you apply it.</p>
       </div>
       <ol className="flex flex-col gap-1 text-sm">
         <li>
@@ -109,14 +109,14 @@ export function HoldPanel({
           disabled={!ready || pending}
           onClick={() => start(async () => setMessage(await finishRelease(campaignId)))}
         >
-          {pending ? "Applying…" : "Apply to Instantly"}
+          {pending ? "Applying…" : "Apply to the sending platform"}
         </button>
         <button className="btn" disabled={pending} onClick={() => start(() => abandonRelease(campaignId))}>
           Cancel release
         </button>
       </div>
       <p className="text-xs text-muted">
-        Instantly times each new step from when the previous one was sent, so leads whose last email went out a while ago get the next one
+        The sending platform times each new step from when the previous one was sent, so leads whose last email went out a while ago get the next one
         straight away (within your daily cap and sending hours).
       </p>
       {message && <p className="text-sm">{message}</p>}

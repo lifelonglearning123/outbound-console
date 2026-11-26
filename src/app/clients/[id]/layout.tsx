@@ -22,7 +22,7 @@ export default async function ClientLayout({ children, params }: LayoutProps<"/c
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">{client.name}</h1>
           <p className="text-sm text-muted">
-            {client.instantly_workspace_name ? `Instantly workspace: ${client.instantly_workspace_name}` : "Instantly not connected yet"}
+            {client.instantly_workspace_name ? `Sending workspace: ${client.instantly_workspace_name}` : "Sending platform not connected yet"}
           </p>
         </div>
         <ConnectionBadge client={client} />

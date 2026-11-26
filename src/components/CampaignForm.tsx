@@ -260,7 +260,7 @@ export function CampaignForm(p: Props) {
             <p className="text-xs text-muted">
               A hold stops the sequence after that step. Leads get the steps before it; the steps after it can stay unfinished until your
               client has written them. Then use <strong>Release hold</strong> on the campaign page: the next emails are written for every
-              lead still in play, you approve them, and they&apos;re added to Instantly.
+              lead still in play, you approve them, and they&apos;re added to the sending platform.
             </p>
           </div>
           <p className="text-xs text-muted">Changing the sequence later only affects emails prepared after the change.</p>
@@ -349,7 +349,7 @@ export function CampaignForm(p: Props) {
             )}
           </div>
           {p.mailboxes.length === 0 ? (
-            <p className="text-sm text-muted">No mailboxes yet. Use &quot;Check&quot; in Settings to pull them from Instantly.</p>
+            <p className="text-sm text-muted">No mailboxes yet. Use &quot;Check&quot; in Settings to pull them from the sending platform.</p>
           ) : (
             <div className="grid grid-cols-2 gap-1">
               {p.mailboxes.map((m) => (
@@ -390,7 +390,7 @@ export function CampaignForm(p: Props) {
           )}
           {otherNotReady.length > 0 && (
             <p className="mt-2 text-xs text-wait">
-              Not ready to send yet: {otherNotReady.map((m) => `${m.email} (${m.note || "not ready"})`).join(", ")}. They send as soon as Instantly can use them.
+              Not ready to send yet: {otherNotReady.map((m) => `${m.email} (${m.note || "not ready"})`).join(", ")}. They send as soon as the sending platform can use them.
             </p>
           )}
         </div>
@@ -398,7 +398,7 @@ export function CampaignForm(p: Props) {
           <label className={`flex items-start gap-2 text-sm ${oneProvider && !p.matchEsp ? "text-muted" : ""}`}>
             <input type="checkbox" name="match_esp" defaultChecked={p.matchEsp} className="mt-0.5" />
             <span>
-              Pair like with like: Google mailboxes write to Google recipients, Microsoft to Microsoft (Instantly&apos;s ESP matching)
+              Pair like with like: Google mailboxes write to Google recipients, Microsoft to Microsoft (the sending platform&apos;s ESP matching)
               {oneProvider && (
                 <span className="block text-xs text-wait">
                   Every mailbox chosen here is {oneProvider === "other" ? "the same kind" : oneProvider === "google" ? "Google" : "Microsoft"}, so turning this

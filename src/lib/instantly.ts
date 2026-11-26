@@ -65,7 +65,7 @@ async function call<T>(
     } catch {}
     if (res.status === 401) msg = `Key rejected (${msg}). Check the key, its scopes, and that the plan includes API access.`;
     if (res.status === 403) msg = `Not allowed (${msg}). The key may lack a scope, or the plan may not include API v2.`;
-    throw new InstantlyError(`Instantly ${res.status}: ${msg}`, res.status);
+    throw new InstantlyError(`Sending platform error ${res.status}: ${msg}`, res.status);
   }
   return (text ? JSON.parse(text) : {}) as T;
 }

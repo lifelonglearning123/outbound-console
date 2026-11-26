@@ -78,7 +78,7 @@ export default async function CampaignContactsPage({ params, searchParams }: Pag
         {nexus ? (
           <div className="card flex flex-col gap-2 p-5 text-sm text-muted">
             <h2 className="font-semibold text-ink">People come from Nexus</h2>
-            <p>Nexus adds people to this campaign, and every address is checked with Instantly as soon as it arrives.</p>
+            <p>Nexus adds people to this campaign, and every address is checked with the sending platform as soon as it arrives.</p>
             <p>Remove anyone you don&apos;t want emailed from the list below, or hold back a mail filter. Nexus writes each person&apos;s emails once their address passes, and they are only sent when Nexus hands them over.</p>
           </div>
         ) : (
@@ -88,13 +88,13 @@ export default async function CampaignContactsPage({ params, searchParams }: Pag
           <h2 className="font-semibold">What happens next</h2>
           {nexus ? (
             <ol className="flex flex-col gap-2 text-sm text-muted">
-              <li><span className="font-medium text-ink">1. Checked.</span> Every address is checked with Instantly as soon as it arrives. Invalid ones are set aside.</li>
+              <li><span className="font-medium text-ink">1. Checked.</span> Every address is checked with the sending platform as soon as it arrives. Invalid ones are set aside.</li>
               <li><span className="font-medium text-ink">2. Written in Nexus.</span> Contacts that pass get their emails from Nexus, reviewed there.</li>
               <li><span className="font-medium text-ink">3. Sent.</span> Nexus hands them over; held filters and problem companies are still kept back here.</li>
             </ol>
           ) : (
           <ol className="flex flex-col gap-2 text-sm text-muted">
-            <li><span className="font-medium text-ink">1. Checked.</span> Every address is checked with Instantly as soon as it arrives. Invalid ones are set aside.</li>
+            <li><span className="font-medium text-ink">1. Checked.</span> Every address is checked with the sending platform as soon as it arrives. Invalid ones are set aside.</li>
             <li><span className="font-medium text-ink">2. Prepared.</span> Contacts that pass get their copy of the email, with their name and company filled in.</li>
             <li><span className="font-medium text-ink">3. Ready to send.</span> Verified contacts wait for your go on the Approve tab; unconfirmed ones are your call.</li>
           </ol>
@@ -195,7 +195,7 @@ export default async function CampaignContactsPage({ params, searchParams }: Pag
           {pullable > 0 && (
             <form action={takeBackHeld.bind(null, c.id)}>
               <SubmitButton pendingLabel="Taking them back…">
-                Take {n(pullable)} contacts behind paused filters back out of Instantly before they&apos;re emailed
+                Take {n(pullable)} contacts behind paused filters back out of the sending platform before they&apos;re emailed
               </SubmitButton>
             </form>
           )}

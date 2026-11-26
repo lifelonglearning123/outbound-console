@@ -87,7 +87,7 @@ export async function pushApproved(campaignId: number, opts: { onlyWaiting?: boo
 
 async function pushApprovedNow(campaignId: number, opts: { onlyWaiting?: boolean; probeIds?: number[]; starting?: boolean }): Promise<PushResult> {
   const campaign = await requireCampaign(campaignId);
-  if (!campaign.instantly_campaign_id) throw new Error("Create the campaign in Instantly first");
+  if (!campaign.instantly_campaign_id) throw new Error("Create the campaign in the sending platform first");
   if (campaign.start_at && campaign.status === "draft" && !opts.starting) return { ...NO_PUSH };
   const client = await requireClient(campaign.client_id);
   const api = instantly(client.instantly_api_key!);
@@ -270,7 +270,7 @@ async function pushApprovedNow(campaignId: number, opts: { onlyWaiting?: boolean
     if (refused.length) {
       await run(
         "UPDATE leads SET stage = 'error', stage_message = ? WHERE id = ANY(?)",
-        "Instantly didn't add this lead (already in the campaign, on the blocklist, or invalid email)", refused,
+        "The sending platform didn't add this lead (already in the campaign, on the blocklist, or invalid email)", refused,
       );
     }
   });
@@ -278,7 +278,7 @@ async function pushApprovedNow(campaignId: number, opts: { onlyWaiting?: boolean
     client.id,
     "push",
     `Sent ${pushed} approved leads to "${campaign.name}"${opts.probeIds ? " as a test past its held mail filters" : ""}` +
-      (skipped ? ` (${skipped} skipped by Instantly: ${res.duplicated_leads} duplicates, ${res.in_blocklist} blocklisted, ${res.invalid_email_count} invalid)` : ""),
+      (skipped ? ` (${skipped} skipped by the sending platform: ${res.duplicated_leads} duplicates, ${res.in_blocklist} blocklisted, ${res.invalid_email_count} invalid)` : ""),
   );
   return result(pushed, skipped);
 }
@@ -357,7 +357,7 @@ export async function pullBackHeld(campaignId: number): Promise<{ pulled: number
       await run(
         `UPDATE leads SET stage = 'approved', pushed_at = NULL, instantly_lead_id = NULL, instantly_status = NULL, stage_message = ?
          WHERE id = ? AND stage = 'pushed'`,
-        "Held back: this campaign isn't sending to their company's email filter (see Mail filters on the Contacts page). Taken back out of Instantly before it was sent.",
+        "Held back: this campaign isn't sending to their company's email filter (see Mail filters on the Contacts page). Taken back out of the sending platform before it was sent.",
         l.id,
       );
       pulled++;

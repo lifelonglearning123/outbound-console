@@ -9,7 +9,7 @@ export function ConnectionBadge({ client }: { client: Client }) {
       : client.key_status === "error"
         ? "border-bad/30 bg-bad-soft text-bad"
         : "border-line bg-card text-muted";
-  const label = client.key_status === "ok" ? "Instantly connected" : client.key_status === "error" ? "Connection problem" : "Not checked";
+  const label = client.key_status === "ok" ? "Connected" : client.key_status === "error" ? "Connection problem" : "Not checked";
 
   return (
     <form action={recheckConnection.bind(null, client.id)} className={`flex max-w-md items-center gap-3 rounded-lg border px-3 py-2 ${tone}`}>

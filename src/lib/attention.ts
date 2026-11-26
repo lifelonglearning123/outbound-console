@@ -34,7 +34,7 @@ export async function clientAttention(client: Client, isAdmin: boolean, boxes?: 
   const mailboxPage = `${base}/mailboxes`;
 
   if (isAdmin && client.key_status === "error") {
-    items.push({ kind: "problem", tone: "bad", priority: 100, text: `Instantly connection problem: ${client.key_message ?? "the API key was refused"}.`, href: `${base}/settings`, link: "Fix in Settings" });
+    items.push({ kind: "problem", tone: "bad", priority: 100, text: `Sending platform connection problem: ${client.key_message ?? "the API key was refused"}.`, href: `${base}/settings`, link: "Fix in Settings" });
   }
   const verifyError = await getSetting(`verify_error_${client.id}`, "");
   if (verifyError) items.push({ kind: "problem", tone: "wait", priority: 90, text: verifyError });
@@ -113,8 +113,8 @@ export async function clientAttention(client: Client, isAdmin: boolean, boxes?: 
   for (const m of mailboxes.filter((x) => x.warmupStatus === -1 || x.warmupStatus === -3)) {
     items.push({
       kind: "problem", tone: "bad", priority: 80,
-      text: `Instantly has ${m.warmupStatus === -1 ? "banned" : "suspended"} warmup for ${m.email}. Check the mailbox in Instantly.`,
-      href: "https://app.instantly.ai/app/accounts", link: "Open Instantly",
+      text: `The sending platform has ${m.warmupStatus === -1 ? "banned" : "suspended"} warmup for ${m.email}. ${isAdmin ? "Check the mailbox in the sending platform." : "Ask your account manager to check it."}`,
+      ...(isAdmin ? { href: "https://app.instantly.ai/app/accounts", link: "Open the sending platform" } : {}),
     });
   }
   for (const m of mailboxes.filter((x) => x.warmup.spamRising || x.warmup.falling)) {

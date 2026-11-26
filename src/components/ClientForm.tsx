@@ -61,21 +61,21 @@ export async function ClientForm({ client }: { client?: Client }) {
           <input id="name" name="name" required defaultValue={client?.name} className="field" placeholder="Fruitful" />
         </div>
         <div>
-          <label className="label" htmlFor="instantly_api_key">Instantly API v2 key</label>
+          <label className="label" htmlFor="instantly_api_key">Sending platform API key (v2)</label>
           <input
             id="instantly_api_key"
             name="instantly_api_key"
             type="password"
             autoComplete="off"
             className="field font-mono"
-            placeholder={client?.instantly_api_key ? `${mask(client.instantly_api_key)} — leave blank to keep` : "Paste the key from Instantly → Settings → Integrations → API"}
+            placeholder={client?.instantly_api_key ? `${mask(client.instantly_api_key)} — leave blank to keep` : "Paste the API key from the sending platform: Settings → Integrations → API"}
           />
           <p className="mt-1 text-xs text-muted">
             Create it with the <span className="font-mono">all:all</span> scope. Saving checks it straight away.
           </p>
         </div>
         <div>
-          <label className="label" htmlFor="instantly_tag_label">Instantly tag (shared workspace)</label>
+          <label className="label" htmlFor="instantly_tag_label">Sending platform tag (shared workspace)</label>
           <input
             id="instantly_tag_label"
             name="instantly_tag_label"
@@ -86,9 +86,9 @@ export async function ClientForm({ client }: { client?: Client }) {
           />
           <datalist id="instantly-tags">{tags.map((t) => <option key={t} value={t} />)}</datalist>
           <p className="mt-1 text-xs text-muted">
-            When several clients share one Instantly workspace, each gets a tag. This client then only sees mailboxes and campaigns
-            carrying that tag, and campaigns created here get it automatically. In Instantly, tag this client&apos;s mailboxes (and any
-            existing campaigns) with the same tag. The tag is created in Instantly if it doesn&apos;t exist. The blocklist is still shared.
+            When several clients share one sending platform workspace, each gets a tag. This client then only sees mailboxes and campaigns
+            carrying that tag, and campaigns created here get it automatically. In the sending platform, tag this client&apos;s mailboxes (and any
+            existing campaigns) with the same tag. The tag is created in the sending platform if it doesn&apos;t exist. The blocklist is still shared.
           </p>
           {sharedWith.length > 0 && (
             <p className="mt-1 text-xs text-wait">

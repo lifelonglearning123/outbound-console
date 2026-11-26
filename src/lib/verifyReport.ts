@@ -171,7 +171,7 @@ export function plainReading(r: VerificationReport): string[] {
   const p = (n: number) => (r.checked ? `${Math.round((n / r.checked) * 100)}%` : "0%");
   const out: string[] = [];
   if (!r.checked) return ["No addresses have been checked yet. Use \"Check email addresses\" on the Leads page first."];
-  out.push(`${r.checked.toLocaleString("en-GB")} addresses were checked with Instantly: ${r.counts.verified.toLocaleString("en-GB")} verified (${p(r.counts.verified)}), ${r.counts.catch_all.toLocaleString("en-GB")} unable to verify (${p(r.counts.catch_all)}) and ${r.counts.invalid.toLocaleString("en-GB")} invalid (${p(r.counts.invalid)}).`);
+  out.push(`${r.checked.toLocaleString("en-GB")} addresses were checked with the sending platform: ${r.counts.verified.toLocaleString("en-GB")} verified (${p(r.counts.verified)}), ${r.counts.catch_all.toLocaleString("en-GB")} unable to verify (${p(r.counts.catch_all)}) and ${r.counts.invalid.toLocaleString("en-GB")} invalid (${p(r.counts.invalid)}).`);
   if (r.counts.invalid / r.checked > 0.08) {
     out.push(`An invalid share above 8% means the list is stale: sending to it unchecked would have bounced at roughly that rate and put the mailboxes at risk. Those leads are already rejected and won't be emailed.`);
   } else if (r.counts.invalid) {
@@ -181,7 +181,7 @@ export function plainReading(r: VerificationReport): string[] {
     out.push(`"Unable to verify" means the company's mail server accepts every address (a catch-all), so no checker can confirm whether the person still works there. Send to the verified group first, then release these in small daily batches so a bad run can't push a mailbox's bounce rate over 3%.`);
   }
   if (r.counts.verified) out.push(`The verified group is safe to approve and send.`);
-  if (r.pushedUnchecked) out.push(`${r.pushedUnchecked.toLocaleString("en-GB")} leads were already in Instantly before the check and can't be checked now; their bounces will show on the campaign page.`);
+  if (r.pushedUnchecked) out.push(`${r.pushedUnchecked.toLocaleString("en-GB")} leads were already in the sending platform before the check and can't be checked now; their bounces will show on the campaign page.`);
   if (r.unchecked) out.push(`${r.unchecked.toLocaleString("en-GB")} leads are still unchecked.`);
   return out;
 }
@@ -200,7 +200,7 @@ export async function writeVerificationSummary(clientId: number, campaignId: num
     const facts = [
       `Client: ${client.name}.`,
       `Leads in the console: ${r.total}. Checked: ${r.checked}. Verified: ${r.counts.verified}. Unable to verify (catch-all domain): ${r.counts.catch_all}. Invalid: ${r.counts.invalid}.`,
-      `Still unchecked and checkable: ${r.unchecked}. Already in Instantly before checks existed (can't be checked now): ${r.pushedUnchecked}.`,
+      `Still unchecked and checkable: ${r.unchecked}. Already in the sending platform before checks existed (can't be checked now): ${r.pushedUnchecked}.`,
       `Per campaign: ${r.campaigns.map((c) => `"${c.name}": ${c.verified} verified, ${c.catch_all} unable to verify, ${c.invalid} invalid`).join("; ") || "none"}.`,
       `Companies with the most unable-to-verify addresses: ${r.catchAllDomains.slice(0, 6).map((d) => `${d.domain} (${d.n})`).join(", ") || "none"}.`,
       `The client's CRM is called the ${PORTAL}. ${r.portal.connected ? "Connected" : "Not connected"}. Tagged so far: ${g.verified.tagged} "${GHL_TAGS.verified}", ${g.catch_all.tagged} "${GHL_TAGS.catch_all}", ${g.invalid.tagged} "${GHL_TAGS.invalid}". Deleted from the portal: ${g.catch_all.deleted + g.invalid.deleted}.`,

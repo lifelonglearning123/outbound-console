@@ -193,7 +193,7 @@ export function StepPerformance({ steps }: { steps: StepRow[] }) {
           />
         </div>
       ))}
-      <p className="text-xs text-muted">Reply rate for each email in the sequence, since the campaign started (Instantly doesn&apos;t split this by day).</p>
+      <p className="text-xs text-muted">Reply rate for each email in the sequence, since the campaign started (the sending platform doesn&apos;t split this by day).</p>
     </div>
   );
 }

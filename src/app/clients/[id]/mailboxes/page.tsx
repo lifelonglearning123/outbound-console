@@ -58,7 +58,7 @@ export default async function ClientMailboxesPage({ params }: PageProps<"/client
 
       {todos.length > 0 && <AttentionList clientId={clientId} items={todos} />}
 
-      <MailboxBoard boxes={boxes} rules={rules} checks={checks} />
+      <MailboxBoard boxes={boxes} rules={rules} checks={checks} admin={user.role === "admin"} />
 
       {/* Recipient side */}
       <section id="bounces" className="flex scroll-mt-16 flex-col gap-2">
@@ -89,7 +89,7 @@ export default async function ClientMailboxesPage({ params }: PageProps<"/client
           <header>
             <h2 className="font-semibold">Mail filters, across all campaigns</h2>
             <p className="text-sm text-muted">
-              Some companies screen email with a security filter that refuses senders it doesn&apos;t trust yet; Instantly counts that
+              Some companies screen email with a security filter that refuses senders it doesn&apos;t trust yet; the sending platform counts that
               as a bounce. Hold or test a filter per campaign on its Contacts tab.
             </p>
           </header>
@@ -174,7 +174,7 @@ export default async function ClientMailboxesPage({ params }: PageProps<"/client
             <h2 className="font-semibold">Their email host, by your sending domain</h2>
             <p className="text-sm text-muted">
               Bounce and reply rates of the people each sending domain has emailed. If Microsoft companies bounce much more than Google
-              ones from the same domain, Instantly&apos;s ESP matching (on a campaign&apos;s Email tab) can pair like with like, when
+              ones from the same domain, the sending platform&apos;s ESP matching (on a campaign&apos;s Email tab) can pair like with like, when
               you have mailboxes of both kinds.
             </p>
           </header>
@@ -213,7 +213,7 @@ export default async function ClientMailboxesPage({ params }: PageProps<"/client
         <header>
           <h2 className="font-semibold">Unconfirmed addresses</h2>
           <p className="text-sm text-muted">
-            Addresses Instantly couldn&apos;t confirm (the company accepts everything) against verified ones. The Approve tab suggests a
+            Addresses the sending platform couldn&apos;t confirm (the company accepts everything) against verified ones. The Approve tab suggests a
             batch size for unconfirmed contacts from these numbers.
           </p>
         </header>

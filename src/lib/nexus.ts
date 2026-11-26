@@ -94,7 +94,7 @@ async function campaignFor(client: Client, nexusId: string): Promise<Campaign> {
 }
 
 function api(client: Client) {
-  if (!client.instantly_api_key) throw new PartnerError(409, "The outbound console has no Instantly key for this client", "no_instantly");
+  if (!client.instantly_api_key) throw new PartnerError(409, "The outbound console has no sending platform key for this client", "no_instantly");
   return instantly(client.instantly_api_key);
 }
 
@@ -138,7 +138,7 @@ export async function putCampaign(nexusId: string, body: unknown) {
   const b = campaignBody.parse(body);
   const client = await clientFor(b.locationId);
   if (!client.instantly_api_key || client.key_status !== "ok") {
-    throw new PartnerError(409, "The outbound console isn't connected to Instantly for this client", "no_instantly");
+    throw new PartnerError(409, "The outbound console isn't connected to the sending platform for this client", "no_instantly");
   }
 
   // The steps carry no copy: Nexus delivers each person's words in custom variables (subject_1, body_n).
@@ -159,7 +159,7 @@ export async function putCampaign(nexusId: string, body: unknown) {
   if (existing) {
     const c = (await getCampaign(existing.id))!;
     if (steps.length !== c.steps.length && (await pushedLeadCount(c.id)) > 0) {
-      throw new PartnerError(409, "People are already in Instantly for this campaign, so its number of emails can't change", "steps_locked");
+      throw new PartnerError(409, "People are already in the sending platform for this campaign, so its number of emails can't change", "steps_locked");
     }
     await run(
       `UPDATE campaigns SET name = ?, steps = ?, schedule = ?, daily_limit = ?, accounts = ?, stop_on_reply = 1, managed = 1,
@@ -443,7 +443,7 @@ export async function push(nexusId: string, body: unknown): Promise<PushResult> 
   const b = z.object({ locationId }).parse(body);
   const client = await clientFor(b.locationId);
   const c = await campaignFor(client, nexusId);
-  if (!c.instantly_campaign_id) throw new PartnerError(409, "The campaign isn't in Instantly yet", "no_campaign");
+  if (!c.instantly_campaign_id) throw new PartnerError(409, "The campaign isn't in the sending platform yet", "no_campaign");
   const r = await pushApproved(c.id);
   // Start a campaign that has never sent; one Nexus paused stays paused until Nexus resumes it.
   if (c.status === "draft" && (await pushedLeadCount(c.id)) > 0) await setCampaignRunning(c.id, true);
@@ -456,7 +456,7 @@ export async function setStatus(nexusId: string, body: unknown) {
   const b = z.object({ locationId, action: z.enum(["pause", "resume"]) }).parse(body);
   const client = await clientFor(b.locationId);
   const c = await campaignFor(client, nexusId);
-  if (!c.instantly_campaign_id) throw new PartnerError(409, "The campaign isn't in Instantly yet", "no_campaign");
+  if (!c.instantly_campaign_id) throw new PartnerError(409, "The campaign isn't in the sending platform yet", "no_campaign");
   await setCampaignRunning(c.id, b.action === "resume");
   return { status: (await getCampaign(c.id))!.status };
 }
@@ -482,7 +482,7 @@ export async function stopLead(nexusId: string, body: unknown) {
     await run("UPDATE leads SET stage = 'removed', stage_message = ? WHERE id = ?", why, lead.id);
     await run("UPDATE drafts SET status = 'rejected', reviewed_at = datetime('now') WHERE lead_id = ? AND status IN ('pending', 'approved')", lead.id);
   });
-  await logActivity(client.id, b.block ? "unsubscribe" : "import", `Nexus took ${email} out of "${c.name}": ${why}${b.block ? " (added to the Instantly blocklist)" : ""}`);
+  await logActivity(client.id, b.block ? "unsubscribe" : "import", `Nexus took ${email} out of "${c.name}": ${why}${b.block ? " (added to the sending platform blocklist)" : ""}`);
   return { ok: true };
 }
 

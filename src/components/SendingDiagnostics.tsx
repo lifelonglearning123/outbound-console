@@ -25,7 +25,7 @@ export function SendingDiagnostics({
   const un = acc?.unavailable;
   const unavailable = [
     un?.daily_limit_hit && `${n(un.daily_limit_hit)} reached their daily limit`,
-    un?.slow_ramp_limit_hit && `${n(un.slow_ramp_limit_hit)} at Instantly's slow-ramp limit`,
+    un?.slow_ramp_limit_hit && `${n(un.slow_ramp_limit_hit)} at the sending platform's slow-ramp limit`,
     un?.disconnected && `${n(un.disconnected)} disconnected`,
     un?.global_gap_not_met && `${n(un.global_gap_not_met)} waiting out the gap between emails`,
   ].filter(Boolean);
@@ -38,7 +38,7 @@ export function SendingDiagnostics({
     <section className="card flex flex-col gap-2 p-4 text-sm">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <h3 className="font-semibold">Why it is or isn&apos;t sending</h3>
-        {at && <span className="text-xs text-muted">Instantly, {ago(at)}</span>}
+        {at && <span className="text-xs text-muted">Sending platform, {ago(at)}</span>}
       </div>
       {s ? (
         <p className={healthy || s.status === "out_of_schedule" ? "text-go" : "text-wait"}>
@@ -47,13 +47,13 @@ export function SendingDiagnostics({
           {s.last_healthy_send_at && <span className="text-muted"> Last sent normally {ago(s.last_healthy_send_at)}.</span>}
         </p>
       ) : (
-        <p className="text-muted">Instantly&apos;s sending status appears here at the next sync while the campaign is active.</p>
+        <p className="text-muted">The sending platform&apos;s sending status appears here at the next sync while the campaign is active.</p>
       )}
       {d && inSchedule !== false && (
         <ul className="list-disc pl-5 text-muted">
           {acc && (
             <li>
-              Instantly can send from <span className="num text-ink">{n(acc.available)}</span> of the{" "}
+              The sending platform can send from <span className="num text-ink">{n(acc.available)}</span> of the{" "}
               <span className="num">{n(acc.total_connected)}</span> connected mailboxes{unavailable.length ? `: ${unavailable.join(", ")}` : ""}.
             </li>
           )}
@@ -72,7 +72,7 @@ export function SendingDiagnostics({
         </ul>
       )}
       {d && inSchedule === false && (
-        <p className="text-xs text-muted">Outside sending hours Instantly only reports the headline; the detail shows during the sending window.</p>
+        <p className="text-xs text-muted">Outside sending hours the sending platform only reports the headline; the detail shows during the sending window.</p>
       )}
       {(resting.length > 0 || easing.length > 0 || off.length > 0) && (
         <p className="text-muted">

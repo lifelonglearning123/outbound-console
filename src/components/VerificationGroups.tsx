@@ -83,7 +83,7 @@ export function VerificationGroups({
       </div>
       {r.credits && (
         <p className="text-xs text-muted">
-          Instantly verification credits left: <span className="num">{Number(r.credits).toLocaleString("en-GB")}</span>
+          Verification credits left: <span className="num">{Number(r.credits).toLocaleString("en-GB")}</span>
         </p>
       )}
     </div>

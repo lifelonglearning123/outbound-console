@@ -25,7 +25,7 @@ import { IN_NEXUS_CAMPAIGN } from "./campaigns";
 const CONCURRENCY = 5;
 const BUDGET_MS = 240_000; // under the 300s function limit, leaving room for the response
 const POLL_AFTER_MS = 15_000; // how long to leave a pending check before asking Instantly again
-const CATCH_ALL_FLAG = "Unable to verify: the company accepts every address, so Instantly couldn't confirm this one exists";
+const CATCH_ALL_FLAG = "Unable to verify: the company accepts every address, so the check couldn't confirm this one exists";
 
 export const VERIFICATION_LABEL: Record<string, string> = {
   queued: "Checking",
@@ -67,7 +67,7 @@ async function verifyAll() {
     let a = apis.get(clientId);
     if (!a) {
       const client = await requireClient(clientId);
-      if (!client.instantly_api_key) throw new Error("No Instantly key");
+      if (!client.instantly_api_key) throw new Error("No sending platform key");
       a = instantly(client.instantly_api_key);
       apis.set(clientId, a);
     }
@@ -124,10 +124,10 @@ async function verifyAll() {
         if (stopped.has(lead.client_id)) continue;
         stopped.add(lead.client_id);
         const why = /credit/i.test(e.message)
-          ? "Instantly has no verification credits left, so new contacts are waiting to be checked. Buy a credit pack in Instantly (Settings → Billing); checking carries on by itself."
+          ? "The sending platform has no verification credits left, so new contacts are waiting to be checked. Buy a credit pack in the sending platform (Settings → Billing); checking carries on by itself."
           : /scope/i.test(e.message) || status === 403
-            ? `Instantly refused (${e.message}). The API key needs the email verification scope. Contacts wait until it's fixed.`
-            : `Instantly refused (${e.message}). Contacts wait until it's fixed.`;
+            ? `The sending platform refused (${e.message}). The API key needs the email verification scope. Contacts wait until it's fixed.`
+            : `The sending platform refused (${e.message}). Contacts wait until it's fixed.`;
         // Contacts stay queued: the next run tries again, so buying credits is enough to get going.
         await setSetting(`verify_error_${lead.client_id}`, why);
         await logActivity(lead.client_id, "error", `Email verification stopped: ${why}`);
@@ -167,7 +167,7 @@ async function applyResult(lead: Pick, v: EmailVerification): Promise<keyof Tall
       await run("UPDATE leads SET verification = 'invalid', verified_at = ? WHERE id = ?", now, lead.id);
       // Only leads that haven't reached Instantly are rejected; a pushed lead keeps whatever Instantly does with it.
       const changed = (await run(
-        `UPDATE leads SET stage = 'rejected', stage_message = 'Invalid email address (Instantly verification)'
+        `UPDATE leads SET stage = 'rejected', stage_message = 'Invalid email address (address check)'
          WHERE id = ? AND pushed_at IS NULL AND instantly_lead_id IS NULL AND stage NOT IN ('rejected', 'removed')`,
         lead.id,
       )).changes;

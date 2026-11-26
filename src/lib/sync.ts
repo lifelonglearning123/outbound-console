@@ -288,7 +288,7 @@ export async function syncOutsideOutcomes(clientId: number, api: InstantlyClient
 
 export async function syncClient(clientId: number): Promise<{ ok: boolean; message: string }> {
   const client = await requireClient(clientId);
-  if (!client.instantly_api_key || client.key_status === "error") return { ok: false, message: "Instantly not connected" };
+  if (!client.instantly_api_key || client.key_status === "error") return { ok: false, message: "Sending platform not connected" };
   // Never sync a shared workspace unless every client in it is tagged, or one client would see another's data.
   const problem = await sharingProblem(client);
   if (problem) {

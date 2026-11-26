@@ -149,9 +149,9 @@ export function readiness(m: {
   warmup: WarmupSummary;
   rules: HealthRules;
 }): Readiness {
-  if (m.status !== null && m.status < 0) return { ready: false, label: "Not connected: fix it in Instantly", tone: "bad", daysLeft: null };
-  if (m.warmupStatus === -1) return { ready: false, label: "Warmup banned by Instantly", tone: "bad", daysLeft: null };
-  if (m.warmupStatus === -3) return { ready: false, label: "Warmup suspended by Instantly", tone: "bad", daysLeft: null };
+  if (m.status !== null && m.status < 0) return { ready: false, label: "Not connected: fix it in the sending platform", tone: "bad", daysLeft: null };
+  if (m.warmupStatus === -1) return { ready: false, label: "Warmup banned by the sending platform", tone: "bad", daysLeft: null };
+  if (m.warmupStatus === -3) return { ready: false, label: "Warmup suspended by the sending platform", tone: "bad", daysLeft: null };
   if (m.warmupStatus === 0) return { ready: false, label: "Warmup is off", tone: "bad", daysLeft: null };
   if (m.status === 2) return { ready: false, label: "Paused, so warmup isn't running", tone: "wait", daysLeft: null };
   if (m.warmupAgeDays !== null && m.warmupAgeDays < WARMUP_DAYS) {
@@ -192,7 +192,7 @@ export function unconfirmedBatch(emailed: number, bounced: number, waiting: numb
   if (emailed < 20) return { size: cap(10), text: `Start with 10: ${emailed ? `only ${emailed}` : "no"} unconfirmed contacts emailed so far, too few to judge.` };
   const rate = (bounced / emailed) * 100;
   if (rate > INSTANTLY_RULE.bouncePct) {
-    return { size: 0, text: `Hold off: ${pctText(bounced, emailed)} of unconfirmed contacts bounced so far (${bounced} of ${emailed}), over Instantly's 5% line.` };
+    return { size: 0, text: `Hold off: ${pctText(bounced, emailed)} of unconfirmed contacts bounced so far (${bounced} of ${emailed}), over the sending platform's 5% line.` };
   }
   if (rate > 2) return { size: cap(20), text: `Small batches of 20: ${pctText(bounced, emailed)} bounced so far (${bounced} of ${emailed}).` };
   return { size: cap(50), text: `Batches of 50 look safe: ${pctText(bounced, emailed)} bounced so far (${bounced} of ${emailed}).` };

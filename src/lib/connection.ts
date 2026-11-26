@@ -1,5 +1,6 @@
 import "server-only";
 import { all, run, get, logActivity, tx } from "./db";
+import { unbrand } from "./brand";
 import { requireClient } from "./clients";
 import { ensureTag, sharingProblem } from "./scope";
 import { instantly, type Account, type Campaign } from "./instantly";
@@ -131,7 +132,7 @@ export async function checkConnection(clientId: number): Promise<{ ok: boolean; 
     await logActivity(clientId, "connect", message);
     return { ok: true, message };
   } catch (e) {
-    const message = (e as Error).message;
+    const message = unbrand((e as Error).message);
     await run("UPDATE clients SET key_status = 'error', key_message = ?, key_checked_at = ? WHERE id = ?", message, now, clientId);
     await logActivity(clientId, "error", message);
     return { ok: false, message };

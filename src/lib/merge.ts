@@ -142,7 +142,7 @@ export function htmlWarnings(html: string): string[] {
   if (/\{\{\s*unsubscribe/i.test(html)) {
     // Seen on a live send (2026-09-30): Instantly replaces {{unsubscribe_link}} in the body with nothing.
     w.push(
-      "Instantly sends {{unsubscribe…}} links in the body out empty. Use a line like \"Reply 'no thanks' and we won't email again\" instead; Instantly adds its own one-click unsubscribe header anyway.",
+      "The sending platform sends {{unsubscribe…}} links in the body out empty. Use a line like \"Reply 'no thanks' and we won't email again\" instead; the sending platform adds its own one-click unsubscribe header anyway.",
     );
   }
   return w;

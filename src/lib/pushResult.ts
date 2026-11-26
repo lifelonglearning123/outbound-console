@@ -32,7 +32,7 @@ export function describePush(r: PushResult): string {
     r.waiting && `${r.waiting} waiting because they're still in another campaign's sequence`,
     r.stopped && `${r.stopped} set aside because they replied, bounced or unsubscribed elsewhere`,
     r.nomail && `${r.nomail} set aside because their domain has no mail server, so the email could only bounce`,
-    r.skipped && `${r.skipped} refused by Instantly (see their row on Contacts)`,
+    r.skipped && `${r.skipped} refused by the sending platform (see their row on Contacts)`,
   ].filter(Boolean);
   return parts.join(". ") + ".";
 }

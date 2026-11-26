@@ -2,6 +2,7 @@ import "server-only";
 import { AsyncLocalStorage } from "node:async_hooks";
 import pg from "pg";
 import { NOW_TEXT, SCHEMA } from "./schema";
+import { unbrand } from "./brand";
 
 export { NOW_TEXT };
 
@@ -128,7 +129,7 @@ export async function tx<T>(fn: () => Promise<T>): Promise<T> {
 export async function logActivity(clientId: number | null, kind: string, message: string, opts: { subject?: string; undo?: string } = {}) {
   await run(
     "INSERT INTO activity (client_id, kind, message, subject, undo) VALUES (?, ?, ?, ?, ?)",
-    clientId, kind, message, opts.subject ?? null, opts.undo ?? null,
+    clientId, kind, unbrand(message), opts.subject ?? null, opts.undo ?? null,
   );
 }
 

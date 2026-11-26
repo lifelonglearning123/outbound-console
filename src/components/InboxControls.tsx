@@ -11,7 +11,7 @@ export function ReplyBox({ emailId }: { emailId: string }) {
     <div className="card flex flex-col gap-2 p-4">
       <textarea
         className="field min-h-28"
-        placeholder="Write a reply. It's sent through Instantly from the same mailbox, in the same thread."
+        placeholder="Write a reply. It's sent through the sending platform from the same mailbox, in the same thread."
         value={text}
         onChange={(e) => setText(e.target.value)}
       />

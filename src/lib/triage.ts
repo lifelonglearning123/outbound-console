@@ -127,13 +127,13 @@ export async function applyInterest(emailId: string, interest: string, reason: s
       await api.setInterest(e.lead_email, campaign.instantly_campaign_id, TO_INSTANTLY[interest]);
       if (e.lead_id) await run("UPDATE leads SET interest_status = ? WHERE id = ?", TO_INSTANTLY[interest], e.lead_id);
     } catch (err) {
-      await logActivity(e.client_id, "error", `Couldn't set interest in Instantly for ${e.lead_email}: ${(err as Error).message}`);
+      await logActivity(e.client_id, "error", `Couldn't set interest in the sending platform for ${e.lead_email}: ${(err as Error).message}`);
     }
   }
   if (interest === "unsubscribe" && api) {
     try {
       await api.blockEmail(e.lead_email);
-      await logActivity(e.client_id, "unsubscribe", `${e.lead_email} asked to be removed; added to the Instantly blocklist`);
+      await logActivity(e.client_id, "unsubscribe", `${e.lead_email} asked to be removed; added to the sending platform blocklist`);
     } catch (err) {
       await logActivity(e.client_id, "error", `Couldn't blocklist ${e.lead_email}: ${(err as Error).message}`);
     }

@@ -209,9 +209,9 @@ function toInstantlyBody(c: Campaign, emailList: string[], live = liveSteps(c)) 
 /** Create the campaign in Instantly (first time) or push local changes to it. Managed campaigns only. */
 export async function syncCampaignToInstantly(id: number) {
   const c = await requireCampaign(id);
-  if (!c.managed) throw new Error("This campaign was created in Instantly directly; edit its copy there.");
+  if (!c.managed) throw new Error("This campaign was created in the sending platform directly; edit its copy there.");
   const client = await requireClient(c.client_id);
-  if (!client.instantly_api_key) throw new Error("Client has no Instantly key");
+  if (!client.instantly_api_key) throw new Error("Client has no sending platform key");
   const api = instantly(client.instantly_api_key);
   // Resting mailboxes stay chosen here but out of Instantly's list until they're healthy again (mailboxHealth.ts).
   const body = toInstantlyBody(c, await sendList(c.client_id, c.id, c.accounts));
@@ -233,7 +233,7 @@ export async function syncCampaignToInstantly(id: number) {
     "UPDATE campaigns SET instantly_campaign_id = ?, instantly_status = ?, status = ?, last_synced_at = ? WHERE id = ?",
     remote.id, remote.status, campaignState(remote.status), new Date().toISOString(), id,
   );
-  await logActivity(c.client_id, "campaign", `${c.instantly_campaign_id ? "Updated" : "Created"} "${c.name}" in Instantly`);
+  await logActivity(c.client_id, "campaign", `${c.instantly_campaign_id ? "Updated" : "Created"} "${c.name}" in the sending platform`);
   return remote;
 }
 
@@ -244,7 +244,7 @@ export async function syncCampaignToInstantly(id: number) {
  */
 export async function setCampaignRunning(id: number, running: boolean): Promise<boolean> {
   const c = await requireCampaign(id);
-  if (!c.instantly_campaign_id) throw new Error("Campaign isn't in Instantly yet");
+  if (!c.instantly_campaign_id) throw new Error("Campaign isn't in the sending platform yet");
   const client = await requireClient(c.client_id);
   const api = instantly(client.instantly_api_key!);
   const now = new Date().toISOString();

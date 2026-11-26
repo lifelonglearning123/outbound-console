@@ -18,7 +18,7 @@ export async function sharingProblem(client: Client): Promise<string | null> {
   const names = others.map((o) => o.name).join(", ");
   const untagged = [client, ...others].filter((c) => !c.instantly_tag_label).map((c) => c.name);
   if (untagged.length) {
-    return `This Instantly workspace is shared with ${names}. Give every client sharing it a tag in Settings (missing: ${untagged.join(", ")}) so their mailboxes and campaigns stay apart.`;
+    return `This sending platform workspace is shared with ${names}. Give every client sharing it a tag in Settings (missing: ${untagged.join(", ")}) so their mailboxes and campaigns stay apart.`;
   }
   const clash = others.find((o) => o.instantly_tag_label?.toLowerCase() === client.instantly_tag_label?.toLowerCase());
   if (clash) return `${clash.name} uses the same tag "${client.instantly_tag_label}". Each client needs its own tag.`;

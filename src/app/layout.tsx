@@ -16,7 +16,7 @@ const geistMono = Geist_Mono({ variable: "--font-geist-mono", subsets: ["latin"]
 export const metadata: Metadata = {
   // Every page names itself, so tabs and history read like places ("Simple campaign · Fruitful · Outbound Console").
   title: { default: "Outbound Console", template: "%s · Outbound Console" },
-  description: "Multi-client cold email control room on top of Instantly",
+  description: "Multi-client cold email control room",
 };
 
 export default async function RootLayout({ children }: LayoutProps<"/">) {

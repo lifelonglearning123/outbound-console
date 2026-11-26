@@ -52,7 +52,7 @@ export default async function OverviewPage() {
     return (
       <div className="mx-auto mt-24 flex max-w-md flex-col items-center gap-3 text-center">
         <h1 className="text-2xl font-semibold tracking-tight">Outbound Console</h1>
-        <p className="text-sm text-muted">Add your first client with their Instantly API key to see campaigns, mailboxes and replies here.</p>
+        <p className="text-sm text-muted">Add your first client with their sending platform API key to see campaigns, mailboxes and replies here.</p>
         <Link href="/clients/new" className="btn-go">Add a client</Link>
       </div>
     );
@@ -60,12 +60,12 @@ export default async function OverviewPage() {
 
   const items = [
     attention.review > 0 && { href: "/approvals", tone: "wait", text: `${attention.review} leads waiting for email approval` },
-    attention.approved > 0 && { href: "/approvals", tone: "go", text: `${attention.approved} approved leads not yet sent to Instantly` },
+    attention.approved > 0 && { href: "/approvals", tone: "go", text: `${attention.approved} approved leads not yet sent to the sending platform` },
     attention.replies > 0 && { href: "/inbox", tone: "wait", text: `${attention.replies} unread replies need a look` },
     attention.paused > 0 && { href: "/mailboxes", tone: "bad", text: `${attention.paused} mailboxes paused by the old health rules have stopped warming up: bring them back` },
     attention.resting > 0 && { href: "/mailboxes", tone: "wait", text: `${attention.resting} mailboxes resting out of campaigns while they recover` },
     ...attention.idle.map((c) => ({ href: `/clients/${c.client_id}/campaigns/${c.id}`, tone: "wait", text: `"${c.name}" is active but not sending: ${c.not_sending}` })),
-    ...attention.broken.map((c) => ({ href: `/clients/${c.id}/settings`, tone: "bad", text: `${c.name}: ${c.key_message ?? "Instantly connection problem"}` })),
+    ...attention.broken.map((c) => ({ href: `/clients/${c.id}/settings`, tone: "bad", text: `${c.name}: ${c.key_message ?? "Sending platform connection problem"}` })),
   ].filter(Boolean) as { href: string; tone: string; text: string }[];
 
   const toneClass: Record<string, string> = {

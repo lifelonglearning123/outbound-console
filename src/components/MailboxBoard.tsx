@@ -20,15 +20,17 @@ export const mailboxAnchor = (email: string) => `mb-${email.toLowerCase().replac
 
 /** A client's (or every client's) mailboxes, grouped by sending domain, each with its state, warmup, sends and actions. */
 export function MailboxBoard({
-  boxes, rules, checks = [], showClient = false,
+  boxes, rules, checks = [], showClient = false, admin = false,
 }: {
   boxes: MailboxHealth[];
   rules: HealthRules;
   checks?: DomainCheck[];
   showClient?: boolean;
+  /** Admins also get a link to the mailbox in the sending platform itself. */
+  admin?: boolean;
 }) {
   if (boxes.length === 0) {
-    return <div className="card p-6 text-sm text-muted">No mailboxes yet. Check the client&apos;s Instantly key in Settings to pull them in.</div>;
+    return <div className="card p-6 text-sm text-muted">No mailboxes yet. Check the client&apos;s sending platform key in Settings to pull them in.</div>;
   }
   const groups: { key: string; clientId: number; client: string; domain: string; boxes: MailboxHealth[] }[] = [];
   for (const b of boxes) {
@@ -49,6 +51,7 @@ export function MailboxBoard({
           rules={rules}
           check={checks.find((c) => c.domain === g.domain)}
           showClient={showClient}
+          admin={admin}
         />
       ))}
     </div>
@@ -56,9 +59,9 @@ export function MailboxBoard({
 }
 
 function DomainCard({
-  clientId, client, domain, boxes, rules, check, showClient,
+  clientId, client, domain, boxes, rules, check, showClient, admin,
 }: {
-  clientId: number; client: string; domain: string; boxes: MailboxHealth[]; rules: HealthRules; check?: DomainCheck; showClient: boolean;
+  clientId: number; client: string; domain: string; boxes: MailboxHealth[]; rules: HealthRules; check?: DomainCheck; showClient: boolean; admin: boolean;
 }) {
   const count = (k: string) => boxes.filter((b) => b.state.key === k).length;
   const parts = [
@@ -90,7 +93,7 @@ function DomainCard({
         </div>
         <div className="flex flex-wrap items-center gap-2 text-xs">
           {check ? (
-            <span className="flex flex-wrap items-center gap-2" title={`Checked by Instantly ${ago(check.checked_at)}`}>
+            <span className="flex flex-wrap items-center gap-2" title={`Checked by the sending platform ${ago(check.checked_at)}`}>
               {records.map(([label, ok]) => (
                 <span key={label} className={ok ? "text-go" : ok === false ? "font-semibold text-bad" : "text-muted"}>
                   {ok ? "✓" : ok === false ? "✗" : "?"} {label}
@@ -113,13 +116,13 @@ function DomainCard({
         </p>
       )}
       <ul>
-        {boxes.map((m) => <MailboxRow key={m.email} m={m} rules={rules} />)}
+        {boxes.map((m) => <MailboxRow key={m.email} m={m} rules={rules} admin={admin} />)}
       </ul>
     </section>
   );
 }
 
-function MailboxRow({ m, rules }: { m: MailboxHealth; rules: HealthRules }) {
+function MailboxRow({ m, rules, admin }: { m: MailboxHealth; rules: HealthRules; admin: boolean }) {
   const rate = m.window.sent ? (m.window.bounced / m.window.sent) * 100 : 0;
   const bounceTone = m.bounceProblem ? "font-semibold text-bad" : rate > rules.bouncePct ? "text-wait" : "";
   const why = `/clients/${m.clientId}/stats?status=bounced&sender=${encodeURIComponent(m.email)}#people`;
@@ -212,7 +215,7 @@ function MailboxRow({ m, rules }: { m: MailboxHealth; rules: HealthRules }) {
               <form action={setMailboxRunning.bind(null, m.clientId, m.email, true)}>
                 <ConfirmButton
                   className="btn text-xs"
-                  message={`Resume ${m.email} in Instantly? It goes straight back into its campaigns. "Bring back" instead keeps it out of campaigns until its warmup has rebuilt.`}
+                  message={`Resume ${m.email} in the sending platform? It goes straight back into its campaigns. "Bring back" instead keeps it out of campaigns until its warmup has rebuilt.`}
                 >
                   Resume
                 </ConfirmButton>
@@ -221,14 +224,14 @@ function MailboxRow({ m, rules }: { m: MailboxHealth; rules: HealthRules }) {
           </>
         )}
         {m.warmupStatus === 0 && m.state.key !== "error" && act(warmupOn.bind(null, m.clientId, m.email), "Turn warmup on", "Turning on…")}
-        {m.state.key === "error" && (
-          <a href="https://app.instantly.ai/app/accounts" target="_blank" rel="noreferrer" className="btn text-xs">Fix in Instantly</a>
+        {m.state.key === "error" && admin && (
+          <a href="https://app.instantly.ai/app/accounts" target="_blank" rel="noreferrer" className="btn text-xs">Fix in the sending platform</a>
         )}
         {(m.state.key === "sending" || m.state.key === "easing" || m.state.key === "resting") && (
           <form action={setMailboxRunning.bind(null, m.clientId, m.email, false)}>
             <ConfirmButton
               className="btn text-xs"
-              message={`Pause ${m.email} in Instantly? It stops sending and also stops warming up, so its warmup score will fall. "Rest" keeps warmup running instead.`}
+              message={`Pause ${m.email} in the sending platform? It stops sending and also stops warming up, so its warmup score will fall. "Rest" keeps warmup running instead.`}
             >
               Pause
             </ConfirmButton>
