@@ -8,8 +8,8 @@ import type { Day } from "@/lib/report";
 const BLUE = "#2a78d6"; // categorical slot 1: interested replies / emails sent
 const ORANGE = "#eb6834"; // categorical slot 2: other replies
 
-const W = 760;
-const PAD_L = 36;
+const W = 480;
+const PAD_L = 30;
 const PAD_R = 8;
 
 function niceMax(v: number) {
@@ -44,7 +44,12 @@ function Panel({
   const barW = Math.max(2, Math.min(18, step - 2)); // 2px gap between neighbouring bars
   const y = (v: number) => plotH - (v / max) * (plotH - 6);
   const ticks = [0, max / 2, max];
-  const labelEvery = Math.ceil(days.length / 8);
+  const pick = (e: React.PointerEvent<SVGSVGElement>) => {
+    const box = e.currentTarget.getBoundingClientRect();
+    const i = Math.floor((((e.clientX - box.left) / box.width) * W - PAD_L) / step);
+    setHover(i >= 0 && i < days.length ? i : null);
+  };
+  const labelEvery = Math.ceil(days.length / 5);
 
   return (
     <div>
@@ -66,18 +71,15 @@ function Panel({
         className="w-full"
         role="img"
         aria-label={title}
-        onMouseLeave={() => setHover(null)}
-        onMouseMove={(e) => {
-          const box = e.currentTarget.getBoundingClientRect();
-          const x = ((e.clientX - box.left) / box.width) * W - PAD_L;
-          const i = Math.floor(x / step);
-          setHover(i >= 0 && i < days.length ? i : null);
-        }}
+        // Pointer events cover a mouse, a pen and a finger: tapping a day shows its figures, as hovering does.
+        onPointerLeave={(e) => { if (e.pointerType === "mouse") setHover(null); }}
+        onPointerMove={(e) => pick(e)}
+        onPointerDown={(e) => pick(e)}
       >
         {ticks.map((t) => (
           <g key={t}>
             <line x1={PAD_L} x2={W - PAD_R} y1={y(t)} y2={y(t)} stroke="var(--line)" strokeWidth={1} />
-            <text x={PAD_L - 6} y={y(t) + 3} textAnchor="end" className="fill-muted" fontSize={10}>
+            <text x={PAD_L - 6} y={y(t) + 3} textAnchor="end" className="fill-muted" fontSize={12}>
               {Math.round(t)}
             </text>
           </g>
@@ -108,7 +110,7 @@ function Panel({
                 );
               })}
               {i % labelEvery === 0 && (
-                <text x={x + barW / 2} y={height - 6} textAnchor="middle" className="fill-muted" fontSize={10}>
+                <text x={x + barW / 2} y={height - 6} textAnchor="middle" className="fill-muted" fontSize={12}>
                   {fmtDay(d.date)}
                 </text>
               )}
@@ -132,14 +134,15 @@ export function TrendChart({ days }: { days: Day[] }) {
             <span className="num text-ink">{d.replied}</span> replies, of which <span className="num text-ink">{d.positive}</span> interested
           </span>
         ) : (
-          "Hover a day for its figures"
+          "Point at or tap a day to see its figures"
         )}
       </div>
-      <Panel title="Emails sent per day" days={days} height={130} series={[{ key: "sent", label: "Sent", color: BLUE }]} hover={hover} setHover={setHover} />
+      <Panel title="Emails sent per day" days={days} height={120} series={[{ key: "sent", label: "Sent", color: BLUE }]} hover={hover} setHover={setHover} />
+      {days.some((x) => x.replied > 0) ? (
       <Panel
         title="Replies per day"
         days={days}
-        height={110}
+        height={100}
         series={[
           { key: "positive", label: "Interested", color: BLUE },
           { key: "other", label: "Other replies", color: ORANGE },
@@ -147,6 +150,9 @@ export function TrendChart({ days }: { days: Day[] }) {
         hover={hover}
         setHover={setHover}
       />
+      ) : (
+        <p className="text-xs text-muted">No replies in this period yet.</p>
+      )}
       <details className="text-xs print:hidden">
         <summary className="cursor-pointer text-muted">Show as a table</summary>
         <table className="mt-2 w-full">

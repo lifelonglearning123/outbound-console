@@ -7,6 +7,7 @@ import { funnelFor } from "@/lib/stats";
 import { ago, nowMs } from "@/lib/format";
 import { Funnel } from "@/components/Funnel";
 import { SendTimeline } from "@/components/SendTimeline";
+import { sendNotice } from "@/lib/sendNotice";
 import { SyncButton } from "@/components/SyncButton";
 
 type ClientRow = {
@@ -64,7 +65,10 @@ export default async function OverviewPage() {
     attention.replies > 0 && { href: "/inbox", tone: "wait", text: `${attention.replies} unread replies need a look` },
     attention.paused > 0 && { href: "/mailboxes", tone: "bad", text: `${attention.paused} mailboxes paused by the old health rules have stopped warming up: bring them back` },
     attention.resting > 0 && { href: "/mailboxes", tone: "wait", text: `${attention.resting} mailboxes resting out of campaigns while they recover` },
-    ...attention.idle.map((c) => ({ href: `/clients/${c.client_id}/campaigns/${c.id}`, tone: "wait", text: `"${c.name}" is active but not sending: ${c.not_sending}` })),
+    ...attention.idle.flatMap((c) => {
+      const why = sendNotice(null, c.not_sending);
+      return why ? [{ href: `/clients/${c.client_id}/campaigns/${c.id}`, tone: "wait", text: `"${c.name}": ${why.text}` }] : [];
+    }),
     ...attention.broken.map((c) => ({ href: `/clients/${c.id}/settings`, tone: "bad", text: `${c.name}: ${c.key_message ?? "Sending platform connection problem"}` })),
   ].filter(Boolean) as { href: string; tone: string; text: string }[];
 

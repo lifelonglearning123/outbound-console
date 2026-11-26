@@ -11,7 +11,7 @@ import { filterEvidence } from "./deliverability";
  * Each item says what to do and, where one click does it, carries that action.
  */
 
-export type AttentionAction = { kind: "bring_back"; emails: string[] } | { kind: "warmup_on"; email: string };
+export type AttentionAction = { kind: "bring_back"; emails: string[] } | { kind: "warmup_on"; email: string } | { kind: "dismiss_errors" };
 
 export type Attention = {
   kind: "problem" | "todo";
@@ -26,6 +26,15 @@ export type Attention = {
 
 const n = (v: number) => v.toLocaleString("en-GB");
 const plural = (v: number, one: string, many = `${one}s`) => `${n(v)} ${v === 1 ? one : many}`;
+
+/** An error message without the codes and record ids that mean nothing to people. */
+function plainError(m: string): string {
+  const s = m
+    .replace(/\b(?:Nexus Portal|Sending platform error|The sending platform) \d{3}:\s*/g, "")
+    .replace(/\s*(?:for )?id:\s*\S+/gi, "")
+    .replace(/[.\s]+$/, "");
+  return s.length > 140 ? `${s.slice(0, 140)}…` : s;
+}
 
 export async function clientAttention(client: Client, isAdmin: boolean, boxes?: MailboxHealth[]): Promise<Attention[]> {
   const items: Attention[] = [];
@@ -185,10 +194,13 @@ export async function clientAttention(client: Client, isAdmin: boolean, boxes?: 
   }
 
   // Errors that keep happening. The same failure differs only by address or number, so those are blanked to group.
+  // Shown once, quietly, in plain words; "Dismiss" hides what has happened so far, and only new ones come back.
   if (isAdmin) {
+    const dismissed = await getSetting(`errors_dismissed_${client.id}`, "");
     const errors = await all<{ message: string; at: string }>(
-      "SELECT message, at FROM activity WHERE client_id = ? AND kind = 'error' AND at >= to_char(now() - interval '24 hours', 'YYYY-MM-DD HH24:MI:SS') ORDER BY id DESC LIMIT 200",
-      client.id,
+      `SELECT message, at FROM activity WHERE client_id = ? AND kind = 'error'
+         AND at >= GREATEST(to_char(now() - interval '24 hours', 'YYYY-MM-DD HH24:MI:SS'), ?) ORDER BY id DESC LIMIT 200`,
+      client.id, dismissed,
     );
     const groups = new Map<string, { message: string; n: number }>();
     for (const e of errors) {
@@ -197,9 +209,15 @@ export async function clientAttention(client: Client, isAdmin: boolean, boxes?: 
       if (g) g.n++;
       else groups.set(key, { message: e.message, n: 1 });
     }
-    for (const g of [...groups.values()].filter((g) => g.n >= 3).slice(0, 3)) {
-      const text = g.message.length > 180 ? `${g.message.slice(0, 180)}…` : g.message;
-      items.push({ kind: "problem", tone: "bad", priority: 70, text: `Happened ${g.n} times in the last day: ${text}`, href: "/activity", link: "See activity" });
+    const repeating = [...groups.values()].filter((g) => g.n >= 3);
+    if (repeating.length) {
+      const top = repeating[0];
+      const more = repeating.length > 1 ? ` (and ${repeating.length - 1} other repeating ${repeating.length === 2 ? "error" : "errors"})` : "";
+      items.push({
+        kind: "problem", tone: "wait", priority: 70,
+        text: `A background error keeps happening, ${top.n} times in the last day: ${plainError(top.message)}${more}. Details are in Activity.`,
+        action: { kind: "dismiss_errors" },
+      });
     }
   }
 

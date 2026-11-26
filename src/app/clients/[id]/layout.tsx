@@ -18,14 +18,10 @@ export default async function ClientLayout({ children, params }: LayoutProps<"/c
 
   return (
     <div className="flex flex-col gap-5">
-      <header className="flex items-start justify-between gap-4 print:hidden">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">{client.name}</h1>
-          <p className="text-sm text-muted">
-            {client.instantly_workspace_name ? `Sending workspace: ${client.instantly_workspace_name}` : "Sending platform not connected yet"}
-          </p>
-        </div>
-        <ConnectionBadge client={client} />
+      <header className="flex flex-wrap items-start justify-between gap-4 print:hidden">
+        <h1 className="text-2xl font-semibold tracking-tight">{client.name}</h1>
+        {/* Connection details are for admins; a client only hears about the connection when it's broken (WorkspaceAlerts). */}
+        {user.role === "admin" && <ConnectionBadge client={client} />}
       </header>
       <WorkspaceAlerts client={client} isAdmin={user.role === "admin"} />
       <div>{children}</div>

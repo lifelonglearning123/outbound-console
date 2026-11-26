@@ -147,9 +147,9 @@ export function StageBars({ stages }: { stages: { label: string; n: number; href
           <div className="h-4 rounded-r bg-paper">
             <div className="h-4 rounded-r" style={{ width: `${s.n ? Math.max(1.5, (s.n / max) * 100) : 0}%`, background: BLUE }} />
           </div>
-          <span className="num text-right text-ink">
-            {s.n.toLocaleString("en-GB")}
-            {s.note && <span className="ml-1 text-xs text-muted">{s.note}</span>}
+          <span className={`num text-right ${s.n ? "text-ink" : "text-muted"}`}>
+            {s.n ? s.n.toLocaleString("en-GB") : "–"}
+            {s.n > 0 && s.note && <span className="ml-1 text-xs text-muted">{s.note}</span>}
           </span>
         </Link>
       ))}

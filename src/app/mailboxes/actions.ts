@@ -70,6 +70,13 @@ export async function warmupOn(clientId: number, email: string) {
 }
 
 /** Mailboxes the old rules paused: rest them out of campaigns and resume them so their warmup rebuilds. */
+/** Hide the repeating-errors notice until a new error happens (attention.ts). */
+export async function dismissErrors(clientId: number) {
+  await requireAdmin();
+  await setSetting(`errors_dismissed_${clientId}`, new Date().toISOString().replace("T", " ").slice(0, 19));
+  revalidatePath("/", "layout");
+}
+
 export async function bringBackMailboxes(clientId: number, emails: string[]) {
   for (const e of emails) await ownMailbox(clientId, e);
   await bringBack(clientId, emails);

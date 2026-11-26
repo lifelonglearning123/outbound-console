@@ -12,7 +12,7 @@ export function ConnectionBadge({ client }: { client: Client }) {
   const label = client.key_status === "ok" ? "Connected" : client.key_status === "error" ? "Connection problem" : "Not checked";
 
   return (
-    <form action={recheckConnection.bind(null, client.id)} className={`flex max-w-md items-center gap-3 rounded-lg border px-3 py-2 ${tone}`}>
+    <form action={recheckConnection.bind(null, client.id)} className={`flex w-full min-w-0 max-w-md items-center gap-3 rounded-lg border px-3 py-2 sm:w-auto ${tone}`}>
       <div className="min-w-0 text-sm">
         <div className="font-medium">{label}</div>
         {client.key_message && <div className="truncate text-xs opacity-80" title={client.key_message}>{client.key_message}</div>}

@@ -14,11 +14,20 @@ import { daily, lastDays } from "@/lib/report";
 import { Breakdown } from "@/components/Breakdown";
 import { StageBars } from "@/components/stats/Parts";
 import { TrendChart } from "@/components/stats/TrendChart";
-import { SendingDiagnostics } from "@/components/SendingDiagnostics";
-import { mailboxHealth } from "@/lib/mailboxHealth";
-import type { SendingStatus } from "@/lib/instantly";
+import { utcToZoned } from "@/lib/startTime";
 
 const n = (v: number) => v.toLocaleString("en-GB");
+
+/** The periods "How it's going" can be looked at over: people first emailed in that period, and what they did. */
+const PERIODS = [
+  { key: "all", label: "All time" },
+  { key: "today", label: "Today" },
+  { key: "yesterday", label: "Yesterday" },
+  { key: "7d", label: "7 days" },
+  { key: "30d", label: "30 days" },
+  { key: "90d", label: "Quarter" },
+] as const;
+const minusDays = (ymd: string, d: number) => new Date(Date.parse(`${ymd}T00:00:00Z`) - d * 86400_000).toISOString().slice(0, 10);
 
 /** Sending tab: how the campaign is doing and who responds, with every number opening the people behind it. */
 export default async function CampaignSendingPage({ params, searchParams }: PageProps<"/clients/[id]/campaigns/[cid]">) {
@@ -29,26 +38,50 @@ export default async function CampaignSendingPage({ params, searchParams }: Page
   if (!c || c.client_id !== clientId) notFound();
   const sp = await searchParams;
   const dim: Dimension = DIMENSIONS.find((d) => d.key === sp.by)?.key ?? "host";
+  const period = PERIODS.find((x) => x.key === sp.period) ?? PERIODS[0];
+  const today = utcToZoned(new Date(nowMs()), c.schedule.timezone).slice(0, 10);
+  const span =
+    period.key === "today" ? { from: today, to: today }
+    : period.key === "yesterday" ? { from: minusDays(today, 1), to: minusDays(today, 1) }
+    : period.key === "7d" ? { from: minusDays(today, 6), to: today }
+    : period.key === "30d" ? { from: minusDays(today, 29), to: today }
+    : period.key === "90d" ? { from: minusDays(today, 89), to: today }
+    : null;
+  const inPeriod: PeopleFilters = span ? { from: span.from, to: span.to } : {};
   const p = await campaignProgress(c.id);
   const split = await approvedBreakdown(c.id);
   const base = `/clients/${clientId}/campaigns/${c.id}`;
   const scope = { clientId, campaignId: c.id };
-  const rows = await breakdown(scope, dim);
+  const rows = await breakdown(scope, dim, inPeriod);
   const t = totals(rows);
-  const people = (f: PeopleFilters) => peopleHref(`${base}/contacts`, {}, f);
+  const people = (f: PeopleFilters) => peopleHref(`${base}/contacts`, {}, { ...inPeriod, ...f });
+  const here = (q: Record<string, string>) => {
+    const u = new URLSearchParams({ ...(dim !== "host" ? { by: dim } : {}), ...(period.key !== "all" ? { period: period.key } : {}), ...q });
+    for (const [k, v] of [...u]) if ((k === "period" && v === "all") || (k === "by" && v === "host")) u.delete(k);
+    const s = u.toString();
+    return `${base}${s ? `?${s}` : ""}`;
+  };
 
   const days = await all<{ date: string; sent: number; opened: number; replied: number; bounced: number }>(
     `SELECT d.date, d.sent, d.opened, d.replied,
        (SELECT COUNT(*) FROM emails e JOIN leads l ON l.id = e.lead_id
          WHERE e.campaign_id = d.campaign_id AND e.direction = 'out' AND l.instantly_status = -1 AND substr(e.sent_at, 1, 10) = d.date) bounced
-     FROM daily_stats d WHERE d.campaign_id = ? AND d.sent > 0 ORDER BY d.date DESC LIMIT 14`,
-    c.id,
+     FROM daily_stats d WHERE d.campaign_id = ? AND d.sent > 0 ${span ? "AND d.date BETWEEN ? AND ?" : ""} ORDER BY d.date DESC LIMIT ${span ? 92 : 14}`,
+    ...(span ? [c.id, span.from, span.to] : [c.id]),
   );
   const recent = days.reduce((a, d) => ({ sent: a.sent + d.sent, opened: a.opened + d.opened, replied: a.replied + d.replied, bounced: a.bounced + d.bounced }), { sent: 0, opened: 0, replied: 0, bounced: 0 });
   // The chart covers the campaign's life so far: at least two weeks, at most ninety days.
   const first = (await get<{ d: string | null }>("SELECT MIN(date) d FROM daily_stats WHERE campaign_id = ? AND sent > 0", c.id))?.d;
-  const span = first ? Math.min(90, Math.max(14, Math.round((nowMs() - Date.parse(`${first}T00:00:00Z`)) / 86400_000) + 1)) : 14;
-  const chart = await daily(scope, lastDays(span));
+  const life = first ? Math.min(90, Math.max(14, Math.round((nowMs() - Date.parse(`${first}T00:00:00Z`)) / 86400_000) + 1)) : 14;
+  // A single day is shown within the week leading up to it, so the chart still has a shape.
+  const chartRange = span
+    ? (() => {
+        const from = span.from === span.to ? minusDays(span.to, 6) : span.from;
+        const days = Math.round((Date.parse(span.to) - Date.parse(from)) / 86400_000) + 1;
+        return { from, to: span.to, days, key: period.key, label: period.label };
+      })()
+    : lastDays(life);
+  const chart = await daily(scope, chartRange);
 
   const live = liveSteps(c);
   const hasHold = c.managed === 1 && (c.hold_after !== null || c.release_to !== null);
@@ -78,11 +111,8 @@ export default async function CampaignSendingPage({ params, searchParams }: Page
             ? { href: approveHref, text: `${n(p.unconfirmed)} unconfirmed contacts could be sent in small batches.` }
             : null;
   const highBounce = t.emailed > 0 && t.bounced / t.emailed > 0.03;
-  let diag: SendingStatus | null = null;
-  try {
-    diag = c.sending_diag ? (JSON.parse(c.sending_diag) as SendingStatus) : null;
-  } catch {}
-  const boxes = (await mailboxHealth(clientId)).filter((m) => c.accounts.includes(m.email));
+  // Anyone ever handed to the sender: the results show (and the period can be changed) even when a period is empty.
+  const everSent = p.sending > 0 || p.sent > 0;
 
   return (
     <div className="flex flex-col gap-6">
@@ -99,20 +129,34 @@ export default async function CampaignSendingPage({ params, searchParams }: Page
         </div>
       )}
 
-      {(c.status === "active" || diag) && (
-        <SendingDiagnostics diag={diag} at={c.sending_diag_at} boxes={boxes} mailboxesHref={`/clients/${clientId}/mailboxes`} />
-      )}
-
       {hold && <HoldPanel campaignId={c.id} clientId={clientId} status={hold} stepProblems={stepProblems} />}
 
-      {t.handed > 0 && (
+      {everSent && (
         <section className="flex flex-col gap-3">
-          <h3 className="font-semibold">How it&apos;s going</h3>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h3 className="font-semibold">How it&apos;s going</h3>
+            <nav aria-label="Period" className="flex flex-wrap gap-1 text-xs">
+              {PERIODS.map((x) => (
+                <Link
+                  key={x.key}
+                  href={here({ period: x.key })}
+                  scroll={false}
+                  aria-current={x.key === period.key ? "page" : undefined}
+                  className={`rounded-md border px-2.5 py-1 ${x.key === period.key ? "border-ink bg-ink text-paper" : "border-line text-muted hover:border-muted hover:text-ink"}`}
+                >
+                  {x.label}
+                </Link>
+              ))}
+            </nav>
+          </div>
+          {t.handed === 0 ? (
+            <p className="card p-6 text-center text-sm text-muted">Nobody was first emailed {period.key === "today" ? "today" : period.key === "yesterday" ? "yesterday" : `in the last ${period.label.toLowerCase()}`}.</p>
+          ) : (
           <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
             <div className="card flex flex-col gap-3 p-5">
               <div>
                 <h4 className="text-sm font-medium">From first email to meeting</h4>
-                <p className="text-xs text-muted">Counted in people, not emails. Percentages are of the people emailed; click a bar to see who.</p>
+                <p className="text-xs text-muted">{span ? `People first emailed ${period.key === "today" ? "today" : period.key === "yesterday" ? "yesterday" : `in the last ${period.label.toLowerCase()}`}. ` : ""}Click a bar to see who.</p>
               </div>
               <StageBars
                 stages={[
@@ -142,7 +186,7 @@ export default async function CampaignSendingPage({ params, searchParams }: Page
               <TrendChart days={chart} />
               {days.length > 0 && (
                 <details className="text-xs">
-                  <summary className="cursor-pointer text-muted">Last {days.length} sending days, with opens and bounces</summary>
+                  <summary className="cursor-pointer text-muted">{days.length === 1 ? "The sending day" : `The last ${days.length} sending days`}, with opens and bounces</summary>
                   <table className="mt-2 w-full">
                     <thead className="text-left text-muted">
                       <tr>
@@ -178,6 +222,7 @@ export default async function CampaignSendingPage({ params, searchParams }: Page
               )}
             </div>
           </div>
+          )}
           {highBounce && (
             <p className="text-xs text-bad">
               Bounces above 3% put the mailboxes at risk. <Link href={people({ status: "bounced" })} className="underline">See who bounced</Link> and
@@ -212,17 +257,17 @@ export default async function CampaignSendingPage({ params, searchParams }: Page
             dim={dim}
             rows={rows}
             total={t}
-            dimHref={(d) => `${base}?by=${d}`}
+            dimHref={(d) => here({ by: d })}
             people={people}
             exportHref={`/clients/${clientId}/people/export?campaign=${c.id}&by=${dim}`}
           />
         </section>
       )}
 
-      {t.contacts > 0 && (
+      {p.contacts > 0 && (
         <p className="text-sm">
           <Link href={`${base}/contacts#people`} className="underline">
-            See all {n(t.contacts)} people in this campaign: search, filter or download them →
+            See all {n(p.contacts)} people in this campaign: search, filter or download them →
           </Link>
         </p>
       )}

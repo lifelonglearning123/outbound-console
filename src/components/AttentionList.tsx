@@ -1,6 +1,6 @@
 import Link from "next/link";
 import type { Attention } from "@/lib/attention";
-import { bringBackMailboxes, warmupOn } from "@/app/mailboxes/actions";
+import { bringBackMailboxes, dismissErrors, warmupOn } from "@/app/mailboxes/actions";
 import { SubmitButton } from "./SubmitButton";
 
 const TONE = {
@@ -27,6 +27,13 @@ export function AttentionList({ clientId, items }: { clientId: number; items: At
             <form action={warmupOn.bind(null, clientId, a.action.email)} className="shrink-0">
               <SubmitButton className="btn" pendingLabel="Turning on…">Turn warmup on</SubmitButton>
             </form>
+          ) : a.action?.kind === "dismiss_errors" ? (
+            <span className="flex shrink-0 items-center gap-3">
+              <Link href="/activity" className="font-medium underline">Activity</Link>
+              <form action={dismissErrors.bind(null, clientId)}>
+                <SubmitButton className="btn text-xs" pendingLabel="Dismissing…">Dismiss</SubmitButton>
+              </form>
+            </span>
           ) : a.href ? (
             <Link href={a.href} className="shrink-0 font-medium underline">{a.link ?? "Open"}</Link>
           ) : null}

@@ -25,7 +25,14 @@ export function decrypt(stored: string | null | undefined): string | null {
   if (!stored) return null;
   if (!stored.startsWith(PREFIX)) return stored;
   const [iv, tag, data] = stored.slice(PREFIX.length).split(":").map((s) => Buffer.from(s, "base64"));
-  const d = createDecipheriv("aes-256-gcm", key(), iv);
-  d.setAuthTag(tag);
-  return Buffer.concat([d.update(data), d.final()]).toString("utf8");
+  try {
+    const d = createDecipheriv("aes-256-gcm", key(), iv);
+    d.setAuthTag(tag);
+    return Buffer.concat([d.update(data), d.final()]).toString("utf8");
+  } catch (e) {
+    // A local copy pointed at the live database doesn't hold the live SECRETS_KEY: treat the key as missing so pages
+    // still render, rather than failing. In production a key that won't decrypt is a real fault and still throws.
+    if (process.env.NODE_ENV === "development") return null;
+    throw e;
+  }
 }

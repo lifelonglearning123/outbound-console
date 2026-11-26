@@ -13,7 +13,7 @@ import { ConfirmButton } from "@/components/ConfirmButton";
 import { NextStep, StatusPill } from "@/components/CampaignTable";
 import { ScheduleBanner, ScheduleButton } from "@/components/ScheduleStart";
 import { Tabs } from "@/components/Tabs";
-import { ago } from "@/lib/format";
+
 import { Working } from "@/components/Working";
 import { SubmitButton } from "@/components/SubmitButton";
 import { AutoRefresh } from "@/components/AutoRefresh";
@@ -70,9 +70,9 @@ export default async function CampaignLayout({ children, params }: LayoutProps<"
 
   return (
     <div className="flex flex-col gap-5">
-      <header className="flex items-start justify-between gap-4">
-        <div>
-          <div className="flex items-center gap-2">
+      <header className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
             <Link href={`/clients/${clientId}/campaigns`} className="text-sm text-muted hover:underline">Campaigns</Link>
             <span className="text-muted">/</span>
             <h2 className="text-xl font-semibold">{c.name}</h2>
@@ -80,15 +80,7 @@ export default async function CampaignLayout({ children, params }: LayoutProps<"
             {!c.managed && <span className="text-xs text-muted">set up outside the console, so its email is managed there</span>}
             {nexus && <span className="text-xs text-muted">run from Nexus</span>}
           </div>
-          {sendLine ? (
-            <p className="text-sm">
-              <span className={sendLine.tone}>{sendLine.text}</span>
-              {sendLine.last && <span className="text-muted"> {sendLine.last}</span>}
-            </p>
-          ) : null}
-          <p className="text-xs text-muted">
-            Checked {ago(c.last_synced_at)}{c.status === "active" ? "; emails show here within half an hour of going out" : ""}
-          </p>
+          {sendLine?.line && <p className={`text-sm ${sendLine.line.tone}`}>{sendLine.line.text}</p>}
         </div>
         {c.archived_at ? (
           <form action={restore.bind(null, c.id)}><SubmitButton className="btn" pendingLabel="Restoring…">Restore</SubmitButton></form>
@@ -105,6 +97,20 @@ export default async function CampaignLayout({ children, params }: LayoutProps<"
       </header>
 
       {nexus && <p className="card p-3 text-sm text-muted">{NEXUS_NOTICE}</p>}
+      {sendLine?.notice && (
+        <div
+          className={`card flex flex-wrap items-center justify-between gap-3 p-3 text-sm ${
+            sendLine.notice.tone === "bad" ? "border-bad/40 bg-bad-soft/40" : sendLine.notice.tone === "wait" ? "border-wait/40 bg-wait-soft/40" : "border-info/30 bg-info-soft/40"
+          }`}
+        >
+          <span>{sendLine.notice.text}</span>
+          {sendLine.notice.mailboxes && <Link href={`/clients/${clientId}/mailboxes`} className="text-xs underline">Mailboxes</Link>}
+          {sendLine.notice.email && <Link href={`${base}/email`} className="text-xs underline">Email tab</Link>}
+          {!sendLine.notice.mailboxes && !sendLine.notice.email && sendLine.notice.tone === "info" && (
+            <Link href={`${base}/contacts`} className="text-xs underline">Add contacts</Link>
+          )}
+        </div>
+      )}
       {waiting && (
         <div className="card flex flex-wrap items-center justify-between gap-3 border-wait/40 bg-wait-soft/40 p-4 text-sm">
           <div className="max-w-2xl">

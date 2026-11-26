@@ -1,12 +1,16 @@
 import Link from "next/link";
 import { archive, deleteEmpty, pauseAndRelease, pauseCampaign, restore, resumeCampaign } from "@/app/campaigns/actions";
 import { PauseButton } from "@/components/PauseButton";
+import { sendNotice } from "@/lib/sendNotice";
 import { ago } from "@/lib/format";
 import { CAMPAIGN_STATUS_LABEL } from "@/lib/stages";
 import { startLabel } from "@/lib/startTime";
 import { DEFAULT_TIMEZONE } from "@/lib/timezones";
 import { ConfirmButton } from "@/components/ConfirmButton";
 import { SubmitButton } from "@/components/SubmitButton";
+
+/** Only what needs a person; a campaign that has finished today's emails or is outside its hours says nothing. */
+const notice = (notSending: string | null) => sendNotice(null, notSending)?.text ?? null;
 
 export type CampaignRow = {
   id: number;
@@ -107,7 +111,7 @@ export function CampaignTable({ clientId, campaigns }: { clientId: number; campa
                     <td className="px-4 py-3">
                       <Link href={`${href}${c.status === "draft" ? "/contacts" : ""}`} className="font-medium hover:underline">{c.name}</Link>
                       {!c.managed && <span className="ml-2 text-xs text-muted" title="Set up outside the console, so its email isn't approved here">external</span>}
-                      {c.status === "active" && c.not_sending && <div className="text-xs text-wait">{c.not_sending}</div>}
+                      {c.status === "active" && notice(c.not_sending) && <div className="text-xs text-wait">{notice(c.not_sending)}</div>}
                       {scheduled && <div className="text-xs text-info">Starts {startsAt(c)}</div>}
                       {c.status === "draft" && c.start_problem && <div className="text-xs text-bad">Didn&apos;t start as scheduled</div>}
                     </td>
