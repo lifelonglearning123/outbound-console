@@ -1,5 +1,6 @@
 import Link from "next/link";
-import { archive, deleteEmpty, pauseCampaign, restore, resumeCampaign } from "@/app/campaigns/actions";
+import { archive, deleteEmpty, pauseAndRelease, pauseCampaign, restore, resumeCampaign } from "@/app/campaigns/actions";
+import { PauseButton } from "@/components/PauseButton";
 import { ago } from "@/lib/format";
 import { CAMPAIGN_STATUS_LABEL } from "@/lib/stages";
 import { startLabel } from "@/lib/startTime";
@@ -28,6 +29,8 @@ export type CampaignRow = {
   contacts: number;
   ready: number;
   to_approve: number;
+  /** With the sender but not emailed yet (what pausing would leave held). */
+  unsent?: number;
 };
 
 const STATUS_STYLE: Record<string, string> = {
@@ -124,7 +127,7 @@ export function CampaignTable({ clientId, campaigns }: { clientId: number; campa
                         {waiting ? (
                           <Link href={href} className="btn">See why</Link>
                         ) : c.instantly_campaign_id && (c.status === "active" ? (
-                          <form action={pauseCampaign.bind(null, c.id)}><SubmitButton className="btn" pendingLabel="Pausing…">Pause sending</SubmitButton></form>
+                          <PauseButton unsent={Number(c.unsent ?? 0)} keep={pauseCampaign.bind(null, c.id)} release={pauseAndRelease.bind(null, c.id)} />
                         ) : c.status === "paused" ? (
                           <form action={resumeCampaign.bind(null, c.id)}><SubmitButton className="btn" pendingLabel="Resuming…">Resume sending</SubmitButton></form>
                         ) : c.status === "draft" && !scheduled ? (

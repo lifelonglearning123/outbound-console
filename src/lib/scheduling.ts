@@ -6,7 +6,7 @@ import { instantly } from "./instantly";
 import { DO_NOT_CONTACT, STOPPED_OUTSIDE } from "./leads";
 import { mailboxHealth } from "./mailboxHealth";
 import { pushApproved } from "./push";
-import { startLabel, zonedToUtc } from "./startTime";
+import { dayLabel, startLabel, utcToZoned, zonedToUtc } from "./startTime";
 
 /**
  * Starting a campaign at a time picked in advance. The console does the starting, rather than Instantly's own start
@@ -22,11 +22,12 @@ export async function scheduleStart(campaignId: number, local: string) {
   const c = await requireCampaign(campaignId);
   if (isNexus(c)) throw new Error("Nexus decides when this campaign starts.");
   if (!c.managed || c.status !== "draft" || !c.instantly_campaign_id) throw new Error("Only a campaign that hasn't started can be scheduled.");
-  const at = zonedToUtc(local, c.schedule.timezone);
-  if (at.getTime() <= Date.now()) throw new Error("Pick a time in the future.");
-  if (at.getTime() > Date.now() + YEAR_MS) throw new Error("Pick a time within the next year.");
+  // A start is a day: sending begins when that day's sending hours open. (A full time is still accepted.)
+  const at = zonedToUtc(/^\d{4}-\d{2}-\d{2}$/.test(local) ? `${local}T${c.schedule.from}` : local, c.schedule.timezone);
+  if (at.getTime() <= Date.now()) throw new Error("Pick a day in the future. To start today, use Start sending.");
+  if (at.getTime() > Date.now() + YEAR_MS) throw new Error("Pick a day within the next year.");
   await run("UPDATE campaigns SET start_at = ?, start_problem = NULL WHERE id = ?", at.toISOString(), campaignId);
-  await logActivity(c.client_id, "campaign", `Scheduled "${c.name}" to start ${startLabel(at, c.schedule.timezone)}`);
+  await logActivity(c.client_id, "campaign", `Scheduled "${c.name}" to start on ${dayLabel(utcToZoned(at, c.schedule.timezone).slice(0, 10))}, when its sending hours open (${c.schedule.from})`);
 }
 
 export async function cancelStart(campaignId: number) {

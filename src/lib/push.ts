@@ -6,6 +6,7 @@ import { instantly, type LeadInput } from "./instantly";
 import { DO_NOT_CONTACT, IN_SEQUENCE, STOPPED_OUTSIDE, type LeadRow } from "./leads";
 import { AT_PROBLEM_DOMAIN, BEHIND_HELD, detectMailDomains, GATEWAY_LABEL, NO_MAIL_SERVER, type Gateway } from "./mailhost";
 import { NO_PUSH, type PushResult } from "./pushResult";
+import { gapCutoff, gapDays } from "./gap";
 
 export type { PushResult };
 
@@ -23,13 +24,16 @@ export type ApprovedBreakdown = {
   sendable: number; // will go on the next send
   held: { gateway: Gateway; n: number }[]; // behind a mail filter this campaign has paused
   blocked: number; // their company is on the client's problem companies list
-  waiting: { campaign: string; campaignId: number | null; n: number }[]; // the same person is mid-sequence in another campaign
+  // The same person is mid-sequence in another campaign, or was emailed by one within the client's gap (gap.ts).
+  waiting: { campaign: string; campaignId: number | null; n: number; why: "sequence" | "gap" }[];
+  gapDays: number;
   stopped: number; // replied, bounced or unsubscribed elsewhere: the next send sets them aside
   nomail: number; // their domain has no mail server: the next send sets them aside
 };
 
 export async function approvedBreakdown(campaignId: number): Promise<ApprovedBreakdown> {
   const c = await requireCampaign(campaignId);
+  const gap = await gapDays(c.client_id);
   const rows = await all<{ kind: string; label: string | null; n: number }>(
     `WITH a AS (
        SELECT l.*,
@@ -38,14 +42,17 @@ export async function approvedBreakdown(campaignId: number): Promise<ApprovedBre
          ${AT_PROBLEM_DOMAIN("l")} blocked,
          (${STOPPED_OUTSIDE("l")} OR EXISTS (SELECT 1 FROM leads o WHERE o.client_id = l.client_id AND o.email = l.email AND o.id <> l.id AND ${DO_NOT_CONTACT("o")})) stop,
          (SELECT oc.id || ':' || oc.name FROM leads o JOIN campaigns oc ON oc.id = o.campaign_id
-           WHERE o.client_id = l.client_id AND o.email = l.email AND o.id <> l.id AND ${IN_SEQUENCE("o")} LIMIT 1) busy_in
+           WHERE o.client_id = l.client_id AND o.email = l.email AND o.id <> l.id AND ${IN_SEQUENCE("o")} LIMIT 1) busy_in,
+         (SELECT oc.id || ':' || oc.name FROM emails e JOIN campaigns oc ON oc.id = e.campaign_id
+           WHERE e.client_id = l.client_id AND e.lead_email = l.email AND e.direction = 'out' AND e.campaign_id <> l.campaign_id AND e.sent_at >= ?
+           ORDER BY e.sent_at DESC LIMIT 1) recent_in
        FROM leads l WHERE l.campaign_id = ? AND l.stage = 'approved'
      )
      SELECT CASE WHEN nomail THEN 'nomail' WHEN blocked THEN 'blocked' WHEN held_by IS NOT NULL THEN 'held' WHEN stop THEN 'stopped'
-              WHEN busy_in IS NOT NULL THEN 'waiting' ELSE 'sendable' END kind,
-       CASE WHEN nomail OR blocked THEN NULL WHEN held_by IS NOT NULL THEN held_by WHEN stop THEN NULL ELSE busy_in END label, COUNT(*) n
+              WHEN busy_in IS NOT NULL THEN 'waiting' WHEN recent_in IS NOT NULL THEN 'gap' ELSE 'sendable' END kind,
+       CASE WHEN nomail OR blocked THEN NULL WHEN held_by IS NOT NULL THEN held_by WHEN stop THEN NULL ELSE COALESCE(busy_in, recent_in) END label, COUNT(*) n
      FROM a GROUP BY 1, 2`,
-    c.hold_gateways, campaignId,
+    c.hold_gateways, gapCutoff(gap), campaignId,
   );
   const sum = (k: string) => rows.filter((r) => r.kind === k).reduce((s, r) => s + Number(r.n), 0);
   return {
@@ -53,10 +60,11 @@ export async function approvedBreakdown(campaignId: number): Promise<ApprovedBre
     sendable: sum("sendable"),
     held: rows.filter((r) => r.kind === "held").map((r) => ({ gateway: r.label as Gateway, n: Number(r.n) })),
     blocked: sum("blocked"),
-    waiting: rows.filter((r) => r.kind === "waiting").map((r) => {
+    waiting: rows.filter((r) => r.kind === "waiting" || r.kind === "gap").map((r) => {
       const [id, ...name] = (r.label ?? "").split(":");
-      return { campaign: name.join(":") || "another campaign", campaignId: Number(id) || null, n: Number(r.n) };
+      return { campaign: name.join(":") || "another campaign", campaignId: Number(id) || null, n: Number(r.n), why: r.kind === "gap" ? ("gap" as const) : ("sequence" as const) };
     }),
+    gapDays: gap,
     stopped: sum("stopped"),
     nomail: sum("nomail"),
   };
@@ -76,6 +84,8 @@ export async function pushApproved(campaignId: number, opts: { onlyWaiting?: boo
   const client = await requireClient(campaign.client_id);
   const api = instantly(client.instantly_api_key!);
 
+  const gap = await gapDays(campaign.client_id);
+  const cutoff = gapCutoff(gap);
   const holding = opts.probeIds ? [] : campaign.hold_gateways;
   let held = 0;
   let waiting = 0;
@@ -179,6 +189,26 @@ export async function pushApproved(campaignId: number, opts: { onlyWaiting?: boo
     if (other) {
       // Stays approved; the next send picks it up once the other sequence is over.
       await run("UPDATE leads SET stage_message = ? WHERE id = ?", `Waiting: still being emailed by "${other.name}". Sent once that sequence ends.`, lead.id);
+      waiting++;
+      continue;
+    }
+    // Emailed by another campaign lately: wait out the client's gap so nobody gets two campaigns days or hours apart.
+    const recent = gap > 0
+      ? await get<{ name: string; last: string }>(
+          `SELECT c.name, MAX(e.sent_at) last FROM emails e JOIN campaigns c ON c.id = e.campaign_id
+           WHERE e.client_id = ? AND e.lead_email = ? AND e.direction = 'out' AND e.campaign_id <> ? AND e.sent_at >= ?
+           GROUP BY c.name ORDER BY 2 DESC LIMIT 1`,
+          lead.client_id, lead.email, campaign.id, cutoff,
+        )
+      : undefined;
+    if (recent) {
+      const day = (ms: number) => new Date(ms).toLocaleDateString("en-GB", { day: "numeric", month: "short", timeZone: "UTC" });
+      const last = Date.parse(recent.last);
+      await run(
+        "UPDATE leads SET stage_message = ? WHERE id = ?",
+        `Waiting: emailed by "${recent.name}" on ${day(last)}. Sent from ${day(last + gap * 86400_000)}, so nobody gets two campaigns within ${gap} days.`,
+        lead.id,
+      );
       waiting++;
       continue;
     }

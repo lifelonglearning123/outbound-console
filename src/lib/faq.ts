@@ -46,7 +46,7 @@ export const FAQ: FaqSection[] = [
           "Two things to expect:",
           [
             "Removing a contact from a campaign by hand doesn't suppress them. Load them again and they come back: verified ones under Ready to send, and unconfirmed ones under Unconfirmed, your call. To keep someone out, delete them from the Nexus Portal and leave them out of any CSV file.",
-            "A contact is only emailed by one campaign at a time. Someone still in another campaign's sequence can be loaded, but waits until that sequence ends, and a paused campaign counts as still emailing them.",
+            "A contact is only emailed by one campaign at a time. Someone still in another campaign's sequence can be loaded, but waits until that sequence ends, and a paused campaign counts as still emailing them. After one campaign has emailed someone, other campaigns also wait out a gap (7 days unless an admin changes it in Settings) before emailing them, then send by themselves.",
           ],
         ],
       },
@@ -101,6 +101,17 @@ export const FAQ: FaqSection[] = [
         ],
       },
       {
+        id: "pause-release",
+        question: "What happens to contacts that haven't been emailed yet when I pause a campaign?",
+        answer: [
+          "A paused campaign still holds them, so no other campaign can email them until it finishes. If some haven't been emailed, pressing Pause sending asks what to do with them:",
+          [
+            "Pause and release: they're taken out of this campaign, and another campaign can use them straight away. Nobody who has already been emailed is affected.",
+            "Pause, keep them here: they stay held by this campaign, ready for when you resume it.",
+          ],
+        ],
+      },
+      {
         id: "when-sent",
         question: "I pressed Start sending. When do the emails actually go, and how do I know they went?",
         answer: [
@@ -122,8 +133,8 @@ export const FAQ: FaqSection[] = [
         id: "schedule",
         question: "Can I schedule a campaign to start later?",
         answer: [
-          "Yes. Press Schedule at the top of a campaign that hasn't started, then pick one of the suggested days, or a date, hour and minute, in the campaign's timezone. You can change it, cancel it or start now at any time before then.",
-          "It can start up to 30 minutes after the time you pick. A campaign isn't sent all at once: emails then go out over the following days, within its daily limit and sending hours. A time outside those hours means the first emails wait until they next open.",
+          "Yes. Press Pick a start day at the top of a campaign that hasn't started, then choose one of the suggested days or any date. You pick a day, not a time: sending begins when that day's sending hours open. You can change it, cancel it or start now at any time before then. To start today, use Start sending.",
+          "It can begin up to 30 minutes after the hours open. A campaign isn't sent all at once: emails go out over the following days, within its daily limit and sending hours. A day that isn't one of its sending days means the first emails wait for the next one.",
           "Approved contacts wait in the console and are checked again as they go, so anyone who has since replied, bounced or unsubscribed stays out. Contacts approved after it starts can still be sent.",
           "If it has no approved contacts or no mailbox that can send at that time, it doesn't start and nothing is sent. The campaign page says why, so you can pick a new time. If its mailboxes are only resting, it waits for one to come back instead.",
         ],

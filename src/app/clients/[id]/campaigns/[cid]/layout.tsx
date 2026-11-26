@@ -6,7 +6,9 @@ import { getClient } from "@/lib/clients";
 import { approvedBreakdown } from "@/lib/push";
 import { campaignProgress } from "@/lib/progress";
 import { sendingLine } from "@/lib/sendingLine";
-import { dontWait, pauseCampaign, restore, resumeCampaign, sendAnyway } from "@/app/campaigns/actions";
+import { dontWait, pauseAndRelease, pauseCampaign, restore, resumeCampaign, sendAnyway } from "@/app/campaigns/actions";
+import { PauseButton } from "@/components/PauseButton";
+import { unsentCount } from "@/lib/takeOut";
 import { ConfirmButton } from "@/components/ConfirmButton";
 import { NextStep, StatusPill } from "@/components/CampaignTable";
 import { ScheduleBanner, ScheduleButton } from "@/components/ScheduleStart";
@@ -42,6 +44,7 @@ export default async function CampaignLayout({ children, params }: LayoutProps<"
   const waiting = !!c.waiting_mailbox_at && c.status !== "active" && !c.archived_at;
   const restingBoxes = waiting ? (await formMailboxes(clientId)).filter((m) => m.resting && c.accounts.includes(m.email)) : [];
   const sendLine = c.status === "active" ? await sendingLine(c) : null;
+  const unsent = c.status === "active" ? await unsentCount(c.id) : 0;
 
   // Each tile opens the place where that number can be acted on.
   const checkSub = [
@@ -90,7 +93,7 @@ export default async function CampaignLayout({ children, params }: LayoutProps<"
         {c.archived_at ? (
           <form action={restore.bind(null, c.id)}><SubmitButton className="btn" pendingLabel="Restoring…">Restore</SubmitButton></form>
         ) : waiting ? null : c.instantly_campaign_id && (c.status === "active" ? (
-          <form action={pauseCampaign.bind(null, c.id)}><SubmitButton className="btn" pendingLabel="Pausing…">Pause sending</SubmitButton></form>
+          <PauseButton unsent={unsent} keep={pauseCampaign.bind(null, c.id)} release={pauseAndRelease.bind(null, c.id)} />
         ) : c.status === "draft" && c.start_at ? null : c.status === "draft" && c.managed === 1 && !nexus ? (
           <div className="flex items-start gap-2">
             <ScheduleButton c={c} />

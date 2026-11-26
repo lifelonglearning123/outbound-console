@@ -13,6 +13,24 @@ export const CAN_TAKE_OUT = (a: string) =>
   `(${a}.stage <> 'removed' AND (NOT (${a}.pushed_at IS NOT NULL OR ${a}.instantly_lead_id IS NOT NULL) OR COALESCE(${a}.instantly_status, 1) NOT IN (3, -3, -1, -2)))`;
 
 /**
+ * With the sender and not emailed yet, as SQL on a leads row `a`: nothing has gone to them, so pausing the campaign
+ * leaves them held by it. The emails table is checked too, because the last-sent time can be up to half an hour behind.
+ */
+export const UNSENT = (a: string) =>
+  `(${a}.instantly_lead_id IS NOT NULL AND ${a}.stage <> 'removed' AND COALESCE(${a}.instantly_status, 1) = 1 AND ${a}.last_sent_at IS NULL
+     AND NOT EXISTS (SELECT 1 FROM emails e WHERE e.lead_id = ${a}.id AND e.direction = 'out'))`;
+
+export async function unsentCount(campaignId: number): Promise<number> {
+  return Number((await all<{ n: number }>(`SELECT COUNT(*) n FROM leads a WHERE a.campaign_id = ? AND ${UNSENT("a")}`, campaignId))[0]?.n ?? 0);
+}
+
+/** Take back everyone the campaign has handed over but not yet emailed, so another campaign can have them. */
+export async function releaseUnsent(campaignId: number) {
+  const ids = (await all<{ id: number }>(`SELECT a.id FROM leads a WHERE a.campaign_id = ? AND ${UNSENT("a")}`, campaignId)).map((r) => r.id);
+  return takeOut(campaignId, ids, "Released when the campaign was paused, before they were emailed");
+}
+
+/**
  * Take contacts out of a campaign so it emails them nothing more and another campaign can have them. Anyone already
  * with the sender is deleted there first, and only marked removed here once that worked, so nobody is shown as out
  * while Instantly could still email them. Nothing is deleted here: their record and any emails already sent stay.

@@ -6,6 +6,7 @@ import { mailboxHealth } from "@/lib/mailboxHealth";
 import { clientAttention } from "@/lib/attention";
 import { CampaignTable, type CampaignRow } from "@/components/CampaignTable";
 import { TodayBox } from "@/components/TodayBox";
+import { UNSENT } from "@/lib/takeOut";
 
 export async function generateMetadata({ params }: { params: Promise<{ id: string }> }) {
   const client = await getClient(Number((await params).id));
@@ -30,7 +31,8 @@ export default async function CampaignsPage({ params }: PageProps<"/clients/[id]
     `SELECT c.*,
        (SELECT COUNT(*) FROM leads l WHERE l.campaign_id = c.id AND l.stage <> 'removed') contacts,
        (SELECT COUNT(*) FROM leads l WHERE l.campaign_id = c.id AND (l.stage = 'approved' OR l.instantly_lead_id IS NOT NULL)) ready,
-       (SELECT COUNT(*) FROM leads l WHERE l.campaign_id = c.id AND l.stage = 'review' AND l.verification IN ('verified', 'catch_all')) to_approve
+       (SELECT COUNT(*) FROM leads l WHERE l.campaign_id = c.id AND l.stage = 'review' AND l.verification IN ('verified', 'catch_all')) to_approve,
+       (SELECT COUNT(*) FROM leads l WHERE l.campaign_id = c.id AND c.status = 'active' AND ${UNSENT("l")}) unsent
      FROM campaigns c WHERE c.client_id = ? ORDER BY c.status = 'active' DESC, c.created_at DESC`,
     id,
   );

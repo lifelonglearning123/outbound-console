@@ -1,7 +1,7 @@
 import { cancelSchedule, resumeCampaign, scheduleCampaign } from "@/app/campaigns/actions";
 import type { Campaign } from "@/lib/campaigns";
 import { nowMs } from "@/lib/format";
-import { firstSendAt, startLabel, utcToZoned, zoneLabel } from "@/lib/startTime";
+import { dayLabel, firstSendAt, startLabel, utcToZoned, zoneLabel } from "@/lib/startTime";
 import { SchedulePicker } from "@/components/SchedulePicker";
 import { SubmitButton } from "@/components/SubmitButton";
 
@@ -9,7 +9,7 @@ const n = (v: number) => v.toLocaleString("en-GB");
 
 /** Pick when a campaign that hasn't started will start: beside its main button. */
 export function ScheduleButton({ c }: { c: Campaign }) {
-  return <SchedulePicker action={scheduleCampaign.bind(null, c.id)} hours={c.schedule} now={nowMs()} label="Schedule" submit="Schedule" />;
+  return <SchedulePicker action={scheduleCampaign.bind(null, c.id)} hours={c.schedule} now={nowMs()} label="Pick a start day" submit="Schedule" />;
 }
 
 /** A scheduled campaign: when it starts, who will go, and how to change that. Also says why a scheduled start didn't happen. */
@@ -30,17 +30,17 @@ export function ScheduleBanner({ c, approved, needApproving, handedOver }: { c: 
   return (
     <section className="card flex flex-wrap items-center justify-between gap-4 border-info/30 bg-info-soft/50 p-4 text-sm">
       <div className="max-w-2xl">
-        <h3 className="font-semibold">Scheduled to start {startLabel(at, tz)}, {zoneLabel(tz)} time</h3>
+        <h3 className="font-semibold">Starts {dayLabel(utcToZoned(at, tz).slice(0, 10))}</h3>
         <p className="mt-0.5 text-muted">
           {first.getTime() !== at.getTime()
-            ? `That's outside its sending days or hours, so the first emails go ${startLabel(first, tz)}. `
-            : "It can begin up to 30 minutes after this. "}
+            ? `That's not one of its sending days, so the first emails go ${startLabel(first, tz)}, ${zoneLabel(tz)} time. `
+            : `Sending begins as its hours open, ${c.schedule.from} ${zoneLabel(tz)} time, and can take up to 30 minutes after that. `}
           {ready > 0 ? `${n(ready)} approved ${ready === 1 ? "contact is" : "contacts are"} ready to go.` : "No contacts are approved yet, so it won't start unless some are by then."}
           {needApproving > 0 && ` ${n(needApproving)} more still ${needApproving === 1 ? "needs" : "need"} approving; anyone not approved in time can go after it starts.`}
         </p>
       </div>
       <div className="flex flex-wrap items-center gap-2">
-        <SchedulePicker action={scheduleCampaign.bind(null, c.id)} hours={c.schedule} now={nowMs()} value={utcToZoned(at, tz)} label="Change time" submit="Save time" />
+        <SchedulePicker action={scheduleCampaign.bind(null, c.id)} hours={c.schedule} now={nowMs()} value={utcToZoned(at, tz)} label="Change day" submit="Save day" />
         <form action={cancelSchedule.bind(null, c.id)}><SubmitButton className="btn" pendingLabel="Cancelling…">Cancel schedule</SubmitButton></form>
         {ready > 0 && <form action={resumeCampaign.bind(null, c.id)}><SubmitButton className="btn" pendingLabel="Starting…">Start now</SubmitButton></form>}
       </div>

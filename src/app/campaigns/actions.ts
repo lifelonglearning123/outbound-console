@@ -16,11 +16,25 @@ import { requireClient } from "@/lib/clients";
 import { instantly } from "@/lib/instantly";
 import { sanitizeEmailHtml } from "@/lib/merge";
 import { sendList } from "@/lib/mailboxHealth";
+import { releaseUnsent } from "@/lib/takeOut";
+import { sendWaiting } from "@/lib/push";
+import { requireAdmin } from "@/lib/auth";
+import { saveGapDays } from "@/lib/gap";
 import { cancelStart, scheduleStart, startNow } from "@/lib/scheduling";
 
 export async function pauseCampaign(id: number) {
   await requireClientAccess(await clientOfCampaign(id));
   await setCampaignRunning(id, false);
+  revalidatePath("/", "layout");
+}
+
+/** Pause, and take back everyone handed over but not yet emailed, so other campaigns can use them. */
+export async function pauseAndRelease(id: number) {
+  const clientId = await clientOfCampaign(id);
+  await requireClientAccess(clientId);
+  await setCampaignRunning(id, false);
+  const r = await releaseUnsent(id);
+  if (r.fromSender && clientId !== undefined) after(() => sendWaiting(clientId));
   revalidatePath("/", "layout");
 }
 
@@ -30,6 +44,13 @@ export async function resumeCampaign(id: number) {
   // First start of a console campaign: its approved contacts go with it. Otherwise it would say "Sending" with nobody to send to.
   if (c.status === "draft" && c.managed && !isNexus(c)) await startNow(id);
   else await setCampaignRunning(id, true);
+  revalidatePath("/", "layout");
+}
+
+/** The least days between two campaigns emailing the same person; 0 turns it off (gap.ts). */
+export async function saveGap(clientId: number, form: FormData) {
+  await requireAdmin();
+  await saveGapDays(clientId, Number(form.get("days") ?? 0));
   revalidatePath("/", "layout");
 }
 
