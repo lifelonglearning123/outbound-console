@@ -1,7 +1,11 @@
 /** What a send did, shared by the server send and the pages that report it. */
 
 /** Handed over, refused by Instantly, and why the rest stayed behind. */
-export type PushResult = { pushed: number; skipped: number; held: number; blocked: number; waiting: number; stopped: number; nomail: number };
+export type PushResult = {
+  pushed: number; skipped: number; held: number; blocked: number; waiting: number; stopped: number; nomail: number;
+  /** Another send was already handing this campaign's contacts over, so this one did nothing. */
+  busy?: boolean;
+};
 
 export const NO_PUSH: PushResult = { pushed: 0, skipped: 0, held: 0, blocked: 0, waiting: 0, stopped: 0, nomail: 0 };
 
@@ -14,11 +18,13 @@ export function addPushes(a: PushResult, b: PushResult): PushResult {
     waiting: a.waiting + b.waiting,
     stopped: a.stopped + b.stopped,
     nomail: a.nomail + b.nomail,
+    ...(a.busy || b.busy ? { busy: true } : {}),
   };
 }
 
 /** A send result in words, for the message after pressing Send. */
 export function describePush(r: PushResult): string {
+  if (r.busy) return "Contacts are already being handed to the sender. It takes a few minutes; this page updates when it's done.";
   const parts = [
     r.pushed ? `${r.pushed} handed to the sender` : "Nothing new was handed to the sender",
     r.held && `${r.held} held because their mail filter is paused`,

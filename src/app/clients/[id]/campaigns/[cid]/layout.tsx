@@ -100,7 +100,7 @@ export default async function CampaignLayout({ children, params }: LayoutProps<"
             <NextStep href={base} id={c.id} contacts={p.contacts} ready={split.approved + p.sending} toApprove={p.ready + p.unconfirmed} />
           </div>
         ) : c.status === "paused" || c.status === "draft" ? (
-          <form action={resumeCampaign.bind(null, c.id)}><SubmitButton className="btn-go" pendingLabel="Starting…">{c.status === "draft" ? "Start sending" : "Resume sending"}</SubmitButton></form>
+          <form action={resumeCampaign.bind(null, c.id)}><SubmitButton className="btn-go" pendingLabel="Starting… a big list takes a few minutes">{c.status === "draft" ? "Start sending" : "Resume sending"}</SubmitButton></form>
         ) : null)}
       </header>
 

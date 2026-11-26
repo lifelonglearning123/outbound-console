@@ -333,7 +333,21 @@ export function CampaignForm(p: Props) {
           </label>
         </div>
         <div>
-          <span className="label">Send from</span>
+          <div className="flex items-baseline justify-between gap-3">
+            <span className="label">Send from</span>
+            {p.mailboxes.length > 1 && (
+              <span className="flex gap-3 text-xs">
+                <button
+                  type="button"
+                  className="underline"
+                  onClick={() => setChosen(p.mailboxes.filter((m) => m.healthy).map((m) => m.email))}
+                >
+                  Tick all that can send
+                </button>
+                <button type="button" className="text-muted underline" onClick={() => setChosen([])}>Clear</button>
+              </span>
+            )}
+          </div>
           {p.mailboxes.length === 0 ? (
             <p className="text-sm text-muted">No mailboxes yet. Use &quot;Check&quot; in Settings to pull them from Instantly.</p>
           ) : (
@@ -344,7 +358,7 @@ export function CampaignForm(p: Props) {
                     type="checkbox"
                     name="accounts"
                     value={m.email}
-                    defaultChecked={p.accounts.includes(m.email)}
+                    checked={chosen.includes(m.email)}
                     onChange={(e) => setChosen(e.target.checked ? [...chosen, m.email] : chosen.filter((x) => x !== m.email))}
                   />
                   <span className="font-mono text-xs">{m.email}</span>

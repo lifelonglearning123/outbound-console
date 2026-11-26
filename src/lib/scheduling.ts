@@ -43,7 +43,10 @@ export async function cancelStart(campaignId: number) {
 export async function startNow(id: number) {
   await dropStoppedContacts(id);
   for (;;) {
-    if ((await pushApproved(id, { starting: true })).pushed === 0) break;
+    const r = await pushApproved(id, { starting: true });
+    // Another press (or the sync) is already handing this campaign's contacts over, and it starts the campaign when done.
+    if (r.busy) return;
+    if (r.pushed === 0) break;
   }
   if ((await pushedLeadCount(id)) === 0) throw new Error("None of this campaign's contacts can be sent yet. Check the Approvals tab to see why.");
   await setCampaignRunning(id, true);
@@ -85,6 +88,7 @@ async function startCampaign(id: number) {
   let sent = 0;
   for (;;) {
     const r = await pushApproved(id, { starting: true });
+    if (r.busy) throw new Error("its contacts are already being handed to the sender"); // tried again at the next sync
     if (r.pushed === 0) break;
     sent += r.pushed;
   }

@@ -55,7 +55,7 @@ export function StatusPill({ status }: { status: string }) {
 export function NextStep({ href, id, contacts, ready, toApprove, quiet }: { href: string; id: number; contacts: number; ready: number; toApprove: number; quiet?: boolean }) {
   const main = quiet ? "btn" : "btn-go"; // in a list, the page's one main button stays the only green one
   if (ready > 0) {
-    return <form action={resumeCampaign.bind(null, id)}><SubmitButton className={main} pendingLabel="Starting…">Start sending</SubmitButton></form>;
+    return <form action={resumeCampaign.bind(null, id)}><SubmitButton className={main} pendingLabel="Starting… a big list takes a few minutes">Start sending</SubmitButton></form>;
   }
   if (toApprove > 0) return <Link href={`${href}/approve`} className={main}>Approve contacts</Link>;
   if (contacts > 0) return <Link href={`${href}/contacts`} className="btn">View contacts</Link>;
@@ -134,7 +134,7 @@ export function CampaignTable({ clientId, campaigns }: { clientId: number; campa
                           ours ? (
                             <NextStep href={href} id={c.id} contacts={Number(c.contacts)} ready={Number(c.ready)} toApprove={Number(c.to_approve)} quiet />
                           ) : (
-                            <form action={resumeCampaign.bind(null, c.id)}><SubmitButton className="btn" pendingLabel="Starting…">Start sending</SubmitButton></form>
+                            <form action={resumeCampaign.bind(null, c.id)}><SubmitButton className="btn" pendingLabel="Starting… a big list takes a few minutes">Start sending</SubmitButton></form>
                           )
                         ) : null)}
                       </div>

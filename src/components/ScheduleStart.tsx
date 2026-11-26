@@ -42,7 +42,7 @@ export function ScheduleBanner({ c, approved, needApproving, handedOver }: { c: 
       <div className="flex flex-wrap items-center gap-2">
         <SchedulePicker action={scheduleCampaign.bind(null, c.id)} hours={c.schedule} now={nowMs()} value={utcToZoned(at, tz)} label="Change day" submit="Save day" />
         <form action={cancelSchedule.bind(null, c.id)}><SubmitButton className="btn" pendingLabel="Cancelling…">Cancel schedule</SubmitButton></form>
-        {ready > 0 && <form action={resumeCampaign.bind(null, c.id)}><SubmitButton className="btn" pendingLabel="Starting…">Start now</SubmitButton></form>}
+        {ready > 0 && <form action={resumeCampaign.bind(null, c.id)}><SubmitButton className="btn" pendingLabel="Starting… a big list takes a few minutes">Start now</SubmitButton></form>}
       </div>
     </section>
   );

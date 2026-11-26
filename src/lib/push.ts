@@ -1,5 +1,5 @@
 import "server-only";
-import { all, get, run, tx, logActivity } from "./db";
+import { all, get, run, tx, logActivity, withLock } from "./db";
 import { requireClient } from "./clients";
 import { requireCampaign, subjectVar, bodyVar, liveSteps, hasOwnSubject } from "./campaigns";
 import { instantly, type LeadInput } from "./instantly";
@@ -78,6 +78,14 @@ export async function approvedBreakdown(campaignId: number): Promise<ApprovedBre
  * they're checked when they go, not weeks before.
  */
 export async function pushApproved(campaignId: number, opts: { onlyWaiting?: boolean; probeIds?: number[]; starting?: boolean } = {}): Promise<PushResult> {
+  // One send per campaign at a time. A big send takes minutes, so a second press (or the sync) arriving meanwhile would
+  // read the same approved contacts, get "duplicates" from Instantly and mark them all as errors. It waits instead:
+  // `busy` says another send is already handing this campaign's contacts over.
+  const r = await withLock(`push_${campaignId}`, 10 * 60_000, () => pushApprovedNow(campaignId, opts));
+  return r ?? { ...NO_PUSH, busy: true };
+}
+
+async function pushApprovedNow(campaignId: number, opts: { onlyWaiting?: boolean; probeIds?: number[]; starting?: boolean }): Promise<PushResult> {
   const campaign = await requireCampaign(campaignId);
   if (!campaign.instantly_campaign_id) throw new Error("Create the campaign in Instantly first");
   if (campaign.start_at && campaign.status === "draft" && !opts.starting) return { ...NO_PUSH };
@@ -135,6 +143,32 @@ export async function pushApproved(campaignId: number, opts: { onlyWaiting?: boo
     leads.map((l) => l.id),
   )).map((l) => l.id));
 
+  // The same contacts in the client's other campaigns, looked up once for everyone rather than once per contact (a send
+  // of hundreds took minutes). First row per contact wins: someone who replied, bounced or unsubscribed comes first.
+  const ids = leads.map((l) => l.id);
+  const othersRows = await all<{ lead_id: number; name: string; dnc: boolean }>(
+    `SELECT l.id lead_id, c.name, ${DO_NOT_CONTACT("o")} dnc FROM leads l
+       JOIN leads o ON o.client_id = l.client_id AND o.email = l.email AND o.id <> l.id
+       JOIN campaigns c ON c.id = o.campaign_id
+     WHERE l.id = ANY(?) AND (${DO_NOT_CONTACT("o")} OR ${IN_SEQUENCE("o")})
+     ORDER BY l.id, 3 DESC`,
+    ids,
+  );
+  const otherBy = new Map<number, { name: string; dnc: boolean }>();
+  for (const r of othersRows) if (!otherBy.has(r.lead_id)) otherBy.set(r.lead_id, r);
+  // Emailed by another campaign within the client's gap (gap.ts), latest first.
+  const recentBy = new Map<number, { name: string; last: string }>();
+  if (gap > 0) {
+    const recentRows = await all<{ lead_id: number; name: string; last: string }>(
+      `SELECT l.id lead_id, c.name, MAX(e.sent_at) last FROM leads l
+         JOIN emails e ON e.client_id = l.client_id AND e.lead_email = l.email AND e.direction = 'out' AND e.campaign_id <> l.campaign_id AND e.sent_at >= ?
+         JOIN campaigns c ON c.id = e.campaign_id
+       WHERE l.id = ANY(?) GROUP BY l.id, c.name ORDER BY l.id, 3 DESC`,
+      cutoff, ids,
+    );
+    for (const r of recentRows) if (!recentBy.has(r.lead_id)) recentBy.set(r.lead_id, r);
+  }
+
   const ready: { lead: LeadRow; input: LeadInput }[] = [];
   const hasGhl = !!ghlCreds(client);
   for (const lead of leads) {
@@ -171,12 +205,7 @@ export async function pushApproved(campaignId: number, opts: { onlyWaiting?: boo
       continue;
     }
     // The same contact in other campaigns: never after a reply, bounce or unsubscribe, and never two sequences at once.
-    const other = await get<{ name: string; dnc: boolean }>(
-      `SELECT c.name, ${DO_NOT_CONTACT("o")} dnc FROM leads o JOIN campaigns c ON c.id = o.campaign_id
-       WHERE o.client_id = ? AND o.email = ? AND o.id <> ? AND (${DO_NOT_CONTACT("o")} OR ${IN_SEQUENCE("o")})
-       ORDER BY 2 DESC LIMIT 1`,
-      lead.client_id, lead.email, lead.id,
-    );
+    const other = otherBy.get(lead.id);
     if (other?.dnc || outside.has(lead.id)) {
       const where = other?.dnc ? `"${other.name}"` : "an earlier campaign";
       await tx(async () => {
@@ -193,14 +222,7 @@ export async function pushApproved(campaignId: number, opts: { onlyWaiting?: boo
       continue;
     }
     // Emailed by another campaign lately: wait out the client's gap so nobody gets two campaigns days or hours apart.
-    const recent = gap > 0
-      ? await get<{ name: string; last: string }>(
-          `SELECT c.name, MAX(e.sent_at) last FROM emails e JOIN campaigns c ON c.id = e.campaign_id
-           WHERE e.client_id = ? AND e.lead_email = ? AND e.direction = 'out' AND e.campaign_id <> ? AND e.sent_at >= ?
-           GROUP BY c.name ORDER BY 2 DESC LIMIT 1`,
-          lead.client_id, lead.email, campaign.id, cutoff,
-        )
-      : undefined;
+    const recent = recentBy.get(lead.id);
     if (recent) {
       const day = (ms: number) => new Date(ms).toLocaleDateString("en-GB", { day: "numeric", month: "short", timeZone: "UTC" });
       const last = Date.parse(recent.last);
@@ -232,25 +254,24 @@ export async function pushApproved(campaignId: number, opts: { onlyWaiting?: boo
   const res = await api.addLeads(campaign.instantly_campaign_id, ready.map((r) => r.input));
   const created = new Map((res.created_leads ?? []).map((c) => [c.index, c.id]));
   const now = new Date().toISOString();
-  let pushed = 0;
-  let skipped = 0;
+  // Recorded in two statements rather than one per contact.
+  const added = ready.flatMap((r, i) => (created.get(i) ? [{ id: r.lead.id, iid: created.get(i)! }] : []));
+  const refused = ready.filter((_, i) => !created.get(i)).map((r) => r.lead.id);
+  const pushed = added.length;
+  const skipped = refused.length;
   await tx(async () => {
-    for (const [i, r] of ready.entries()) {
-      const id = created.get(i);
-      if (id) {
-        await run(
-          "UPDATE leads SET stage = 'pushed', instantly_lead_id = ?, instantly_status = 1, pushed_at = ?, stage_message = NULL, probe = ? WHERE id = ?",
-          id, now, opts.probeIds ? 1 : 0, r.lead.id,
-        );
-        pushed++;
-      } else {
-        await run(
-          "UPDATE leads SET stage = 'error', stage_message = ? WHERE id = ?",
-          "Instantly didn't add this lead (already in the campaign, on the blocklist, or invalid email)",
-          r.lead.id,
-        );
-        skipped++;
-      }
+    if (added.length) {
+      await run(
+        `UPDATE leads SET stage = 'pushed', instantly_lead_id = x.iid, instantly_status = 1, pushed_at = ?, stage_message = NULL, probe = ?
+         FROM jsonb_to_recordset(?::jsonb) AS x(id int, iid text) WHERE leads.id = x.id`,
+        now, opts.probeIds ? 1 : 0, JSON.stringify(added),
+      );
+    }
+    if (refused.length) {
+      await run(
+        "UPDATE leads SET stage = 'error', stage_message = ? WHERE id = ANY(?)",
+        "Instantly didn't add this lead (already in the campaign, on the blocklist, or invalid email)", refused,
+      );
     }
   });
   await logActivity(
